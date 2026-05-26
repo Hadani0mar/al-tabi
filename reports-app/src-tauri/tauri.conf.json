@@ -40,7 +40,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZCRTVCQjAzNzZGNDY2NUIKUldSYlp2UjJBN3ZsYS9GVGR6QWpMc01WVDk5NEtNU2tycWwvMVlmUTlXd0dRM2Fzb2srTU5nQm8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3N0RDRjU0RTM4RDQ4NkMKUldSc1NJM2pWTTk5MTFad1FLM3E1OXBwTGxWcFBTekIrbmtvbzhkVENXZmZmREhydHpUOEFsR3oK",
       "endpoints": [
         "https://github.com/Hadani0mar/al-tabi/releases/latest/download/latest.json"
       ]

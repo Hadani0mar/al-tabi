@@ -31,8 +31,6 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"bot" | "ai" | "updates">("bot");
 
-  const [keysLoadedFromSupabase, setKeysLoadedFromSupabase] = useState(false);
-
   const [appVersion, setAppVersion] = useState("");
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -123,12 +121,8 @@ export function SettingsPage() {
         setOpenaiKey(remote.openai_api_key ?? "");
         setBotToken(remote.telegram_bot_token ?? "");
         setChatId(remote.telegram_chat_id ?? "");
-        setKeysLoadedFromSupabase(
-          Boolean(remote.openrouter_api_key?.trim() || remote.openai_api_key?.trim())
-        );
       } catch (err) {
         console.error("Failed to load settings:", err);
-        setKeysLoadedFromSupabase(false);
       } finally {
         setLoading(false);
       }

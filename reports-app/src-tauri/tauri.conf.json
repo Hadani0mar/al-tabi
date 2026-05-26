@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "reports-app",
+  "productName": "al-tabi",
   "version": "0.1.0",
   "identifier": "com.dell.reports-app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "reports-app",
+        "title": "al-tabi",
         "width": 800,
         "height": 600
       }
@@ -23,6 +23,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -36,5 +37,13 @@
       "../PRODUCT_SCHEMA.md",
       "../DATABASE_VIEWS.md"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZCRTVCQjAzNzZGNDY2NUIKUldSYlp2UjJBN3ZsYS9GVGR6QWpMc01WVDk5NEtNU2tycWwvMVlmUTlXd0dRM2Fzb2srTU5nQm8K",
+      "endpoints": [
+        "https://github.com/Hadani0mar/al-tabi/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -31,3 +31,7 @@ Thumbs.db
 
 # Tauri generated
 reports-app/src-tauri/gen/schemas
+
+# Tauri updater private signing key (المفتاح العام يبقى داخل tauri.conf.json)
+reports-app/src-tauri/al-tabi.key
+reports-app/src-tauri/*.key

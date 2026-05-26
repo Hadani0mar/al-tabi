@@ -1,11 +1,14 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import { Button } from "./button";
 import { Input } from "./input";
 import { Label } from "./label";
 import { Checkbox } from "./checkbox";
-import { Loader2, Check } from "lucide-react";
+import { Loader2, Check, Download, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FIXED_AI_MODEL, FIXED_AI_MODEL_LABEL } from "@/lib/ai-config";
 
@@ -26,9 +29,85 @@ export function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"bot" | "ai">("bot");
+  const [activeTab, setActiveTab] = useState<"bot" | "ai" | "updates">("bot");
 
   const [keysLoadedFromSupabase, setKeysLoadedFromSupabase] = useState(false);
+
+  const [appVersion, setAppVersion] = useState("");
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState<{
+    version: string;
+    notes: string;
+    date?: string;
+  } | null>(null);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(console.error);
+  }, []);
+
+  const handleCheckForUpdate = async () => {
+    setUpdateChecking(true);
+    setUpdateStatus(null);
+    setUpdateAvailable(null);
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateAvailable({
+          version: update.version,
+          notes: update.body ?? "",
+          date: update.date ?? undefined,
+        });
+        setUpdateStatus(`يتوفر إصدار جديد: ${update.version}`);
+      } else {
+        setUpdateStatus("التطبيق محدّث إلى أحدث إصدار.");
+      }
+    } catch (err) {
+      console.error("Check update failed:", err);
+      setUpdateStatus(`تعذّر التحقق من التحديثات: ${err}`);
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    setUpdateDownloading(true);
+    setUpdateProgress(0);
+    try {
+      const update = await check();
+      if (!update) {
+        setUpdateStatus("لا يوجد تحديث متاح.");
+        return;
+      }
+      let totalBytes = 0;
+      let downloadedBytes = 0;
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            totalBytes = event.data.contentLength ?? 0;
+            setUpdateStatus("بدء التنزيل...");
+            break;
+          case "Progress":
+            downloadedBytes += event.data.chunkLength;
+            if (totalBytes > 0) {
+              setUpdateProgress(Math.round((downloadedBytes / totalBytes) * 100));
+            }
+            break;
+          case "Finished":
+            setUpdateStatus("اكتمل التنزيل — جارٍ إعادة التشغيل...");
+            break;
+        }
+      });
+      await relaunch();
+    } catch (err) {
+      console.error("Install update failed:", err);
+      setUpdateStatus(`فشل التحديث: ${err}`);
+    } finally {
+      setUpdateDownloading(false);
+    }
+  };
 
   useEffect(() => {
     async function loadSettings() {
@@ -148,6 +227,16 @@ export function SettingsPage() {
             <img src="/ai.svg" alt="AI" className="w-4 h-4" />
             الذكاء الاصطناعي (OpenRouter)
           </button>
+          <button
+            onClick={() => setActiveTab("updates")}
+            className={cn(
+              "pb-3 text-sm font-semibold transition-colors border-b-2 flex items-center gap-2",
+              activeTab === "updates" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <RefreshCw className="w-4 h-4" />
+            التحديثات
+          </button>
         </div>
 
         <div className="flex-1">
@@ -240,6 +329,68 @@ export function SettingsPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">{FIXED_AI_MODEL_LABEL}</p>
               </div>
+            </div>
+          )}
+
+          {activeTab === "updates" && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="grid gap-2">
+                <Label>الإصدار الحالي</Label>
+                <div
+                  className="flex h-10 w-full items-center rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+                  dir="ltr"
+                >
+                  v{appVersion || "..."}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={handleCheckForUpdate}
+                  disabled={updateChecking || updateDownloading}
+                >
+                  {updateChecking ? (
+                    <Loader2 className="w-4 h-4 animate-spin ml-2" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 ml-2" />
+                  )}
+                  تحقق من التحديثات
+                </Button>
+
+                {updateAvailable && (
+                  <Button onClick={handleInstallUpdate} disabled={updateDownloading}>
+                    {updateDownloading ? (
+                      <Loader2 className="w-4 h-4 animate-spin ml-2" />
+                    ) : (
+                      <Download className="w-4 h-4 ml-2" />
+                    )}
+                    {updateDownloading
+                      ? `جارٍ التنزيل... ${updateProgress}%`
+                      : `تثبيت v${updateAvailable.version}`}
+                  </Button>
+                )}
+              </div>
+
+              {updateStatus && (
+                <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+                  {updateStatus}
+                </div>
+              )}
+
+              {updateAvailable?.notes && (
+                <div className="grid gap-2">
+                  <Label>ملاحظات الإصدار</Label>
+                  <div className="rounded-md border border-border bg-muted/40 p-3 text-sm whitespace-pre-wrap" dir="auto">
+                    {updateAvailable.notes}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                التحديثات موقّعة رقمياً وتُجلب من GitHub Releases. عند توفر إصدار جديد، اضغط «تثبيت»
+                وسيُعاد تشغيل التطبيق تلقائياً.
+              </p>
             </div>
           )}
         </div>

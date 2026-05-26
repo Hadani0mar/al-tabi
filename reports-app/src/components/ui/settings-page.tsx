@@ -285,42 +285,13 @@ export function SettingsPage() {
 
           {activeTab === "ai" && (
             <div className="space-y-6 animate-in fade-in duration-300">
-              <h4 className="text-sm font-semibold mb-2">إعدادات الذكاء الاصطناعي (OpenRouter)</h4>
-              <p className="text-sm text-muted-foreground mb-4">
-                مفاتيح OpenRouter و OpenAI مُخزَّنة مركزياً في Supabase — تُحمَّل تلقائياً.
-              </p>
-              {keysLoadedFromSupabase && (
-                <p className="text-sm text-green-600 dark:text-green-400 mb-4">
-                  تم تحميل المفاتيح من Supabase — لا حاجة لإدخالها يدوياً.
-                </p>
-              )}
-
-              <div className="grid gap-2">
-                <Label htmlFor="groqKey">مفتاح API (OpenRouter)</Label>
-                <Input
-                  id="groqKey"
-                  type="password"
-                  placeholder={keysLoadedFromSupabase ? "محمّل من Supabase" : "sk-or-v1-..."}
-                  value={groqKey}
-                  onChange={(e) => setGroqKey(e.target.value)}
-                  readOnly={keysLoadedFromSupabase}
-                />
+              <h4 className="text-sm font-semibold mb-2">إعدادات الذكاء الاصطناعي</h4>
+              <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                تتم إدارة مفاتيح ونماذج الذكاء الاصطناعي من قِبل المطوّر — لا حاجة لأي إعداد من جهتك.
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="openaiKey">مفتاح OpenAI (RAG)</Label>
-                <Input
-                  id="openaiKey"
-                  type="password"
-                  placeholder={keysLoadedFromSupabase ? "محمّل من Supabase" : "sk-proj-..."}
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                  readOnly={keysLoadedFromSupabase}
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <Label>النموذج المستخدم (ثابت)</Label>
+                <Label>النموذج المستخدم</Label>
                 <div
                   className="flex h-10 w-full items-center rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
                   dir="ltr"
@@ -386,26 +357,23 @@ export function SettingsPage() {
                   </div>
                 </div>
               )}
-
-              <p className="text-xs text-muted-foreground">
-                التحديثات موقّعة رقمياً وتُجلب من GitHub Releases. عند توفر إصدار جديد، اضغط «تثبيت»
-                وسيُعاد تشغيل التطبيق تلقائياً.
-              </p>
             </div>
           )}
         </div>
 
-        <div className="pt-4 flex justify-end gap-3">
-          <Button variant="outline" onClick={handleTest} disabled={testing || !botToken || !chatId}>
-            {testing ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-            اختبار الإرسال
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-            {saved ? <Check className="w-4 h-4 ml-2 text-green-500" /> : null}
-            {saved ? "تم الحفظ" : "حفظ الإعدادات"}
-          </Button>
-        </div>
+        {activeTab === "bot" && (
+          <div className="pt-4 flex justify-end gap-3">
+            <Button variant="outline" onClick={handleTest} disabled={testing || !botToken || !chatId}>
+              {testing ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+              اختبار الإرسال
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+              {saved ? <Check className="w-4 h-4 ml-2 text-green-500" /> : null}
+              {saved ? "تم الحفظ" : "حفظ الإعدادات"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,33 @@
+# Secrets & local config
+.env
+.env.*
+*.local
+.mcp.json
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+reports-app/src-tauri/target/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Local agent tooling
+.codex/
+
+# Tauri generated
+reports-app/src-tauri/gen/schemas

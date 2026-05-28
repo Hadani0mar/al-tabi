@@ -314,8 +314,144 @@ pub async fn run_scheduler(
 
             // أرسل حدث Tauri للواجهة
             let _ = app_handle.emit("report-notification", &notification);
+
+            // إرسال تلقائي إلى بوت Telegram إن وُجدت الإعدادات
+            send_notification_to_telegram(&app_handle, &notification).await;
         }
     }
+}
+
+async fn send_notification_to_telegram(
+    app_handle: &tauri::AppHandle,
+    notification: &ReportNotification,
+) {
+    let (token, chat_id_str) = match crate::supabase_config::load_local_telegram_settings(
+        app_handle,
+        crate::decrypt_value,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[scheduler] telegram settings: {}", e);
+            return;
+        }
+    };
+
+    if token.trim().is_empty() || chat_id_str.trim().is_empty() {
+        return;
+    }
+
+    let chat_id: i64 = match chat_id_str.trim().parse() {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("[scheduler] invalid telegram chat_id: {}", e);
+            return;
+        }
+    };
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[scheduler] telegram client: {}", e);
+            return;
+        }
+    };
+
+    let caption = format!("📅 {}\n{}", notification.schedule_name, notification.title);
+
+    let result = match notification.report_type.as_str() {
+        "pdf" => {
+            let Some(path) = notification.file_path.as_ref() else {
+                return;
+            };
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    let filename = telegram_document_name(&notification.title, "pdf");
+                    crate::telegram::send_pdf(
+                        &client,
+                        token.trim(),
+                        chat_id,
+                        &filename,
+                        bytes,
+                        &caption,
+                    )
+                    .await
+                }
+                Err(e) => {
+                    eprintln!("[scheduler] read pdf for telegram: {}", e);
+                    return;
+                }
+            }
+        }
+        "excel" => {
+            let Some(path) = notification.file_path.as_ref() else {
+                return;
+            };
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    let filename = telegram_document_name(&notification.title, "xlsx");
+                    crate::telegram::send_excel(
+                        &client,
+                        token.trim(),
+                        chat_id,
+                        &filename,
+                        bytes,
+                        &caption,
+                    )
+                    .await
+                }
+                Err(e) => {
+                    eprintln!("[scheduler] read excel for telegram: {}", e);
+                    return;
+                }
+            }
+        }
+        _ => {
+            let Some(text) = notification.text_content.as_ref() else {
+                return;
+            };
+            let message = format!("📅 {}\n{}\n\n{}", notification.schedule_name, notification.title, text);
+            let message = truncate_telegram_text(&message, 4096);
+            crate::telegram::send_message(&client, token.trim(), chat_id, message)
+                .await
+        }
+    };
+
+    if let Err(e) = result {
+        eprintln!(
+            "[scheduler] telegram send failed for {}: {}",
+            notification.schedule_name, e
+        );
+    }
+}
+
+fn telegram_document_name(title: &str, ext: &str) -> String {
+    let base: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else if c.is_whitespace() {
+                '_'
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = base.trim_matches('_');
+    let base = if base.is_empty() { "report" } else { base };
+    format!("{}.{}", &base[..base.len().min(80)], ext)
+}
+
+fn truncate_telegram_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars.saturating_sub(20)).collect();
+    out.push_str("\n\n… (تم اختصار الرسالة)");
+    out
 }
 
 // ─── تنفيذ SQL من الجدول ────────────────────────────────────────

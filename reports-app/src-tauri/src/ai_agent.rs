@@ -882,6 +882,7 @@ pub async fn handle_with_groq(
 
     let new_schema_info = search_schema(user_text, openai_key).await;
     let schema_info = prepare_schema_for_system_prompt(&new_schema_info);
+    let memory_block = crate::agent_memory::recall_memory_prompt_block(user_text, openai_key).await;
 
     let system_instruction = format!(
         "<DOMAIN_CRITICAL_FACTS>\n\
@@ -953,7 +954,8 @@ STORE_ID PK, STORE_NAME varchar(50)\n\
 ```\n\
 ACC_ID, ACC_DEBIT, ACC_CREDIT, BALANCE — غير مُحدَّث هنا\n\
 ```\n\
-**البديل الإلزامي للديون:** `run_query_pattern(\"متابعة الديون\")` أو صيغة: مبيعات−مردودات−TAKE+BALANCE_EDIT (لي) / مشتريات−مردودات−GIVE+BALANCE_EDIT (علي).\n\n\
+**البديل الإلزامي للديون:** `run_query_pattern(\"متابعة الديون\")` (تقرير شامل: لي + علي + تفاصيل) أو صيغة: مبيعات−مردودات−TAKE+BALANCE_EDIT (لي) / مشتريات−مردودات−GIVE+BALANCE_EDIT (علي).\n\
+**ديون الموردين فقط (مبسّط — عمودان: اسم المورد + الدين):** `run_query_pattern(\"ديون الموردين\")` — استخدمه عندما يطلب المستخدم «ديون الموردين فقط» أو «اسم المورد والدين» أو لا يحتاج تواريخ/مقبوضات. لا تضف أي عمود آخر مهما طلب لاحقاً — هذا النمط مغلق على عمودين.\n\n\
 **`dbo.R_S_INVOICE`** / **`dbo.R_S_ITEMS`** — Sales return invoices & items (مردودات المبيعات).\n\
 - `R_S_INVOICE`: `S_R_ID` PK, `S_R_DATE` datetime, `CUST_ID`→CUSTOMERS, `CUST_NAME`, `USERS_ID`→USERS, `S_R_NOTE`.\n\
 - `R_S_ITEMS`: `S_R_ITEM_ID` PK, `S_R_ID`→R_S_INVOICE, `ITEM_ID`→ITEMS, `STORE_ID`→STORES, `QTY` float, `PRICE` float=Returned Price, `CATEOGRY3` datetime=Expiry.\n\n\
@@ -1007,6 +1009,7 @@ Every table name, every column name in your SQL **must** appear verbatim here OR
 If you can't find a needed column, call `search_schema` ONCE more with different keywords or use `explore_local_schema` — do NOT guess.\n\n\
 {}\n\
 </schema>\n\n\
+{}\n\n\
 <critical_rules>\n\
 1. **NEVER invent column or table names.** Every column/table in your SQL must appear in <DOMAIN_CRITICAL_FACTS> or <schema>. \
 If unsure, call `explore_local_schema` first.\n\n\
@@ -1029,7 +1032,8 @@ Do NOT use Markdown (`**`, `_`). Add 📊 📦 emojis where helpful. The officia
 5c. **Professional advisor behavior.** You are not just a query engine — you are a business intelligence advisor. When asked for advice, recommendations, or analysis: provide concrete, specific, actionable insights with data to back them up. Proactively suggest related queries the user might find useful. If you notice something important in the data (e.g., critically low stock, high debt concentration, expired products), mention it even if not asked.\n\n\
 6. **PDF Reports.** Create PDF files only when the user explicitly asks for PDF, export, print, file, or report document. For a predefined saved report, call `generate_pdf`. For a new custom report that you design from the database, call `create_pdf_report` with a clear title and one read-only T-SQL SELECT query. If you already have tabular rows in memory and the user asks to export those exact rows, call `generate_custom_pdf`. Never create a PDF for a normal answer unless requested.\n\
 7. **Excel Reports.** Create Excel (.xlsx) files only when the user explicitly asks for Excel, اكسل, إكسل, xlsx, spreadsheet, or جدول بيانات. For a predefined saved report, call `generate_excel`. For a new custom report from SQL, call `create_excel_report` with title + one read-only SELECT. If you already have tabular rows in memory, call `generate_custom_excel`. Never create Excel for a normal answer unless requested.\n\
-8. **Advanced SQL tools.** `get_database_views` for Views + join rules (مبيعات موظف: SUM(QTY*PRICE), SALE_ITEMS_INVOICE_VIEW). `get_product_schema` for products. **مبيعات يومية/موظف:** `run_query_pattern(\"مبيعات يومية موظف\")` FIRST. **Complex:** `plan_complex_query` → `execute_query_plan`. `validate_sql`, `explain_sql`, `get_table_sample`, `compare_periods`, `suggest_indexes`, favorites, `export_last_result`.\n\
+8. **Advanced SQL tools.** `get_database_views` for Views + join rules (مبيعات موظف: SUM(QTY*PRICE), SALE_ITEMS_INVOICE_VIEW). `get_product_schema` for products. **مبيعات يومية/موظف:** `run_query_pattern(\"مبيعات يومية موظف\")` FIRST. **Complex:** `plan_complex_query` → `execute_query_plan`. `validate_sql`, `explain_sql`, `get_table_sample`, `compare_periods`, `suggest_indexes`, favorites, `export_last_result`.\n\n\
+9. **Save to favorites (MANDATORY).** When the user says: «احفظ»، «خزّن»، «ضعه في المفضلة»، «أضفه للمحفوظات»، «save», «remember» — you MUST call `save_favorite_query` in the SAME turn with the EXACT SQL from the last successful `execute_raw_sql` / `run_query_pattern`. Generate a concise Arabic `name` (≤50 chars) and brief `description`. **Never** reply «تم الحفظ» without calling the tool. **Never** ask permission — just save.\n\
 </critical_rules>\n\n\
 <workflow>\n\
 For each user question, follow these steps:\n\
@@ -1094,11 +1098,26 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
 ❌ NEVER: `FROM dbo.SALARIES` for paid salary receipts — table is empty; use `GIVE WHERE EXPENCES_ID=1`.\n\
 ❌ NEVER: treating `GIVE WHERE EXPENCES_ID=0` as operational expense — those are supplier purchase payments.\n\
 ❌ NEVER: claiming \"لا توجد بيانات\" before running an actual query.\n\
-</anti_examples>",
+❌ NEVER: replying \"تم الحفظ\" without actually calling `save_favorite_query` — that's a lie.\n\
+❌ NEVER: asking \"هل تريد حفظ هذا الاستعلام؟\" — when the user said \"احفظ\", just save it immediately.\n\
+</anti_examples>\n\n\
+<save_examples>\n\
+<example>\n\
+Context: User just received results from a sales-by-employee query.\n\
+User: \"احفظ هذا الاستعلام\"\n\
+Your action: `save_favorite_query(name=\"مبيعات اليوم حسب الموظف\", sql_query=<EXACT last SQL>, description=\"إجمالي مبيعات كل موظف في آخر يوم تسجيل فواتير.\")`\n\
+Reply AFTER tool succeeds: «✅ حُفظ في المحفوظات باسم «مبيعات اليوم حسب الموظف» — يمكنك تشغيله من تبويب المحفوظات.»\n\
+</example>\n\n\
+<example>\n\
+User: \"ضعه في المفضلة باسم تقرير الديون اليومي\"\n\
+Your action: `save_favorite_query(name=\"تقرير الديون اليومي\", sql_query=<EXACT last SQL>, description=\"...\")` — use the user-provided name verbatim.\n\
+</example>\n\
+</save_examples>",
         MONTHLY_EXPENSES_TEMPLATE,
         ACTIVE_SHORTAGE_TRACKING_TEMPLATE,
         SUPPLIER_PRICE_COMPARISON_TEMPLATE,
-        schema_info
+        schema_info,
+        memory_block
     );
 
     let tools_json = json!([
@@ -1700,6 +1719,13 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
                         } else {
                             // If no function was called, it's a final text response! Extract text and send to Telegram.
                             if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                crate::agent_memory::spawn_persist_turn_memories(
+                                    user_text.to_string(),
+                                    content.to_string(),
+                                    openai_key.to_string(),
+                                    groq_key.to_string(),
+                                    crate::agent_memory::build_turn_context_from_history(&current_history),
+                                );
                                 let _ = send_html(client, token, chat_id, content.to_string()).await;
                                 return;
                             }
@@ -2141,6 +2167,17 @@ pub async fn handle_with_groq_local(
     openai_key: &str,
     mut cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<String, String> {
+    if groq_key.trim().is_empty() {
+        return Err(
+            "مفتاح OpenRouter غير متوفر. تحقق من اتصال الإنترنت أو راجع إعدادات المطوّر."
+                .to_string(),
+        );
+    }
+
+    if let Some(reply) = try_handle_greeting(user_text) {
+        return Ok(reply);
+    }
+
     let mut schema_info = "لا يُحقَن DDL إضافي تلقائياً — DOMAIN_CRITICAL_FACTS أعلاه كافٍ لمعظم الأسئلة. \
 استخدم search_query_patterns ثم run_query_pattern قبل أي استكشاف. \
 ناد search_schema فقط إذا احتجت جدولاً غير مذكور في DOMAIN_CRITICAL_FACTS.".to_string();
@@ -2160,6 +2197,8 @@ pub async fn handle_with_groq_local(
             pf = pf,
         ));
     }
+
+    let memory_block = crate::agent_memory::recall_memory_prompt_block(user_text, openai_key).await;
 
     let system_instruction = format!(
         "<DOMAIN_CRITICAL_FACTS>\n\
@@ -2231,7 +2270,8 @@ STORE_ID PK, STORE_NAME varchar(50)\n\
 ```\n\
 ACC_ID, ACC_DEBIT, ACC_CREDIT, BALANCE — غير مُحدَّث هنا\n\
 ```\n\
-**البديل الإلزامي للديون:** `run_query_pattern(\"متابعة الديون\")` أو صيغة: مبيعات−مردودات−TAKE+BALANCE_EDIT (لي) / مشتريات−مردودات−GIVE+BALANCE_EDIT (علي).\n\n\
+**البديل الإلزامي للديون:** `run_query_pattern(\"متابعة الديون\")` (تقرير شامل: لي + علي + تفاصيل) أو صيغة: مبيعات−مردودات−TAKE+BALANCE_EDIT (لي) / مشتريات−مردودات−GIVE+BALANCE_EDIT (علي).\n\
+**ديون الموردين فقط (مبسّط — عمودان: اسم المورد + الدين):** `run_query_pattern(\"ديون الموردين\")` — استخدمه عندما يطلب المستخدم «ديون الموردين فقط» أو «اسم المورد والدين» أو لا يحتاج تواريخ/مقبوضات. لا تضف أي عمود آخر مهما طلب لاحقاً — هذا النمط مغلق على عمودين.\n\n\
 **`dbo.R_S_INVOICE`** / **`dbo.R_S_ITEMS`** — Sales return invoices & items (مردودات المبيعات).\n\
 - `R_S_INVOICE`: `S_R_ID` PK, `S_R_DATE` datetime, `CUST_ID`→CUSTOMERS, `CUST_NAME`, `USERS_ID`→USERS, `S_R_NOTE`.\n\
 - `R_S_ITEMS`: `S_R_ITEM_ID` PK, `S_R_ID`→R_S_INVOICE, `ITEM_ID`→ITEMS, `STORE_ID`→STORES, `QTY` float, `PRICE` float=Returned Price, `CATEOGRY3` datetime=Expiry.\n\n\
@@ -2282,6 +2322,7 @@ execute them via the `execute_raw_sql` tool, and report results back in Arabic.\
 <schema>\n\
 {}\n\
 </schema>\n\n\
+{}\n\n\
 <critical_rules>\n\
 1. **EXECUTE FIRST — never defer.** Call a tool (run_query_pattern / execute_raw_sql / create_excel_report) in the SAME turn. \
 NEVER reply with \"سأنفذ/سأبحث/سأستخدم\" without an immediate tool call.\n\n\
@@ -2308,7 +2349,14 @@ Append `[FILE_PATH:actual_path]` only when a file was saved.\n\n\
 8. **Excel Reports.** When user asks for Excel/اكسل/xlsx: call create_excel_report or export_last_result — do NOT describe the file without creating it.\n\
 9. **Large results (>25 rows).** Server auto-creates PDF — summarize preview rows and include [FILE_PATH] from tool result. Do NOT dump all rows in chat.\n\
 10. **Advanced tools.** run_query_pattern FIRST for: ديون، مصاريف، مبيعات موظف، مقارنة أسعار موردين (مع product_filter)، نواقص نشطة مورد، متابعة النواقص، طلبية شراء. \
-Avoid search_schema/get_table_sample unless run_query_pattern failed.\n\
+Avoid search_schema/get_table_sample unless run_query_pattern failed.\n\n\
+11. **Save to favorites (MANDATORY behavior).** When the user asks to save, store, remember, or favorite a query — using ANY of these triggers: \
+«احفظ»، «خزّن»، «خزن»، «خزنه»، «احفظه»، «ضعه في المفضلة»، «ضيف للمفضلة»، «أضفه للمحفوظات»، «أريد تخزينه»، «احفظ هذا الاستعلام»، «save», «remember», «store this» \
+— you MUST call `save_favorite_query` IMMEDIATELY in the same turn, using the EXACT SQL from the last successful `execute_raw_sql` or `run_query_pattern` call in this conversation. \
+Generate a short descriptive Arabic `name` (max 50 chars) from the user's intent (e.g. «مبيعات اليوم حسب الموظف»، «نواقص المخزون النشطة»). \
+Add a brief `description` (one sentence) explaining what it does. \
+**Never** reply «تم الحفظ» without actually calling the tool. **Never** ask «هل تريد حفظه؟» — just save it. \
+If no successful SELECT was executed yet in this conversation, run it first then save in the next turn.\n\
 </critical_rules>\n\n\
 <workflow>\n\
 1. Identify the request type.\n\
@@ -2368,11 +2416,26 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
 ❌ NEVER: `FROM dbo.SALARIES` for paid salary receipts — table is empty; use `GIVE WHERE EXPENCES_ID=1`.\n\
 ❌ NEVER: treating `GIVE WHERE EXPENCES_ID=0` as operational expense — those are supplier purchase payments.\n\
 ❌ NEVER: claiming \"لا توجد بيانات\" before running an actual query.\n\
-</anti_examples>",
+❌ NEVER: replying \"تم الحفظ\" without actually calling `save_favorite_query` — that's a lie.\n\
+❌ NEVER: asking \"هل تريد حفظ هذا الاستعلام؟\" — when the user said \"احفظ\", just save it immediately.\n\
+</anti_examples>\n\n\
+<save_examples>\n\
+<example>\n\
+Context: User just received results from a sales-by-employee query.\n\
+User: \"احفظ هذا الاستعلام\"\n\
+Your action: `save_favorite_query(name=\"مبيعات اليوم حسب الموظف\", sql_query=<EXACT last SQL>, description=\"إجمالي مبيعات كل موظف في آخر يوم تسجيل فواتير.\")`\n\
+Reply AFTER tool succeeds: «✅ حُفظ في المحفوظات باسم «مبيعات اليوم حسب الموظف» — يمكنك تشغيله من تبويب المحفوظات.»\n\
+</example>\n\n\
+<example>\n\
+User: \"ضعه في المفضلة باسم تقرير الديون اليومي\"\n\
+Your action: `save_favorite_query(name=\"تقرير الديون اليومي\", sql_query=<EXACT last SQL>, description=\"...\")` — use the user-provided name verbatim.\n\
+</example>\n\
+</save_examples>",
         MONTHLY_EXPENSES_TEMPLATE,
         ACTIVE_SHORTAGE_TRACKING_TEMPLATE,
         SUPPLIER_PRICE_COMPARISON_TEMPLATE,
-        schema_info
+        schema_info,
+        memory_block
     );
 
     let tools_json = json!([
@@ -2666,6 +2729,8 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
     let mut schema_cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut sql_call_count: usize = 0;
     const MAX_SQL_PER_TURN: usize = 8;
+    let mut schema_explore_count: usize = 0;
+    const MAX_SCHEMA_EXPLORE_PER_TURN: usize = 4;
     let mut nudge_count: u8 = 0;
 
     // 3. Agent Loop (multi-step function calling)
@@ -2993,18 +3058,19 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
                                     let table_hint = args.get("table_hint").and_then(|h| h.as_str()).unwrap_or("");
                                     let cache_key = table_hint.to_lowercase();
 
-                                    let func_response_data = if let Some(cached) = schema_cache.get(&cache_key) {
-                                        format!("{{\"cached\": true, \"data\": {}}}", cached)
+                                    schema_explore_count += 1;
+                                    let func_response_data: Value = if schema_explore_count > MAX_SCHEMA_EXPLORE_PER_TURN {
+                                        json!({
+                                            "error": "تجاوزت 4 استكشافات للمخطط في هذا الدور. استخدم run_query_pattern أو DOMAIN_CRITICAL_FACTS ثم نفّذ استعلاماً واحداً."
+                                        })
+                                    } else if let Some(cached) = schema_cache.get(&cache_key) {
+                                        json!({ "cached": true, "data": cached })
                                     } else {
-                                    // let _ = app_handle.emit("tool-usage"... removed
                                         let result = explore_local_schema_for_agent(table_hint, app_state).await;
                                         let s = result.to_string();
                                         schema_cache.insert(cache_key, s.clone());
-                                        s
+                                        result
                                     };
-
-                                    // dummy var to maintain the existing assignment pattern below
-                                    let func_response_data = json!(func_response_data);
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -3091,6 +3157,13 @@ Your SQL: copy the \"متابعة الديون\" UNION query from <DOMAIN_CRITIC
                                 }
                                 let final_content =
                                     sanitize_response_file_paths(content, app_state).await;
+                                crate::agent_memory::spawn_persist_turn_memories(
+                                    user_text.to_string(),
+                                    final_content.clone(),
+                                    openai_key.to_string(),
+                                    groq_key.to_string(),
+                                    crate::agent_memory::build_turn_context_from_history(&current_history),
+                                );
                                 return Ok(final_content);
                             }
                             return Err("رد فارغ من الذكاء الاصطناعي".to_string());

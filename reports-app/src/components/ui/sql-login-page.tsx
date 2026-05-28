@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import { Button } from "@/components/ui/button";
@@ -6,14 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Eye, EyeOff, Database, BarChart3,
+  Eye, EyeOff, Database,
   Server, Hash, User, Lock, ShieldCheck,
   Monitor, Save, Plug, Loader2,
   CheckCircle2, XCircle, AlertCircle,
-  TrendingUp, FileBarChart2, Users, PieChart,
-  KeyRound, Network, BookLock, Wifi,
-  ChevronRight, ScrollText, ShieldAlert,
+  KeyRound, BookLock, Wifi,
+  ChevronRight, ShieldAlert,
+  Bot, Sparkles, Wand2, X, Zap, Check,
+  MessageCircle,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -26,67 +28,12 @@ interface ConnectionResult {
 }
 const STORE_FILE = "connections.dat";
 
-// ─── InputIcon wrapper ─────────────────────────────────────────
 function FieldIcon({ icon: Icon, className }: { icon: React.ElementType; className?: string }) {
   return <Icon className={cn("absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none", className)} />;
 }
 
-// ─── Pupil ──────────────────────────────────────────────────────
-interface PupilProps {
-  size?: number; maxDistance?: number; pupilColor?: string;
-  forceLookX?: number; forceLookY?: number;
-}
-const Pupil = ({ size = 12, maxDistance = 5, pupilColor = "#1a1a2e", forceLookX, forceLookY }: PupilProps) => {
-  const [pos, setPos] = useState({ x: 0, y: 0 });
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!ref.current || (forceLookX !== undefined && forceLookY !== undefined)) return;
-      const r = ref.current.getBoundingClientRect();
-      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-      const d = Math.min(Math.sqrt(dx ** 2 + dy ** 2), maxDistance), a = Math.atan2(dy, dx);
-      setPos({ x: Math.cos(a) * d, y: Math.sin(a) * d });
-    };
-    window.addEventListener("mousemove", move);
-    return () => window.removeEventListener("mousemove", move);
-  }, [maxDistance, forceLookX, forceLookY]);
-  const px = forceLookX !== undefined ? forceLookX : pos.x;
-  const py = forceLookY !== undefined ? forceLookY : pos.y;
-  return <div ref={ref} className="rounded-full" style={{ width: size, height: size, backgroundColor: pupilColor, transform: `translate(${px}px,${py}px)`, transition: "transform 0.1s ease-out" }} />;
-};
-
-// ─── EyeBall ────────────────────────────────────────────────────
-interface EyeBallProps {
-  size?: number; pupilSize?: number; maxDistance?: number;
-  eyeColor?: string; pupilColor?: string; isBlinking?: boolean;
-  forceLookX?: number; forceLookY?: number;
-}
-const EyeBall = ({ size = 48, pupilSize = 16, maxDistance = 10, eyeColor = "white", pupilColor = "#1a1a2e", isBlinking = false, forceLookX, forceLookY }: EyeBallProps) => {
-  const [pupilPos, setPupilPos] = useState({ x: 0, y: 0 });
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!ref.current || forceLookX !== undefined) return;
-      const r = ref.current.getBoundingClientRect();
-      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-      const d = Math.min(Math.sqrt(dx ** 2 + dy ** 2), maxDistance), a = Math.atan2(dy, dx);
-      setPupilPos({ x: Math.cos(a) * d, y: Math.sin(a) * d });
-    };
-    window.addEventListener("mousemove", move);
-    return () => window.removeEventListener("mousemove", move);
-  }, [maxDistance, forceLookX]);
-  const px = forceLookX !== undefined ? forceLookX : pupilPos.x;
-  const py = forceLookY !== undefined ? forceLookY : pupilPos.y;
-  return (
-    <div ref={ref} className="rounded-full flex items-center justify-center transition-all duration-150"
-      style={{ width: size, height: isBlinking ? 2 : size, backgroundColor: eyeColor, overflow: "hidden" }}>
-      {!isBlinking && <div className="rounded-full" style={{ width: pupilSize, height: pupilSize, backgroundColor: pupilColor, transform: `translate(${px}px,${py}px)`, transition: "transform 0.1s ease-out" }} />}
-    </div>
-  );
-};
-
-// ─── Main ───────────────────────────────────────────────────────
 interface SqlLoginPageProps {
+  autoConnecting?: boolean;
   onConnected?: (info: {
     server: string; port: number; database: string;
     username: string; password: string;
@@ -94,7 +41,26 @@ interface SqlLoginPageProps {
   }) => void;
 }
 
-export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
+const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+
+type AutoStatus = "idle" | "running" | "success" | "error";
+
+interface AiStep {
+  key: "server" | "port" | "database" | "winauth" | "connect";
+  label: string;
+  detail: string;
+  icon: React.ElementType;
+}
+
+const AI_STEPS: AiStep[] = [
+  { key: "server",   label: "تحديد عنوان السيرفر",         detail: "localhost",       icon: Server },
+  { key: "port",     label: "ضبط المنفذ الافتراضي",         detail: "1433",            icon: Hash },
+  { key: "database", label: "اختيار قاعدة البيانات",         detail: "Marketing2026",   icon: Database },
+  { key: "winauth",  label: "تفعيل مصادقة Windows الآمنة",  detail: "Windows Auth",    icon: ShieldCheck },
+  { key: "connect",  label: "اختبار الاتصال وتفعيل الجلسة", detail: "Test & Connect",  icon: Plug },
+];
+
+export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps) {
   const [form, setForm] = useState<SqlConnection>({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false });
   const [showPass, setShowPass] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
@@ -102,22 +68,12 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
   const [version, setVersion] = useState<string | null>(null);
   const [savedConn, setSavedConn] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
-  const [isTyping, setIsTyping] = useState(false);
-  const [isPurpleBlink, setIsPurpleBlink] = useState(false);
-  const [isBlackBlink, setIsBlackBlink] = useState(false);
-  const [lookEachOther, setLookEachOther] = useState(false);
-  const [purplePeek, setPurplePeek] = useState(false);
-  const [mouse, setMouse] = useState({ x: 0, y: 0 });
-  const purpleRef = useRef<HTMLDivElement>(null);
-  const blackRef = useRef<HTMLDivElement>(null);
-  const yellowRef = useRef<HTMLDivElement>(null);
-  const orangeRef = useRef<HTMLDivElement>(null);
+  const [autoLogin, setAutoLogin] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [autoStatus, setAutoStatus] = useState<AutoStatus>("idle");
+  const [autoStep, setAutoStep] = useState<number>(-1);
+  const [autoError, setAutoError] = useState<string>("");
 
-  useEffect(() => { const h = (e: MouseEvent) => setMouse({ x: e.clientX, y: e.clientY }); window.addEventListener("mousemove", h); return () => window.removeEventListener("mousemove", h); }, []);
-  useEffect(() => { const s = () => { const t = setTimeout(() => { setIsPurpleBlink(true); setTimeout(() => { setIsPurpleBlink(false); s(); }, 150); }, Math.random() * 4000 + 3000); return t; }; const t = s(); return () => clearTimeout(t); }, []);
-  useEffect(() => { const s = () => { const t = setTimeout(() => { setIsBlackBlink(true); setTimeout(() => { setIsBlackBlink(false); s(); }, 150); }, Math.random() * 4000 + 3000); return t; }; const t = s(); return () => clearTimeout(t); }, []);
-  useEffect(() => { if (isTyping) { setLookEachOther(true); const t = setTimeout(() => setLookEachOther(false), 800); return () => clearTimeout(t); } else setLookEachOther(false); }, [isTyping]);
-  useEffect(() => { if (form.password.length > 0 && showPass) { const t = setTimeout(() => { setPurplePeek(true); setTimeout(() => setPurplePeek(false), 800); }, Math.random() * 3000 + 2000); return () => clearTimeout(t); } else setPurplePeek(false); }, [form.password, showPass, purplePeek]);
   useEffect(() => { loadHistory(); }, []);
 
   async function loadHistory() {
@@ -125,6 +81,8 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
       const store = await load(STORE_FILE, { autoSave: false, defaults: {} });
       const last = await store.get<string>("last_connection");
       const names = await store.get<string[]>("connection_names") ?? [];
+      const auto = await store.get<boolean>("auto_login");
+      if (auto !== null && auto !== undefined) setAutoLogin(!!auto);
       if (last && names.includes(last)) await loadConnection(last);
     } catch (_) {}
   }
@@ -146,20 +104,21 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
       const names = await store.get<string[]>("connection_names") ?? [];
       if (!names.includes(name)) await store.set("connection_names", [...names, name]);
       await store.set("last_connection", name);
+      await store.set("auto_login", autoLogin);
       await store.save();
       setSavedConn(true);
     } catch (e) { console.error(e); }
   }
+  async function persistAutoLogin(value: boolean) {
+    setAutoLogin(value);
+    try {
+      const store = await load(STORE_FILE, { autoSave: false, defaults: {} });
+      await store.set("auto_login", value);
+      await store.save();
+    } catch (e) { console.error(e); }
+  }
 
-  const calcPos = (ref: React.RefObject<HTMLDivElement | null>) => {
-    if (!ref.current) return { faceX: 0, faceY: 0, bodySkew: 0 };
-    const r = ref.current.getBoundingClientRect();
-    const dx = mouse.x - (r.left + r.width / 2), dy = mouse.y - (r.top + r.height / 3);
-    return { faceX: Math.max(-15, Math.min(15, dx / 20)), faceY: Math.max(-10, Math.min(10, dy / 30)), bodySkew: Math.max(-6, Math.min(6, -dx / 120)) };
-  };
-  const pp = calcPos(purpleRef), bp = calcPos(blackRef), yp = calcPos(yellowRef), op = calcPos(orangeRef);
-  const hiding = form.password.length > 0 && !showPass;
-  const visible = form.password.length > 0 && showPass;
+  const set = (k: keyof SqlConnection, v: string | number | boolean) => setForm(p => ({ ...p, [k]: v }));
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
@@ -186,123 +145,181 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
     } catch (err) { setStatus("error"); setMsg(`خطأ: ${err}`); }
   }
 
-  const set = (k: keyof SqlConnection, v: string | number | boolean) => setForm(p => ({ ...p, [k]: v }));
+  async function typewriteField(field: "server" | "database", value: string) {
+    for (let i = 1; i <= value.length; i++) {
+      setForm(p => ({ ...p, [field]: value.substring(0, i) }));
+      await sleep(55 + Math.random() * 35);
+    }
+  }
 
-  // مميزات النظام للبانل الأيسر
-  const features = [
-    { icon: FileBarChart2, label: "تقارير ديناميكية", desc: "استعلامات مخزّنة في السحابة" },
-    { icon: TrendingUp,    label: "تحليل فوري",       desc: "نتائج لحظية من SQL Server" },
-    { icon: Users,         label: "متعدد المستخدمين", desc: "صلاحيات وتحكم كامل" },
-    { icon: PieChart,      label: "مرئيات تفاعلية",   desc: "رسوم بيانية احترافية" },
+  function openAutoConnect() {
+    setAutoStatus("idle");
+    setAutoStep(-1);
+    setAutoError("");
+    setAutoOpen(true);
+  }
+
+  async function runAutoConnect() {
+    setAutoStatus("running");
+    setAutoError("");
+    setStatus("idle");
+    setMsg("");
+    setForm({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false });
+    await sleep(450);
+
+    try {
+      // الخطوة 0: السيرفر
+      setAutoStep(0);
+      await sleep(350);
+      await typewriteField("server", "localhost");
+      await sleep(400);
+
+      // الخطوة 1: المنفذ
+      setAutoStep(1);
+      setForm(p => ({ ...p, port: 1433 }));
+      await sleep(900);
+
+      // الخطوة 2: قاعدة البيانات
+      setAutoStep(2);
+      await sleep(350);
+      await typewriteField("database", "Marketing2026");
+      await sleep(400);
+
+      // الخطوة 3: Windows Auth
+      setAutoStep(3);
+      await sleep(450);
+      setForm(p => ({ ...p, use_windows_auth: true }));
+      await sleep(700);
+
+      // الخطوة 4: الاتصال الفعلي
+      setAutoStep(4);
+      await sleep(500);
+
+      const conn: SqlConnection = {
+        server: "localhost",
+        port: 1433,
+        database: "Marketing2026",
+        username: "",
+        password: "",
+        use_windows_auth: true,
+      };
+
+      const result = await invoke<ConnectionResult>("test_sql_connection", { conn });
+
+      if (!result.success) {
+        setAutoStatus("error");
+        setAutoError(result.message);
+        setStatus("error");
+        setMsg(result.message);
+        return;
+      }
+
+      setStatus("success");
+      setMsg(result.message);
+      setVersion(result.server_version);
+      if (rememberMe) await saveConnection(conn.database);
+      await invoke("set_active_connection", { conn }).catch(console.error);
+
+      setAutoStatus("success");
+      await sleep(1400);
+      onConnected?.({ ...conn, server_version: result.server_version });
+    } catch (err) {
+      setAutoStatus("error");
+      setAutoError(`${err}`);
+      setStatus("error");
+      setMsg(`خطأ: ${err}`);
+    }
+  }
+
+  const brandFeatures = [
+    { icon: Check, text: "قراءة فقط" },
+    { icon: Database, text: "SQL Server" },
+    { icon: MessageCircle, text: "Telegram" },
   ];
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2">
+    <div className="min-h-screen grid lg:grid-cols-2" style={{ background: "var(--bg-canvas)" }}>
 
-      {/* ══════════════ اليسار — البانل ══════════════ */}
-      <div className="relative hidden lg:flex flex-col justify-between bg-gradient-to-br from-indigo-700 via-indigo-600 to-violet-700 p-12 text-white overflow-hidden">
-        {/* خلفية شبكية */}
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:20px_20px]" />
-        <div className="absolute top-1/4 right-1/4 w-64 h-64 bg-white/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-white/5 rounded-full blur-3xl" />
+      {/* ══════════════ اليسار — Mihbar brand panel ══════════════ */}
+      <div
+        className="relative hidden lg:flex flex-col justify-between p-14 overflow-hidden"
+        style={{
+          background: "linear-gradient(160deg, #0F6E70 0%, #0A5759 100%)",
+          color: "var(--fg-on-brand)",
+        }}
+      >
+        <div
+          className="pointer-events-none absolute -bottom-20 -left-20 h-80 w-80 rounded-full"
+          style={{ background: "radial-gradient(circle, rgba(184,106,44,0.30), transparent 65%)" }}
+        />
 
-        {/* ── شعار ── */}
-        <div className="relative z-10 flex items-center gap-3 text-lg font-bold">
-          <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center shadow-lg">
-            <BarChart3 className="w-5 h-5" />
-          </div>
+        <div className="relative z-10 flex items-center gap-3">
+          <img src="/assets/logo-mark.svg" alt="" width={44} height={44} className="rounded-[10px]" />
           <div>
-            <span className="block leading-tight">نظام التقارير</span>
-            <span className="block text-xs font-normal text-white/50">Reports System v1.0</span>
-          </div>
-        </div>
-
-        {/* ── الشخصيات ── */}
-        <div className="relative z-10 flex items-end justify-center" style={{ height: 400 }}>
-          <div className="relative" style={{ width: 520, height: 370 }}>
-            {/* البنفسجي */}
-            <div ref={purpleRef} className="absolute bottom-0 transition-all duration-700"
-              style={{ left: 60, width: 170, height: hiding ? 430 : 380, backgroundColor: "#7C3AED", borderRadius: "10px 10px 0 0", zIndex: 1, transform: visible ? "skewX(0deg)" : hiding ? `skewX(${(pp.bodySkew || 0) - 12}deg) translateX(38px)` : `skewX(${pp.bodySkew || 0}deg)`, transformOrigin: "bottom center" }}>
-              <div className="absolute flex gap-7 transition-all duration-700" style={{ left: visible ? 18 : lookEachOther ? 52 : 42 + pp.faceX, top: visible ? 32 : lookEachOther ? 62 : 38 + pp.faceY }}>
-                <EyeBall size={17} pupilSize={6} maxDistance={4} eyeColor="white" pupilColor="#1a1a2e" isBlinking={isPurpleBlink} forceLookX={visible ? (purplePeek ? 4 : -4) : lookEachOther ? 3 : undefined} forceLookY={visible ? (purplePeek ? 5 : -4) : lookEachOther ? 4 : undefined} />
-                <EyeBall size={17} pupilSize={6} maxDistance={4} eyeColor="white" pupilColor="#1a1a2e" isBlinking={isPurpleBlink} forceLookX={visible ? (purplePeek ? 4 : -4) : lookEachOther ? 3 : undefined} forceLookY={visible ? (purplePeek ? 5 : -4) : lookEachOther ? 4 : undefined} />
-              </div>
+            <div className="text-[22px] font-bold leading-tight" style={{ fontFamily: "var(--font-display)" }}>
+              التابي
             </div>
-            {/* الأسود */}
-            <div ref={blackRef} className="absolute bottom-0 transition-all duration-700"
-              style={{ left: 225, width: 115, height: 300, backgroundColor: "#1e1b4b", borderRadius: "8px 8px 0 0", zIndex: 2, transform: visible ? "skewX(0deg)" : lookEachOther ? `skewX(${(bp.bodySkew || 0) * 1.5 + 10}deg) translateX(18px)` : hiding ? `skewX(${(bp.bodySkew || 0) * 1.5}deg)` : `skewX(${bp.bodySkew || 0}deg)`, transformOrigin: "bottom center" }}>
-              <div className="absolute flex gap-5 transition-all duration-700" style={{ left: visible ? 8 : lookEachOther ? 30 : 24 + bp.faceX, top: visible ? 26 : lookEachOther ? 10 : 30 + bp.faceY }}>
-                <EyeBall size={15} pupilSize={5} maxDistance={4} eyeColor="white" pupilColor="#1a1a2e" isBlinking={isBlackBlink} forceLookX={visible ? -4 : lookEachOther ? 0 : undefined} forceLookY={visible ? -4 : lookEachOther ? -4 : undefined} />
-                <EyeBall size={15} pupilSize={5} maxDistance={4} eyeColor="white" pupilColor="#1a1a2e" isBlinking={isBlackBlink} forceLookX={visible ? -4 : lookEachOther ? 0 : undefined} forceLookY={visible ? -4 : lookEachOther ? -4 : undefined} />
-              </div>
-            </div>
-            {/* البرتقالي */}
-            <div ref={orangeRef} className="absolute bottom-0 transition-all duration-700"
-              style={{ left: 0, width: 220, height: 185, backgroundColor: "#FB923C", borderRadius: "110px 110px 0 0", zIndex: 3, transform: visible ? "skewX(0deg)" : `skewX(${op.bodySkew || 0}deg)`, transformOrigin: "bottom center" }}>
-              <div className="absolute flex gap-7 transition-all duration-200" style={{ left: visible ? 46 : 76 + (op.faceX || 0), top: visible ? 80 : 86 + (op.faceY || 0) }}>
-                <Pupil size={11} maxDistance={4} pupilColor="#1a1a2e" forceLookX={visible ? -5 : undefined} forceLookY={visible ? -4 : undefined} />
-                <Pupil size={11} maxDistance={4} pupilColor="#1a1a2e" forceLookX={visible ? -5 : undefined} forceLookY={visible ? -4 : undefined} />
-              </div>
-            </div>
-            {/* الأصفر */}
-            <div ref={yellowRef} className="absolute bottom-0 transition-all duration-700"
-              style={{ left: 295, width: 135, height: 220, backgroundColor: "#FBBF24", borderRadius: "68px 68px 0 0", zIndex: 4, transform: visible ? "skewX(0deg)" : `skewX(${yp.bodySkew || 0}deg)`, transformOrigin: "bottom center" }}>
-              <div className="absolute flex gap-5 transition-all duration-200" style={{ left: visible ? 18 : 49 + (yp.faceX || 0), top: visible ? 33 : 38 + (yp.faceY || 0) }}>
-                <Pupil size={11} maxDistance={4} pupilColor="#1a1a2e" forceLookX={visible ? -5 : undefined} forceLookY={visible ? -4 : undefined} />
-                <Pupil size={11} maxDistance={4} pupilColor="#1a1a2e" forceLookX={visible ? -5 : undefined} forceLookY={visible ? -4 : undefined} />
-              </div>
-              <div className="absolute w-16 h-1 bg-[#1a1a2e] rounded-full transition-all duration-200" style={{ left: visible ? 8 : 36 + (yp.faceX || 0), top: visible ? 84 : 84 + (yp.faceY || 0) }} />
+            <div
+              className="mt-0.5 text-[11px] font-medium opacity-70"
+              style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}
+            >
+              AL-TABI · REPORTS
             </div>
           </div>
         </div>
 
-        {/* ── مميزات النظام ── */}
-        <div className="relative z-10 grid grid-cols-2 gap-3 mb-4">
-          {features.map(({ icon: Icon, label, desc }) => (
-            <div key={label} className="flex items-start gap-2.5 bg-white/8 rounded-xl p-3 backdrop-blur-sm border border-white/10">
-              <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <Icon className="w-3.5 h-3.5 text-white" />
+        <div className="relative z-10">
+          <h2
+            className="mb-4 text-[32px] font-bold leading-snug"
+            style={{ fontFamily: "var(--font-display)", letterSpacing: "-0.01em" }}
+          >
+            ذكاء التقارير
+            <br />
+            فوق Marketing2026
+          </h2>
+          <p className="max-w-[360px] text-[14.5px] leading-relaxed opacity-82">
+            اسأل بالعربية. احصل على الجواب فوراً — جدول، PDF، أو Excel.
+            بيانات على جهازك، اتصال قراءة فقط.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-[18px]">
+            {brandFeatures.map(({ icon: Icon, text }) => (
+              <div key={text} className="flex items-center gap-1.5 text-xs opacity-85 whitespace-nowrap">
+                <Icon size={16} />
+                {text}
               </div>
-              <div>
-                <p className="text-xs font-semibold text-white leading-tight">{label}</p>
-                <p className="text-[10px] text-white/45 leading-tight mt-0.5">{desc}</p>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
-        {/* ── روابط ── */}
-        <div className="relative z-10 flex items-center gap-5 text-xs text-white/40">
-          <a href="#" className="flex items-center gap-1 hover:text-white/70 transition-colors">
-            <ScrollText className="w-3 h-3" /> سياسة الخصوصية
-          </a>
-          <a href="#" className="flex items-center gap-1 hover:text-white/70 transition-colors">
-            <BookLock className="w-3 h-3" /> شروط الاستخدام
-          </a>
+        <div className="relative z-10 text-[11px] opacity-55" style={{ fontFamily: "var(--font-mono)" }}>
+          v0.1.2 · build 2026.05
         </div>
       </div>
 
       {/* ══════════════ اليمين — النموذج ══════════════ */}
-      <div className="flex items-center justify-center p-8 bg-background" dir="rtl">
+      <div className="flex items-center justify-center p-8 lg:p-16" dir="rtl" style={{ background: "var(--bg-canvas)" }}>
         <div className="w-full max-w-[420px]">
 
           {/* موبايل شعار */}
           <div className="lg:hidden flex items-center justify-center gap-2 text-lg font-bold mb-10">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-primary" />
-            </div>
-            <span>نظام التقارير</span>
+            <img src="/assets/logo-mark.svg" alt="" width={32} height={32} className="rounded-lg" />
+            <span style={{ fontFamily: "var(--font-display)" }}>التابي</span>
           </div>
 
           {/* ── العنوان ── */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-4 shadow-inner">
-              <Database className="w-7 h-7 text-primary" />
+          <div className="mb-7">
+            <div
+              className="mb-2 text-[11px] font-semibold uppercase tracking-widest"
+              style={{ color: "var(--brand-primary)", fontFamily: "var(--font-mono)" }}
+            >
+              الخطوة الأولى
             </div>
-            <h1 className="text-2xl font-bold tracking-tight mb-1">اتصال بقاعدة البيانات</h1>
-            <p className="text-muted-foreground text-sm flex items-center justify-center gap-1.5">
-              <Network className="w-3.5 h-3.5" />
-              أدخل بيانات الاتصال بـ SQL Server
+            <h1 className="text-2xl font-bold tracking-tight mb-2" style={{ color: "var(--fg-1)" }}>
+              اتصل بقاعدة البيانات
+            </h1>
+            <p className="text-[13.5px] leading-relaxed" style={{ color: "var(--fg-2)" }}>
+              أدخل بيانات SQL Server الخاصة بـ Marketing2026.
+              يتم حفظ بيانات الاتصال بأمان على جهازك فقط.
             </p>
           </div>
 
@@ -319,7 +336,6 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
                 <div className="relative">
                   <Input id="server" placeholder="localhost" value={form.server}
                     onChange={e => set("server", e.target.value)}
-                    onFocus={() => setIsTyping(true)} onBlur={() => setIsTyping(false)}
                     className="h-11 pr-9" dir="ltr" required />
                   <FieldIcon icon={Wifi} />
                 </div>
@@ -344,7 +360,6 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
               <div className="relative">
                 <Input id="database" placeholder="Marketing2026" value={form.database}
                   onChange={e => set("database", e.target.value)}
-                  onFocus={() => setIsTyping(true)} onBlur={() => setIsTyping(false)}
                   className="h-11 pr-9" dir="ltr" required />
                 <FieldIcon icon={Database} />
               </div>
@@ -373,7 +388,6 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
                   <div className="relative">
                     <Input id="username" placeholder="sa" value={form.username}
                       onChange={e => set("username", e.target.value)}
-                      onFocus={() => setIsTyping(true)} onBlur={() => setIsTyping(false)}
                       className="h-11 pr-9" dir="ltr" />
                     <FieldIcon icon={User} />
                   </div>
@@ -417,6 +431,53 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
               )}
             </div>
 
+            {/* تذكّر حالة تسجيل الدخول — Auto Login */}
+            <motion.label
+              htmlFor="autologin"
+              whileHover={{ scale: 1.005 }}
+              whileTap={{ scale: 0.995 }}
+              className={cn(
+                "relative flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all overflow-hidden",
+                autoLogin
+                  ? "border-primary/50 bg-primary/5"
+                  : "border-border bg-muted/20 hover:bg-muted/30",
+              )}
+            >
+              {autoLogin && (
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-l from-transparent via-primary/8 to-transparent"
+                  initial={{ x: "-100%" }}
+                  animate={{ x: "100%" }}
+                  transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
+                />
+              )}
+              <Checkbox id="autologin" checked={autoLogin}
+                onCheckedChange={v => persistAutoLogin(!!v)}
+                className="relative z-10 mt-0.5"
+                disabled={!rememberMe} />
+              <div className="relative z-10 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <Zap className={cn(
+                    "w-3.5 h-3.5 transition-colors",
+                    autoLogin ? "text-primary" : "text-muted-foreground",
+                  )} />
+                  <span className="text-sm font-semibold">تذكّر حالة تسجيل الدخول</span>
+                  {autoLogin && (
+                    <motion.span
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-primary/15 text-primary"
+                    >
+                      مُفعّل
+                    </motion.span>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  سيتم الاتصال تلقائياً عند فتح التطبيق في المرات القادمة — دون الحاجة لإعادة الإدخال.
+                </p>
+              </div>
+            </motion.label>
+
             {/* رسالة الخطأ */}
             {status === "error" && (
               <div className="flex items-start gap-2.5 p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400">
@@ -436,6 +497,14 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
               </div>
             )}
 
+            {/* اتصال تلقائي في الخلفية */}
+            {autoConnecting && status === "idle" && (
+              <div className="flex items-center gap-2.5 p-3 text-sm text-primary bg-primary/5 border border-primary/20 rounded-lg">
+                <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+                <span>جارٍ الاتصال التلقائي بقاعدة البيانات...</span>
+              </div>
+            )}
+
             {/* رسالة تحميل */}
             {status === "loading" && (
               <div className="flex items-center gap-2.5 p-3 text-sm text-primary bg-primary/5 border border-primary/20 rounded-lg">
@@ -447,11 +516,42 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
             {/* ── زر الاتصال ── */}
             <Button type="submit"
               className="w-full h-12 text-base font-bold gap-2.5 shadow-md" size="lg"
-              disabled={!form.server || !form.database || status === "loading"}>
+              disabled={!form.server || !form.database || status === "loading" || autoConnecting}>
               {status === "loading"
-                ? <><Loader2 className="w-5 h-5 animate-spin" /> جارٍ الاتصال...</>
-                : <><Plug className="w-5 h-5" /> اتصال واختبار</>}
+                ? <><Loader2 className="w-5 h-5 animate-spin" /> جارٍ الاتصال…</>
+                : <><Plug className="w-5 h-5" /> اتصل بقاعدة البيانات</>}
             </Button>
+
+            {/* فاصل */}
+            <div className="relative flex items-center my-2">
+              <div className="flex-1 h-px bg-border" />
+              <span className="px-3 text-[11px] text-muted-foreground font-medium">أو</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
+            {/* ── زر الاتصال التلقائي بالمساعد الذكي ── */}
+            <motion.button
+              type="button"
+              onClick={openAutoConnect}
+              whileHover={{ scale: 1.015 }}
+              whileTap={{ scale: 0.985 }}
+              className="relative w-full h-12 rounded-lg overflow-hidden group border transition-colors"
+              style={{
+                borderColor: "color-mix(in srgb, var(--brand-accent) 35%, transparent)",
+                background: "color-mix(in srgb, var(--brand-accent-soft) 40%, transparent)",
+              }}
+            >
+              <div className="relative z-10 flex items-center justify-center gap-2.5 text-sm font-bold" style={{ color: "var(--brand-accent-ink)" }}>
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center shadow-md"
+                  style={{ background: "var(--brand-primary)" }}
+                >
+                  <Bot className="w-4 h-4 text-white" />
+                </div>
+                <span>اتصل تلقائياً بمساعدة الوكيل الذكي</span>
+                <Sparkles className="w-3.5 h-3.5" style={{ color: "var(--brand-accent)" }} />
+              </div>
+            </motion.button>
           </form>
 
           {/* ── Footer ── */}
@@ -466,6 +566,241 @@ export function SqlLoginPage({ onConnected }: SqlLoginPageProps) {
           </div>
         </div>
       </div>
+
+      {/* ══════════════ Modal — الاتصال التلقائي بالمساعد الذكي ══════════════ */}
+      <AnimatePresence>
+        {autoOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
+            onClick={() => autoStatus !== "running" && setAutoOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 24 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26 }}
+              className="relative w-full max-w-md rounded-3xl bg-card border border-border shadow-2xl p-7 overflow-hidden"
+              dir="rtl"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* خلفية مزخرفة */}
+              <div className="absolute -top-28 -left-20 w-72 h-72 rounded-full blur-3xl pointer-events-none" style={{ background: "color-mix(in srgb, var(--brand-primary) 20%, transparent)" }} />
+              <div className="absolute -bottom-28 -right-20 w-72 h-72 rounded-full blur-3xl pointer-events-none" style={{ background: "color-mix(in srgb, var(--brand-accent) 15%, transparent)" }} />
+
+              {/* زر الإغلاق */}
+              {autoStatus !== "running" && (
+                <button
+                  onClick={() => setAutoOpen(false)}
+                  className="absolute left-4 top-4 w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors z-20"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
+              {/* رأس Modal — أيقونة الوكيل */}
+              <div className="relative z-10 flex flex-col items-center text-center mb-6">
+                <div className="relative mb-3">
+                  <motion.div
+                    animate={autoStatus === "running" ? { scale: [1, 1.06, 1] } : {}}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    className="relative w-16 h-16 rounded-2xl flex items-center justify-center shadow-xl"
+                    style={{ background: "var(--brand-primary)" }}
+                  >
+                    <Bot className="w-8 h-8 text-white" />
+                  </motion.div>
+                  {autoStatus === "running" && (
+                    <>
+                      <motion.div
+                        animate={{ scale: [1, 1.55], opacity: [0.55, 0] }}
+                        transition={{ repeat: Infinity, duration: 1.8 }}
+                        className="absolute inset-0 rounded-2xl"
+                        style={{ background: "var(--brand-primary)" }}
+                      />
+                      <motion.div
+                        animate={{ scale: [1, 1.4], opacity: [0.3, 0] }}
+                        transition={{ repeat: Infinity, duration: 1.8, delay: 0.4 }}
+                        className="absolute inset-0 rounded-2xl"
+                        style={{ background: "var(--brand-accent)" }}
+                      />
+                    </>
+                  )}
+                  {autoStatus === "success" && (
+                    <motion.div
+                      initial={{ scale: 0, rotate: -30 }}
+                      animate={{ scale: 1, rotate: 0 }}
+                      transition={{ type: "spring", stiffness: 360, damping: 18 }}
+                      className="absolute -bottom-1 -left-1 w-7 h-7 rounded-full bg-emerald-500 border-2 border-card flex items-center justify-center"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </motion.div>
+                  )}
+                </div>
+
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" style={{ color: "var(--brand-accent)" }} />
+                  المساعد الذكي يتصل نيابةً عنك
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                  سأقوم بإعداد الاتصال ببيانات قاعدة <span className="font-bold text-foreground">Marketing2026</span> المحلية تلقائياً.
+                </p>
+              </div>
+
+              {/* قائمة الخطوات */}
+              <div className="relative z-10 space-y-2 mb-5">
+                {AI_STEPS.map((step, idx) => {
+                  const state: "done" | "active" | "pending" =
+                    autoStatus === "success" || autoStep > idx
+                      ? "done"
+                      : autoStep === idx
+                      ? "active"
+                      : "pending";
+                  const Icon = step.icon;
+                  return (
+                    <motion.div
+                      key={step.key}
+                      initial={{ opacity: 0, x: 12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.07 }}
+                      className={cn(
+                        "flex items-center gap-3 rounded-xl p-3 border transition-all",
+                        state === "active" && "border-primary/50 bg-primary/8 shadow-sm",
+                        state === "done" && "border-emerald-500/30 bg-emerald-500/5",
+                        state === "pending" && "border-border/60 bg-muted/15 opacity-60",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
+                          state === "active" && "bg-primary text-primary-foreground",
+                          state === "done" && "bg-emerald-500 text-white",
+                          state === "pending" && "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {state === "done" ? (
+                          <CheckCircle2 className="w-4 h-4" />
+                        ) : state === "active" ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Icon className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn(
+                          "text-sm font-medium leading-tight",
+                          state === "pending" && "text-muted-foreground",
+                        )}>{step.label}</p>
+                        <p className="text-[11px] text-muted-foreground font-mono mt-0.5" dir="ltr">{step.detail}</p>
+                      </div>
+                      {state === "active" && (
+                        <motion.div
+                          animate={{ opacity: [0.3, 1, 0.3] }}
+                          transition={{ repeat: Infinity, duration: 1.4 }}
+                          className="w-1.5 h-1.5 rounded-full bg-primary mihbar-pulse"
+                        />
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </div>
+
+              {/* رسالة الحالة */}
+              <AnimatePresence mode="wait">
+                {autoStatus === "success" && (
+                  <motion.div
+                    key="success-msg"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="relative z-10 flex items-center gap-2.5 p-3 mb-4 text-sm bg-emerald-50 border border-emerald-200 rounded-xl dark:bg-emerald-950/30 dark:border-emerald-900/40"
+                  >
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span className="text-emerald-700 dark:text-emerald-300 font-semibold">
+                      تم الاتصال بنجاح — يتم الانتقال للتطبيق...
+                    </span>
+                  </motion.div>
+                )}
+                {autoStatus === "error" && (
+                  <motion.div
+                    key="error-msg"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="relative z-10 flex items-start gap-2.5 p-3 mb-4 text-sm bg-red-50 border border-red-200 rounded-xl dark:bg-red-950/30 dark:border-red-900/40"
+                  >
+                    <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+                    <div className="text-red-700 dark:text-red-300">
+                      <p className="font-semibold">تعذّر الاتصال</p>
+                      <p className="text-xs mt-0.5 text-red-600/80 dark:text-red-400/80">{autoError}</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* أزرار الإجراءات */}
+              <div className="relative z-10 flex gap-2.5">
+                {autoStatus === "idle" && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 h-11"
+                      onClick={() => setAutoOpen(false)}
+                    >
+                      إلغاء
+                    </Button>
+                    <Button
+                      type="button"
+                      className="flex-1 h-11 gap-2 font-bold shadow-md"
+                      style={{ background: "var(--brand-primary)", color: "var(--fg-on-brand)" }}
+                      onClick={runAutoConnect}
+                    >
+                      <Wand2 className="w-4 h-4" />
+                      ابدأ الاتصال التلقائي
+                    </Button>
+                  </>
+                )}
+                {autoStatus === "running" && (
+                  <Button type="button" disabled className="w-full h-11 gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    جارٍ تنفيذ الخطوات…
+                  </Button>
+                )}
+                {autoStatus === "error" && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 h-11"
+                      onClick={() => setAutoOpen(false)}
+                    >
+                      إغلاق
+                    </Button>
+                    <Button
+                      type="button"
+                      className="flex-1 h-11 gap-2 font-bold"
+                      style={{ background: "var(--brand-primary)", color: "var(--fg-on-brand)" }}
+                      onClick={runAutoConnect}
+                    >
+                      <Zap className="w-4 h-4" />
+                      إعادة المحاولة
+                    </Button>
+                  </>
+                )}
+                {autoStatus === "success" && (
+                  <Button type="button" disabled className="w-full h-11 gap-2 bg-emerald-500 hover:bg-emerald-500 text-white">
+                    <CheckCircle2 className="w-4 h-4" />
+                    اكتمل بنجاح
+                  </Button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

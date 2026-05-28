@@ -444,6 +444,7 @@ pub async fn package_query_result(
         "columns": columns,
         "rows": rows,
         "row_count": row_count,
+        "agent_hint": "قدّم الإجابة للمستخدم بالعربية الآن. لا تكرر execute_raw_sql بنفس المنطق — إن كانت النتيجة فارغة فاذكر ذلك صراحة."
     })
 }
 
@@ -824,7 +825,28 @@ pub fn sql_antipattern_issues(sql: &str) -> Vec<(bool, String)> {
         ));
     }
 
-    if upper.contains("FROM DBO.SALARIES") && !upper.contains("UNION") && !upper.contains("EMP_SALARY") && !upper.contains("CUSTOMERS") {
+    if upper.contains("B_SPENT") {
+        out.push((
+            true,
+            "B_SPENT غير موجود — المشتريات من dbo.BUY_ITEMS (QTY*PRICE) مع JOIN dbo.BUY_INVOICE، أو run_query_pattern('متابعة الديون').".to_string(),
+        ));
+    }
+
+    if upper.contains("G_TOTAL") && upper.contains("GIVE") {
+        out.push((
+            true,
+            "G_TOTAL غير موجود في dbo.GIVE — استخدم G_VALUE. للديون: run_query_pattern('متابعة الديون').".to_string(),
+        ));
+    }
+
+    if upper.contains("T_TOTAL") && upper.contains("TAKE") {
+        out.push((
+            true,
+            "T_TOTAL غير موجود في dbo.TAKE — استخدم T_VALUE. للديون: run_query_pattern('متابعة الديون').".to_string(),
+        ));
+    }
+
+    if upper.contains("SALARIES") && !upper.contains("UNION") && !upper.contains("EMP_SALARY") && !upper.contains("CUSTOMERS") {
         out.push((
             false,
             "جدول SALARIES قد يكون فارغاً — استخدم run_query_pattern('رواتب') الذي ي fallback إلى CUSTOMERS.EMP_SALARY و GIVE مصاريف رواتب.".to_string(),
@@ -1032,6 +1054,28 @@ pub fn handle_list_favorites() -> Value {
         })).collect::<Vec<_>>(),
         "count": list.len()
     })
+}
+
+/// قائمة كاملة بالاستعلامات المحفوظة — لاستخدام الواجهة (صفحة المحفوظات)
+pub fn list_all_favorites_full() -> Vec<FavoriteQuery> {
+    load_favorites()
+}
+
+/// حذف استعلام محفوظ بحسب المعرّف. يُرجع true إذا حُذف فعلاً.
+pub fn delete_favorite_by_id(id: &str) -> Result<bool, String> {
+    let mut list = load_favorites();
+    let before = list.len();
+    list.retain(|f| f.id != id);
+    let removed = list.len() != before;
+    if removed {
+        save_favorites(&list)?;
+    }
+    Ok(removed)
+}
+
+/// جلب استعلام محفوظ كامل بمعرّفه (للتنفيذ المباشر من الواجهة).
+pub fn get_favorite_sql(id: &str) -> Option<FavoriteQuery> {
+    load_favorites().into_iter().find(|f| f.id == id)
 }
 
 /// يستخرج أول كتلة ```sql من نمط QUERY_PATTERNS

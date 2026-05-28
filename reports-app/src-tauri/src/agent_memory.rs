@@ -1,0 +1,754 @@
+//! ذاكرة الوكيل — محلي (SQLite) + مشترك (Supabase db_facts)
+//! المشترك: أعمدة، جداول، علاقات، وتسميات schema فقط — لا بيانات تشغيلية متغيرة.
+
+use crate::agent_tools::app_data_dir;
+use crate::supabase_config::{SUPABASE_ANON_KEY, SUPABASE_URL};
+use reqwest::Client;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
+
+pub const EMBEDDING_DIM: usize = 1536;
+const LOCAL_MATCH_K: usize = 3;
+const SHARED_MATCH_K: i32 = 4;
+const SHARED_DEDUP_SIMILARITY: f32 = 0.82;
+const LOCAL_DEDUP_SIMILARITY: f32 = 0.88;
+const RECALL_MIN_SIMILARITY: f32 = 0.38;
+
+static LOCAL_DB: OnceLock<Mutex<Connection>> = OnceLock::new();
+
+const SCHEMA_TOOLS: &[&str] = &[
+    "search_schema",
+    "explore_local_schema",
+    "get_table_sample",
+    "get_database_views",
+    "get_product_schema",
+    "execute_raw_sql",
+    "run_query_pattern",
+    "validate_sql",
+    "explain_sql",
+];
+
+#[derive(Debug, Clone, Default)]
+pub struct TurnMemoryContext {
+    pub schema_tools_used: bool,
+    pub snippets: Vec<String>,
+}
+
+impl TurnMemoryContext {
+    pub fn note_tool(&mut self, tool_name: &str, response: &str) {
+        if !SCHEMA_TOOLS.contains(&tool_name) {
+            return;
+        }
+        self.schema_tools_used = true;
+        let snippet = response.chars().take(800).collect::<String>();
+        if !snippet.trim().is_empty() {
+            self.snippets.push(format!("[{tool_name}] {snippet}"));
+        }
+    }
+}
+
+/// يستخرج مخرجات أدوات الـ schema من تاريخ المحادثة الحالي.
+pub fn build_turn_context_from_history(history: &[Value]) -> TurnMemoryContext {
+    let mut ctx = TurnMemoryContext::default();
+    for (i, msg) in history.iter().enumerate() {
+        if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) else {
+            continue;
+        };
+        for tc in tool_calls {
+            let name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            if !SCHEMA_TOOLS.contains(&name) {
+                continue;
+            }
+            let Some(tid) = tc.get("id").and_then(|x| x.as_str()) else {
+                continue;
+            };
+            for follow in history.iter().skip(i + 1) {
+                if follow.get("role").and_then(|r| r.as_str()) != Some("tool") {
+                    continue;
+                }
+                if follow.get("tool_call_id").and_then(|x| x.as_str()) != Some(tid) {
+                    continue;
+                }
+                if let Some(c) = follow.get("content").and_then(|x| x.as_str()) {
+                    ctx.note_tool(name, c);
+                }
+                break;
+            }
+        }
+    }
+    ctx
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExtractedFact {
+    scope: String,
+    kind: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAiEmbeddingResponse {
+    data: Vec<OpenAiEmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct SharedFactRow {
+    content: Option<String>,
+    category: Option<String>,
+    similarity: Option<f32>,
+}
+
+fn local_db() -> &'static Mutex<Connection> {
+    LOCAL_DB.get_or_init(|| {
+        let dir = app_data_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("agent_memory.db");
+        let conn = Connection::open(path).expect("open agent_memory.db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS local_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL UNIQUE,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            "#,
+        )
+        .expect("init local memory schema");
+        Mutex::new(conn)
+    })
+}
+
+fn content_fingerprint(text: &str) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn f32_vec_to_blob(values: &[f32]) -> Vec<u8> {
+    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+fn blob_to_f32_vec(blob: &[u8]) -> Option<Vec<f32>> {
+    if blob.len() % 4 != 0 {
+        return None;
+    }
+    Some(
+        blob.chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+    )
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if na <= 0.0 || nb <= 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+fn http_client() -> Client {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap()
+}
+
+pub async fn create_embedding(text: &str, openai_key: &str) -> Result<Vec<f32>, String> {
+    let key = openai_key.trim();
+    if key.is_empty() {
+        return Err("missing_openai_key".to_string());
+    }
+    let client = http_client();
+    let req = json!({
+        "model": "text-embedding-3-small",
+        "input": text.chars().take(8000).collect::<String>(),
+    });
+    let res = client
+        .post("https://api.openai.com/v1/embeddings")
+        .header("Authorization", format!("Bearer {}", key))
+        .json(&req)
+        .send()
+        .await
+        .map_err(|e| format!("embedding request failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("embedding HTTP error: {}", body));
+    }
+    let parsed: OpenAiEmbeddingResponse = res
+        .json()
+        .await
+        .map_err(|e| format!("embedding parse error: {}", e))?;
+    let embedding = parsed
+        .data
+        .first()
+        .map(|d| d.embedding.clone())
+        .ok_or_else(|| "empty embedding response".to_string())?;
+    if embedding.len() != EMBEDDING_DIM {
+        return Err(format!(
+            "unexpected embedding dim {} (expected {})",
+            embedding.len(),
+            EMBEDDING_DIM
+        ));
+    }
+    Ok(embedding)
+}
+
+/// هل النص يصف schema ثابت (جدول/عمود/علاقة) وليس بيانات تشغيل متغيرة؟
+fn is_valid_shared_schema_fact(content: &str) -> bool {
+    let lower = content.to_lowercase();
+
+    const BLOCK: &[&str] = &[
+        "sitteings",
+        "sitteings",
+        "نشاط تجاري",
+        "business activity",
+        "company name",
+        "phone",
+        "mobile",
+        "fax",
+        "address",
+        "المستخدم",
+        "user requested",
+        "فارغ",
+        "empty",
+        "missing",
+        "حاليا",
+        "currently",
+        "إعدادات النظام",
+        "system settings",
+        "administrator",
+        "المسؤول",
+        "thank you",
+        "credit limit",
+        "tax1",
+        "tax2",
+        "تواصل مع",
+        "contact admin",
+        "update settings",
+        "تحديث بيانات",
+        "طلب معلومات",
+        "requested information",
+        "d.ل",
+        "amount",
+        "رصيد",
+        "balance of customer",
+        "عدد الصفوف",
+        "row count",
+    ];
+    if BLOCK.iter().any(|b| lower.contains(b)) {
+        return false;
+    }
+
+    const SCHEMA_MARKERS: &[&str] = &[
+        "dbo.",
+        "table",
+        "column",
+        "جدول",
+        "عمود",
+        "join",
+        "foreign",
+        "references",
+        "→",
+        "يرتبط",
+        "relation",
+        "pk",
+        "fk",
+        "primary key",
+        "information_schema",
+        "_id",
+        "_date",
+        "sale_items",
+        "sale_invoice",
+        "buy_invoice",
+        "buy_items",
+        "items_sub",
+        "customers",
+        "stores",
+    ];
+    if !SCHEMA_MARKERS.iter().any(|m| lower.contains(m)) {
+        return false;
+    }
+
+    // يجب ذكر اسم جدول/عمود بصيغة تقنية
+    let has_identifier = content
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|tok| {
+            let t = tok.trim();
+            (t.len() >= 4 && t.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
+                || t.starts_with("dbo.")
+        });
+    has_identifier
+}
+
+fn is_valid_local_preference(content: &str) -> bool {
+    let lower = content.to_lowercase();
+    lower.contains("pref")
+        || lower.contains("يفضل")
+        || lower.contains("prefer")
+        || lower.contains("دائما")
+        || lower.contains("always use")
+        || lower.contains("نافذة")
+        || lower.contains("days_recent")
+        || lower.contains("يوم")
+}
+
+fn store_local_fact(kind: &str, content: &str, embedding: &[f32]) -> Result<bool, String> {
+    if is_near_duplicate_local(embedding)? {
+        return Ok(false);
+    }
+    let hash = content_fingerprint(content);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let blob = f32_vec_to_blob(embedding);
+    let db = local_db();
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let inserted = conn
+        .execute(
+            "INSERT OR IGNORE INTO local_memories (kind, content, content_hash, embedding, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![kind, content, hash, blob, now as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(inserted > 0)
+}
+
+fn is_near_duplicate_local(embedding: &[f32]) -> Result<bool, String> {
+    let db = local_db();
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT embedding FROM local_memories")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        if let Some(stored) = blob_to_f32_vec(&row.map_err(|e| e.to_string())?) {
+            if cosine_similarity(embedding, &stored) >= LOCAL_DEDUP_SIMILARITY {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn search_local_facts(embedding: &[f32], limit: usize) -> Result<Vec<(String, String)>, String> {
+    let db = local_db();
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT kind, content, embedding FROM local_memories")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut scored: Vec<(f32, String, String)> = Vec::new();
+    for row in rows {
+        let (kind, content, blob) = row.map_err(|e| e.to_string())?;
+        if let Some(stored) = blob_to_f32_vec(&blob) {
+            let score = cosine_similarity(embedding, &stored);
+            if score >= RECALL_MIN_SIMILARITY {
+                scored.push((score, kind, content));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(dedupe_similar_contents(
+        scored
+            .into_iter()
+            .map(|(_, k, c)| (k, c))
+            .collect(),
+        limit,
+    ))
+}
+
+fn dedupe_similar_contents(items: Vec<(String, String)>, limit: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (kind, content) in items {
+        let lower = content.to_lowercase();
+        if out.iter().any(|(_, existing)| {
+            let el = existing.to_lowercase();
+            lower == el
+                || (lower.len() > 20 && el.contains(&lower[..lower.len().min(40)]))
+                || (el.len() > 20 && lower.contains(&el[..el.len().min(40)]))
+        }) {
+            continue;
+        }
+        out.push((kind, content));
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
+}
+
+async fn search_shared_db_facts(
+    embedding: &[f32],
+    limit: i32,
+) -> Result<Vec<(String, String, f32)>, String> {
+    let client = http_client();
+    let rpc = json!({
+        "query_embedding": embedding,
+        "match_threshold": RECALL_MIN_SIMILARITY,
+        "match_count": limit + 2,
+    });
+    let url = format!("{}/rest/v1/rpc/match_db_facts", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("match_db_facts failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("match_db_facts") || body.contains("does not exist") {
+            return Ok(Vec::new());
+        }
+        return Err(format!("match_db_facts HTTP: {}", body));
+    }
+    let rows: Vec<SharedFactRow> = res.json().await.unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let content = r.content?;
+            let cat = r.category.unwrap_or_else(|| "db_schema".to_string());
+            let sim = r.similarity.unwrap_or(0.0);
+            Some((cat, content, sim))
+        })
+        .collect())
+}
+
+async fn is_near_duplicate_shared(embedding: &[f32]) -> Result<bool, String> {
+    let hits = search_shared_db_facts(embedding, 3).await?;
+    Ok(hits
+        .iter()
+        .any(|(_, _, sim)| *sim >= SHARED_DEDUP_SIMILARITY))
+}
+
+async fn upsert_shared_db_fact(
+    category: &str,
+    content: &str,
+    embedding: &[f32],
+) -> Result<bool, String> {
+    if is_near_duplicate_shared(embedding).await? {
+        return Ok(false);
+    }
+    let client = http_client();
+    let fingerprint = content_fingerprint(content);
+    let rpc = json!({
+        "p_content": content,
+        "p_category": category,
+        "p_fingerprint": fingerprint,
+        "p_embedding": embedding,
+    });
+    let url = format!("{}/rest/v1/rpc/upsert_db_fact", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("upsert_db_fact failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("upsert_db_fact") || body.contains("does not exist") {
+            return Ok(false);
+        }
+        return Err(format!("upsert_db_fact HTTP: {}", body));
+    }
+    Ok(true)
+}
+
+pub async fn recall_memory_prompt_block(user_query: &str, openai_key: &str) -> String {
+    if openai_key.trim().is_empty() {
+        return String::new();
+    }
+    let embedding = match create_embedding(user_query, openai_key).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[agent_memory] recall embedding: {}", e);
+            return String::new();
+        }
+    };
+
+    let local = match search_local_facts(&embedding, LOCAL_MATCH_K) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[agent_memory] local search: {}", e);
+            Vec::new()
+        }
+    };
+    let shared_raw = match search_shared_db_facts(&embedding, SHARED_MATCH_K).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[agent_memory] shared search: {}", e);
+            Vec::new()
+        }
+    };
+    let shared: Vec<(String, String)> = dedupe_similar_contents(
+        shared_raw
+            .into_iter()
+            .map(|(c, t, _)| (c, t))
+            .collect(),
+        SHARED_MATCH_K as usize,
+    );
+
+    if local.is_empty() && shared.is_empty() {
+        return String::new();
+    }
+
+    let mut block = String::from("\n\n<AGENT_MEMORY>\n");
+    block.push_str(
+        "Schema hints only — verify with tools before relying on them. \
+         Row counts and business values differ per installation.\n\n",
+    );
+
+    if !shared.is_empty() {
+        block.push_str("### Shared schema facts (columns / tables / joins)\n");
+        for (cat, content) in &shared {
+            block.push_str(&format!("- [{}] {}\n", cat, content));
+        }
+        block.push('\n');
+    }
+
+    if !local.is_empty() {
+        block.push_str("### Private preferences (this device)\n");
+        for (kind, content) in &local {
+            block.push_str(&format!("- [{}] {}\n", kind, content));
+        }
+    }
+
+    block.push_str("</AGENT_MEMORY>\n");
+    block
+}
+
+async fn extract_facts_with_llm(
+    user_text: &str,
+    assistant_text: &str,
+    ctx: &TurnMemoryContext,
+    groq_key: &str,
+) -> Vec<ExtractedFact> {
+    let client = http_client();
+    let snippets = if ctx.snippets.is_empty() {
+        "(none)".to_string()
+    } else {
+        ctx.snippets.join("\n")
+    };
+    let prompt = format!(
+        r#"You extract ONLY stable SQL Server schema facts for Marketing2026 ERP.
+Return ONLY a JSON array (no markdown). Max 2 items. Empty [] if none.
+
+Allowed shared facts (scope=shared):
+- Table/column names and meanings
+- Which table holds which kind of data (master vs transactional)
+- JOIN keys between tables (e.g. SALE_ITEMS.S_ID -> SALE_INVOICE.S_ID)
+- Column that stores dates, batch, expiry, qty, price
+- Empty/unused tables verified from schema tools (not from missing business data)
+
+FORBIDDEN in shared (never save):
+- Company name, phone, address, user settings, SITTEINGS content
+- Row counts, balances, amounts, "empty currently", "user asked"
+- How to update settings or contact admin
+
+Local only (scope=local, kind=preference): explicit user reporting preferences (e.g. prefers 60-day window).
+
+Format: {{"scope":"shared"|"local","kind":"db_schema"|"db_join"|"db_column"|"preference","content":"..."}}
+content: one sentence, mention TABLE.COLUMN or dbo.TABLE, under 180 chars.
+
+Schema tool output this turn:
+{snippets}
+
+User: {user}
+Assistant: {assistant}"#,
+        snippets = snippets.chars().take(2500).collect::<String>(),
+        user = user_text.chars().take(800).collect::<String>(),
+        assistant = assistant_text.chars().take(1200).collect::<String>(),
+    );
+
+    let body = json!({
+        "model": "google/gemini-2.0-flash-001",
+        "messages": [{ "role": "user", "content": prompt }],
+        "max_tokens": 400,
+        "temperature": 0.0,
+    });
+
+    let res = match client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", groq_key.trim()))
+        .header("HTTP-Referer", "http://localhost:1420")
+        .header("X-Title", "Reports App Memory")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[agent_memory] extract LLM: {}", e);
+            return Vec::new();
+        }
+    };
+
+    if !res.status().is_success() {
+        eprintln!(
+            "[agent_memory] extract LLM HTTP: {}",
+            res.text().await.unwrap_or_default()
+        );
+        return Vec::new();
+    }
+
+    let parsed: Value = res.json().await.unwrap_or(json!({}));
+    let content = parsed
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("[]");
+    let cleaned = content
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str::<Vec<ExtractedFact>>(cleaned).unwrap_or_default()
+}
+
+pub async fn persist_turn_memories(
+    user_text: &str,
+    assistant_text: &str,
+    openai_key: &str,
+    groq_key: &str,
+    ctx: TurnMemoryContext,
+) {
+    if groq_key.trim().is_empty() || openai_key.trim().is_empty() {
+        return;
+    }
+    if assistant_text.trim().len() < 20 {
+        return;
+    }
+    if !ctx.schema_tools_used {
+        eprintln!("[agent_memory] skip persist: no schema tools used this turn");
+        return;
+    }
+
+    let facts = extract_facts_with_llm(user_text, assistant_text, &ctx, groq_key).await;
+    if facts.is_empty() {
+        return;
+    }
+
+    for fact in facts {
+        let content = fact.content.trim();
+        if content.len() < 12 {
+            continue;
+        }
+        let scope = fact.scope.to_lowercase();
+        let kind = fact.kind.to_lowercase();
+
+        let embedding = match create_embedding(content, openai_key).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[agent_memory] store embedding: {}", e);
+                continue;
+            }
+        };
+
+        if scope == "shared" {
+            if !is_valid_shared_schema_fact(content) {
+                eprintln!("[agent_memory] rejected shared fact: {}", content);
+                continue;
+            }
+            let category = match kind.as_str() {
+                "db_join" => "db_join",
+                "db_column" => "db_column",
+                "db_schema" => "db_schema",
+                _ => "db_schema",
+            };
+            match upsert_shared_db_fact(category, content, &embedding).await {
+                Ok(true) => eprintln!("[agent_memory] shared schema stored: {}", content),
+                Ok(false) => eprintln!("[agent_memory] shared duplicate skipped: {}", content),
+                Err(e) => eprintln!("[agent_memory] shared store: {}", e),
+            }
+        } else if scope == "local" && is_valid_local_preference(content) {
+            match store_local_fact("preference", content, &embedding) {
+                Ok(true) => eprintln!("[agent_memory] local preference stored: {}", content),
+                Ok(false) => {}
+                Err(e) => eprintln!("[agent_memory] local store: {}", e),
+            }
+        }
+    }
+}
+
+pub fn spawn_persist_turn_memories(
+    user_text: String,
+    assistant_text: String,
+    openai_key: String,
+    groq_key: String,
+    ctx: TurnMemoryContext,
+) {
+    tokio::spawn(async move {
+        persist_turn_memories(&user_text, &assistant_text, &openai_key, &groq_key, ctx).await;
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_schema_fact() {
+        assert!(is_valid_shared_schema_fact(
+            "SALE_ITEMS has no S_DATE; join SALE_INVOICE on S_ID for invoice date."
+        ));
+    }
+
+    #[test]
+    fn rejects_business_settings() {
+        assert!(!is_valid_shared_schema_fact(
+            "Phone and mobile for business activity may be empty in SITTEINGS."
+        ));
+    }
+
+    #[test]
+    fn rejects_user_context() {
+        assert!(!is_valid_shared_schema_fact(
+            "The user requested their company address from settings."
+        ));
+    }
+}

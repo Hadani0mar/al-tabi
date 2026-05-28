@@ -239,28 +239,33 @@ fn access_token_for_fetch(
 pub async fn resolve_app_secrets(
     app: &AppHandle,
     decrypt: fn(String) -> Result<String, String>,
-    encrypt: fn(String) -> Result<String, String>,
+    _encrypt: fn(String) -> Result<String, String>,
 ) -> Result<AppSecretsSettings, String> {
     let (telegram_bot_token, telegram_chat_id) = load_local_telegram_settings(app, decrypt)?;
-    let access_token = access_token_for_fetch(app, decrypt)?;
 
-    if let Ok(mut remote) = fetch_secrets_from_supabase(&access_token).await {
+    // المفتاح المحلي أولاً — أسرع وأكثر موثوقية عند تعذّر Supabase
+    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
+    if legacy.has_remote_payload() {
+        legacy.telegram_bot_token = telegram_bot_token;
+        legacy.telegram_chat_id = telegram_chat_id;
+        return Ok(legacy);
+    }
+
+    let access_token = access_token_for_fetch(app, decrypt)?;
+    let remote_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fetch_secrets_from_supabase(&access_token),
+    )
+    .await;
+
+    if let Ok(Ok(mut remote)) = remote_result {
         if remote.has_remote_payload() {
             remote.telegram_bot_token = telegram_bot_token;
             remote.telegram_chat_id = telegram_chat_id;
             return Ok(remote);
         }
-    }
-
-    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
-    if legacy.has_remote_payload() {
-        let token = generate_access_token();
-        save_secrets_to_supabase(&token, &legacy).await?;
-        store_access_token(app, &token, encrypt)?;
-        let _ = clear_legacy_ai_keys(app);
-        legacy.telegram_bot_token = telegram_bot_token;
-        legacy.telegram_chat_id = telegram_chat_id;
-        return Ok(legacy);
+    } else if remote_result.is_err() {
+        eprintln!("[secrets] Supabase fetch timed out — no local OpenRouter key found");
     }
 
     Ok(AppSecretsSettings {

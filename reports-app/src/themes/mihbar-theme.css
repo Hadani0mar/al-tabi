@@ -1,0 +1,421 @@
+/* ============================================================================
+   al-tabi (التابي) — Colors & Typography Tokens
+   ────────────────────────────────────────────────────────────────────────────
+   IDENTITY: "Mihbar" (محبَر / المحبرة)
+   Inspired by Arabic manuscript & ledger traditions — paper, ink, copper.
+   Calm expert advisor. NOT silicon-valley indigo. NOT 2005 enterprise grey.
+   ============================================================================ */
+
+/* ---------- Fonts -------------------------------------------------------- */
+/* IBM Plex Sans Arabic — primary UI (Arabic & Latin). Distinct character,
+                          modern, considered. Pairs with Plex Mono perfectly.
+   IBM Plex Mono       — tabular numerics in data tables, code, schema names.
+   Reem Kufi           — display only: hero Arabic numerals, logo lockup, splash.
+   ─────────────────────────────────────────────────────────────────────────
+   NOTE: Currently loaded from Google Fonts CDN. For offline Tauri builds,
+   download woff2 files into /fonts/ and switch to @font-face declarations. */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Reem+Kufi:wght@500;600;700&display=swap');
+
+/* ============================================================================
+   LIGHT — "Daylight Ledger"
+   Warm paper base. Deep navy ink. Teal as the signature trust color.
+   Copper for AI / accent moments — warm complement to the teal.
+   ============================================================================ */
+:root,
+[data-theme="mihbar"],
+[data-theme="mihbar-light"] {
+
+  /* ── Brand ───────────────────────────────────────────────────────── */
+  --brand-primary:        #0F6E70;  /* deep teal — the signature */
+  --brand-primary-hover:  #0A5759;
+  --brand-primary-pressed:#084244;
+  --brand-primary-soft:   #E2F1F1;  /* tinted background */
+  --brand-primary-ink:    #052E2F;  /* deepest teal for text on soft bg */
+
+  --brand-accent:         #B86A2C;  /* warm copper — AI & highlight */
+  --brand-accent-hover:   #99571F;
+  --brand-accent-soft:    #FAEEDF;
+  --brand-accent-ink:     #5C3414;
+
+  --ai-glow:              #D8854B;  /* AI shimmer / loading */
+
+  /* ── Surfaces — warm paper, not cold grey ────────────────────────── */
+  --bg-canvas:    #F6F2E8;  /* aged paper — the app background */
+  --bg-surface:   #FBF8F0;  /* slightly cleaner — cards */
+  --bg-elevated:  #FFFFFF;  /* modals, dropdowns — crispest */
+  --bg-subtle:    #EDE6D4;  /* secondary panels, table headers */
+  --bg-muted:     #E2D9C2;  /* hover, chips */
+  --bg-inverse:   #0E1729;  /* dark element on light: tooltips */
+
+  /* ── Foreground (ink) ────────────────────────────────────────────── */
+  --fg-1:         #0E1729;  /* deep navy-ink — primary text */
+  --fg-2:         #3D4858;  /* secondary text — labels, meta */
+  --fg-3:         #6E7787;  /* tertiary — placeholders */
+  --fg-muted:     #9CA3AF;  /* disabled */
+  --fg-on-brand:  #FBF8F0;  /* text on teal/copper buttons */
+  --fg-link:      #0F6E70;
+
+  /* ── Borders — hairlines, ledger-ruled ───────────────────────────── */
+  --border-subtle:  #E5DCC6;  /* table rules, dividers */
+  --border-default: #D1C5A8;  /* inputs, cards */
+  --border-strong:  #A89878;  /* emphasis */
+  --border-focus:   #0F6E70;  /* keyboard focus ring */
+
+  /* ── Semantic ────────────────────────────────────────────────────── */
+  --success:        #3F7D58;
+  --success-soft:   #E6EFE7;
+  --success-fg:     #244F35;
+
+  --warning:        #B47312;
+  --warning-soft:   #F8EBCB;
+  --warning-fg:     #6B4408;
+
+  --danger:         #B33A2A;
+  --danger-soft:    #F5E0DC;
+  --danger-fg:      #6D2014;
+
+  --info:           #2A5E8C;
+  --info-soft:      #E1ECF5;
+  --info-fg:        #143A5C;
+
+  /* ── AI chat tones ───────────────────────────────────────────────── */
+  --ai-bubble-bg:      #FAEEDF;       /* assistant: copper-tinted */
+  --ai-bubble-border:  #ECD4B0;
+  --ai-bubble-fg:      #3D2912;
+  --user-bubble-bg:    #0F6E70;       /* user: teal */
+  --user-bubble-fg:    #FBF8F0;
+
+  /* ── Currency / numeric accent ───────────────────────────────────── */
+  --currency-pos:   #3F7D58;
+  --currency-neg:   #B33A2A;
+  --currency-base:  #0E1729;
+
+  /* ── Status dots / connection lights ─────────────────────────────── */
+  --dot-online:     #3F7D58;
+  --dot-syncing:    #B47312;
+  --dot-offline:    #9CA3AF;
+}
+
+/* ============================================================================
+   DARK — "Lamplit Ledger"
+   Same identity at night. Deep navy ink becomes the canvas;
+   paper warmth survives as a low-saturation cream for text & surfaces.
+   Teal lifts; copper softens.
+   ============================================================================ */
+[data-theme="mihbar-dark"],
+[data-theme="mihbar"][data-mode="dark"] {
+
+  --brand-primary:        #4DB8B8;
+  --brand-primary-hover:  #6CCFCF;
+  --brand-primary-pressed:#3A9A9A;
+  --brand-primary-soft:   #0A2E2F;
+  --brand-primary-ink:    #B6E6E6;
+
+  --brand-accent:         #E09060;
+  --brand-accent-hover:   #ECA679;
+  --brand-accent-soft:    #2E1B0E;
+  --brand-accent-ink:     #F5C99E;
+
+  --ai-glow:              #F2B084;
+
+  --bg-canvas:    #0B1220;  /* deepest — app background */
+  --bg-surface:   #121A2C;  /* card surfaces */
+  --bg-elevated:  #1A2438;  /* modals, dropdowns */
+  --bg-subtle:    #161E32;
+  --bg-muted:     #1F2A42;
+  --bg-inverse:   #FBF8F0;
+
+  --fg-1:         #F1EBDB;  /* warm cream ink */
+  --fg-2:         #B8B4A4;
+  --fg-3:         #807C70;
+  --fg-muted:     #555248;
+  --fg-on-brand:  #0B1220;
+  --fg-link:      #6CCFCF;
+
+  --border-subtle:  #1B243A;
+  --border-default: #2A364F;
+  --border-strong:  #3F4C68;
+  --border-focus:   #4DB8B8;
+
+  --success:        #6BBE85;
+  --success-soft:   #0C2618;
+  --success-fg:     #A6DDB6;
+
+  --warning:        #DFA94C;
+  --warning-soft:   #2A1C08;
+  --warning-fg:     #F0CE85;
+
+  --danger:         #E07268;
+  --danger-soft:    #2A1010;
+  --danger-fg:      #F2A89F;
+
+  --info:           #6BA0D4;
+  --info-soft:      #0E1F30;
+  --info-fg:        #A6C8E5;
+
+  --ai-bubble-bg:      #2A1F12;
+  --ai-bubble-border:  #4A341C;
+  --ai-bubble-fg:      #F5C99E;
+  --user-bubble-bg:    #0F6E70;
+  --user-bubble-fg:    #F1EBDB;
+
+  --currency-pos:   #6BBE85;
+  --currency-neg:   #E07268;
+  --currency-base:  #F1EBDB;
+
+  --dot-online:     #6BBE85;
+  --dot-syncing:    #DFA94C;
+  --dot-offline:    #555248;
+}
+
+/* ============================================================================
+   TYPOGRAPHY — base scale & semantic roles
+   Arabic-first via IBM Plex Sans Arabic.
+   Tabular numerics in data contexts via Plex Mono.
+   Reem Kufi reserved for true display moments (logo, splash, key hero numbers).
+   ============================================================================ */
+:root {
+  /* ── Families ──────────────────────────────────────────────────── */
+  --font-ui:      'IBM Plex Sans Arabic', 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+  --font-display: 'Reem Kufi', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', 'Consolas', 'Menlo', monospace;
+  --font-numeric: 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace;
+
+  /* ── Type scale (desktop-oriented, dense but legible) ─────────── */
+  --fs-display:  34px;   /* hero numbers, splash logo */
+  --fs-h1:       24px;   /* screen titles */
+  --fs-h2:       19px;   /* section headers */
+  --fs-h3:       16px;   /* card titles */
+  --fs-body:     15px;   /* default body */
+  --fs-body-sm:  14px;   /* table cells, dense areas */
+  --fs-caption:  13px;   /* labels, metadata, table headers */
+  --fs-micro:    12px;   /* timestamps, hints */
+
+  /* ── Weights ───────────────────────────────────────────────────── */
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
+
+  /* ── Line heights ─────────────────────────────────────────────── */
+  --lh-tight:   1.2;
+  --lh-snug:    1.35;
+  --lh-normal:  1.55;
+  --lh-loose:   1.75;
+
+  /* ── Letter spacing ───────────────────────────────────────────── */
+  --tracking-tight:  -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide:    0.03em;
+  --tracking-caps:    0.06em;
+
+  /* ── Spacing scale (4px base) ─────────────────────────────────── */
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  32px;
+  --space-8:  40px;
+  --space-9:  48px;
+  --space-10: 64px;
+
+  /* ── Radii — restrained; ledgers prefer right angles ──────────── */
+  --radius-xs:    3px;
+  --radius-sm:    6px;     /* buttons, inputs */
+  --radius-md:    8px;
+  --radius-lg:    10px;    /* cards */
+  --radius-xl:    14px;
+  --radius-2xl:   18px;    /* large panels */
+  --radius-pill:  9999px;  /* bottom nav, pill buttons, status chips */
+
+  /* ── Shadows — warm-tinted, soft, no gloss ────────────────────── */
+  --shadow-xs:    0 1px 1px rgba(40, 30, 10, 0.04);
+  --shadow-sm:    0 1px 2px rgba(40, 30, 10, 0.06), 0 1px 1px rgba(40,30,10,0.04);
+  --shadow-md:    0 3px 10px rgba(40, 30, 10, 0.08), 0 1px 3px rgba(40,30,10,0.05);
+  --shadow-lg:    0 10px 28px rgba(40, 30, 10, 0.12), 0 3px 6px rgba(40,30,10,0.06);
+  --shadow-xl:    0 24px 56px rgba(20, 16, 8, 0.18);
+  --shadow-focus: 0 0 0 3px rgba(15, 110, 112, 0.22);
+  --shadow-inner: inset 0 1px 2px rgba(40, 30, 10, 0.06);
+
+  /* ── Motion — quick, restrained, no bounces ───────────────────── */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-soft:   cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:    120ms;
+  --dur-base:    200ms;
+  --dur-slow:    320ms;
+
+  /* ── Z-index ──────────────────────────────────────────────────── */
+  --z-base:    0;
+  --z-nav:     10;
+  --z-overlay: 100;
+  --z-modal:   1000;
+  --z-toast:   2000;
+}
+
+/* ============================================================================
+   ROOT — sets RTL & defaults
+   ============================================================================ */
+html {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  color: var(--fg-1);
+  background: var(--bg-canvas);
+  direction: rtl;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+/* ============================================================================
+   SEMANTIC TEXT ROLES
+   Apply via class. Avoid styling raw tags — components stay portable.
+   ============================================================================ */
+.t-display {
+  font-family: var(--font-display);
+  font-size: var(--fs-display);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-1);
+}
+.t-h1 {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-snug);
+  color: var(--fg-1);
+}
+.t-h2 {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--fg-1);
+}
+.t-h3 {
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--fg-1);
+}
+.t-body {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-normal);
+  color: var(--fg-1);
+}
+.t-body-sm {
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-normal);
+  color: var(--fg-1);
+}
+.t-caption {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+  color: var(--fg-2);
+}
+.t-micro {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+  color: var(--fg-3);
+  letter-spacing: var(--tracking-wide);
+}
+.t-label {
+  /* Mini section/field labels — uppercase Latin or spaced Arabic */
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--fg-2);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.t-mono,
+.t-numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.t-currency {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-semibold);
+  color: var(--currency-base);
+}
+.t-currency--pos { color: var(--currency-pos); }
+.t-currency--neg { color: var(--currency-neg); }
+
+/* link */
+a, .t-link {
+  color: var(--fg-link);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+a:hover, .t-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
+
+/* selection — copper, warm */
+::selection {
+  background: var(--brand-accent-soft);
+  color: var(--brand-accent-ink);
+}
+
+/* ── Bridge to Tailwind / shadcn tokens ─────────────────────────────── */
+html[data-theme="mihbar-light"],
+html[data-theme="mihbar"] {
+  --background: 42 33% 94%;
+  --foreground: 220 47% 11%;
+  --card: 45 40% 97%;
+  --card-foreground: 220 47% 11%;
+  --primary: 181 76% 25%;
+  --primary-foreground: 45 40% 97%;
+  --secondary: 42 28% 88%;
+  --secondary-foreground: 220 47% 11%;
+  --muted: 42 28% 88%;
+  --muted-foreground: 220 14% 38%;
+  --accent: 28 62% 44%;
+  --accent-foreground: 45 40% 97%;
+  --destructive: 6 61% 44%;
+  --border: 42 24% 78%;
+  --input: 42 24% 78%;
+  --ring: 181 76% 25%;
+  --radius: 0.625rem;
+}
+
+html[data-theme="mihbar-dark"] {
+  --background: 222 47% 8%;
+  --foreground: 42 33% 90%;
+  --card: 222 35% 12%;
+  --card-foreground: 42 33% 90%;
+  --primary: 181 45% 52%;
+  --primary-foreground: 222 47% 8%;
+  --secondary: 222 30% 16%;
+  --secondary-foreground: 42 33% 90%;
+  --muted: 222 30% 16%;
+  --muted-foreground: 42 12% 62%;
+  --accent: 24 68% 63%;
+  --accent-foreground: 222 47% 8%;
+  --destructive: 6 65% 64%;
+  --border: 222 28% 22%;
+  --input: 222 28% 22%;
+  --ring: 181 45% 52%;
+}
+
+@keyframes mihbar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.mihbar-pulse {
+  animation: mihbar-pulse 1.4s ease-in-out infinite;
+}

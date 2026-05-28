@@ -1,0 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+
+/* Elegant Luxury — مُكيّف لمتغيّرات App.css (HSL components) */
+html.theme-elegant-luxury {
+  --background: 30 33% 98%;
+  --foreground: 0 0% 10%;
+  --card: 30 33% 98%;
+  --card-foreground: 0 0% 10%;
+  --popover: 30 33% 98%;
+  --popover-foreground: 0 0% 10%;
+  --primary: 0 56% 39%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 43 88% 92%;
+  --secondary-foreground: 43 100% 25%;
+  --muted: 30 14% 93%;
+  --muted-foreground: 25 6% 35%;
+  --accent: 48 96% 89%;
+  --accent-foreground: 0 63% 31%;
+  --destructive: 0 71% 35%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 38 56% 89%;
+  --input: 38 56% 89%;
+  --ring: 0 56% 39%;
+  --radius: 0.375rem;
+}
+
+html.theme-elegant-luxury body {
+  font-family: "Poppins", "Cairo", "Segoe UI", system-ui, sans-serif;
+}
+
+html.theme-elegant-luxury.dark {
+  --background: 20 6% 10%;
+  --foreground: 60 5% 96%;
+  --card: 20 6% 16%;
+  --card-foreground: 60 5% 96%;
+  --popover: 20 6% 16%;
+  --popover-foreground: 60 5% 96%;
+  --primary: 0 72% 41%;
+  --primary-foreground: 30 33% 98%;
+  --secondary: 32 91% 33%;
+  --secondary-foreground: 48 96% 89%;
+  --muted: 20 6% 16%;
+  --muted-foreground: 30 6% 83%;
+  --accent: 32 91% 33%;
+  --accent-foreground: 48 96% 89%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 25 6% 26%;
+  --input: 25 6% 26%;
+  --ring: 0 72% 41%;
+}

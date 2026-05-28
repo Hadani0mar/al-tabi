@@ -40,7 +40,10 @@ struct TelegramResponse {
 
 // ─── Fetch Reports from Supabase ─────────────────────────────────
 pub async fn fetch_reports() -> Vec<SupabaseReport> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .unwrap();
     let url = supabase_config::supabase_rest_url("reports?is_active=eq.true&select=id,name_ar,sql_query,has_parameters");
     let api_key = SUPABASE_ANON_KEY;
 

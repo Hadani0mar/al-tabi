@@ -1,0 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+/* Cosmic Night — مُكيّف لمتغيّرات App.css (HSL components) */
+html.theme-cosmic-night {
+  --background: 240 100% 98%;
+  --foreground: 240 27% 23%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 27% 23%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 27% 23%;
+  --primary: 255 55% 57%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 248 100% 94%;
+  --secondary-foreground: 248 33% 38%;
+  --muted: 240 50% 96%;
+  --muted-foreground: 240 13% 48%;
+  --accent: 218 100% 92%;
+  --accent-foreground: 240 27% 23%;
+  --destructive: 350 100% 67%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 27% 91%;
+  --input: 240 27% 91%;
+  --ring: 255 55% 57%;
+  --radius: 0.5rem;
+}
+
+html.theme-cosmic-night body {
+  font-family: "Inter", "Cairo", "Segoe UI", system-ui, sans-serif;
+}
+
+html.theme-cosmic-night.dark {
+  --background: 240 29% 8%;
+  --foreground: 240 44% 92%;
+  --card: 240 28% 14%;
+  --card-foreground: 240 44% 92%;
+  --popover: 240 28% 14%;
+  --popover-foreground: 240 44% 92%;
+  --primary: 255 100% 78%;
+  --primary-foreground: 240 29% 8%;
+  --secondary: 243 33% 25%;
+  --secondary-foreground: 248 100% 88%;
+  --muted: 240 33% 20%;
+  --muted-foreground: 240 25% 69%;
+  --accent: 240 33% 28%;
+  --accent-foreground: 240 44% 92%;
+  --destructive: 350 100% 67%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 25% 25%;
+  --input: 240 25% 25%;
+  --ring: 255 100% 78%;
+}

@@ -369,6 +369,54 @@ ORDER BY DebtType, Remaining DESC;
 
 ---
 
+## PATTERN: ديون-الموردين-مبسط
+TRIGGERS: ديون الموردين, ديون موردين, ديون الموردين فقط, تقرير ديون الموردين, الذي علي للموردين, اللي علي للموردين, كم علي للموردين, supplier debts, supplier balances only, vendor debts simple
+TABLES: CUSTOMERS, BUY_INVOICE, BUY_ITEMS, B_R_INVOICE, B_R_ITEMS, GIVE, BALANCE_EDIT
+NOTES: نسخة مبسّطة من «متابعة الديون» — تعرض ديون الموردين فقط بعمودين: اسم المورد، والدين. تخدم الحالات التي لا يحتاج فيها المستخدم تفاصيل المقبوضات/التسويات/التواريخ. الصيغة هي: مشتريات − مردودات مشتريات − GIVE + تسوية BALANCE_EDIT.
+---
+
+**الأعمدة:** فقط `اسم المورد` و `الدين` — لا تضف أعمدة أخرى مهما كان السياق.
+
+```sql
+-- ديون الموردين فقط: اسم المورد + الدين (د.ل)
+;WITH
+BalanceAdj AS (
+  SELECT CUST_ID, SUM(ISNULL(BL_DEBIT,0))-SUM(ISNULL(BL_CREDIT,0)) AS AdjBalance
+  FROM dbo.BALANCE_EDIT GROUP BY CUST_ID
+),
+BuyTot AS (
+  SELECT B.CUST_ID, SUM(BI.QTY*BI.PRICE) AS BuyValue
+  FROM dbo.BUY_INVOICE B JOIN dbo.BUY_ITEMS BI ON B.B_ID=BI.B_ID GROUP BY B.CUST_ID
+),
+BuyReturnTot AS (
+  SELECT BR.CUST_ID, SUM(BRI.QTY*BRI.PRICE) AS ReturnValue
+  FROM dbo.B_R_INVOICE BR JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID=BRI.B_R_ID GROUP BY BR.CUST_ID
+),
+GiveTot AS (
+  SELECT CUST_ID, SUM(G_VALUE) AS PaidValue
+  FROM dbo.GIVE GROUP BY CUST_ID
+)
+SELECT TOP 200
+  C.CUST_NAME AS [اسم المورد],
+  CAST(
+    ISNULL(BT.BuyValue,0) - ISNULL(BRT.ReturnValue,0)
+    - ISNULL(GT.PaidValue,0) + ISNULL(BA.AdjBalance,0)
+    AS decimal(18,2)
+  ) AS [الدين]
+FROM dbo.CUSTOMERS C
+LEFT JOIN BuyTot       BT  ON C.CUST_ID = BT.CUST_ID
+LEFT JOIN BuyReturnTot BRT ON C.CUST_ID = BRT.CUST_ID
+LEFT JOIN GiveTot      GT  ON C.CUST_ID = GT.CUST_ID
+LEFT JOIN BalanceAdj   BA  ON C.CUST_ID = BA.CUST_ID
+WHERE C.CUST_VENDOR = 1
+  AND C.CUST_INVISIBLE = 0
+  AND (ISNULL(BT.BuyValue,0) - ISNULL(BRT.ReturnValue,0)
+       - ISNULL(GT.PaidValue,0) + ISNULL(BA.AdjBalance,0)) >= 1
+ORDER BY [الدين] DESC;
+```
+
+---
+
 ## PATTERN: تقرير-الصلاحية
 TRIGGERS: منتهية الصلاحية, صلاحية, تاريخ انتهاء, سينخلص قريباً, ستنتهي صلاحيتها, expiry report, expiring soon, expired products, expiry date
 TABLES: ITEMS_SUB, ITEMS, STORES

@@ -21,6 +21,7 @@ pub mod pdf_generator;
 pub mod excel_generator;
 pub mod ai_agent;
 pub mod agent_tools;
+pub mod agent_memory;
 pub mod scheduler;
 
 pub struct AppState {
@@ -70,6 +71,104 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub row_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct BusinessProfile {
+    pub company_name: Option<String>,
+    pub address: Option<String>,
+    pub city: Option<String>,
+    pub activity_code: Option<String>,
+    pub activity_name: Option<String>,
+    pub phone: Option<String>,
+    pub mobile: Option<String>,
+    pub fax: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// بيانات النشاط التجاري من dbo.SITTEINGS (صف الإعدادات العامة)
+#[tauri::command]
+async fn get_business_profile(
+    state: tauri::State<'_, AppState>,
+) -> Result<BusinessProfile, String> {
+    let conn_opt = state.conn.lock().await.clone();
+    let conn = conn_opt.ok_or("غير متصل بقاعدة البيانات. سجّل الدخول أولاً.")?;
+
+    let full_sql = "SELECT TOP 1 \
+        A_NAME, A_ADDRESS, CITY, ACTIVITY, [ACTIVITYName], \
+        PHONE, MOBILE, FAX, TRAN_BARNCH \
+        FROM dbo.SITTEINGS";
+
+    let basic_sql = "SELECT TOP 1 \
+        A_NAME, A_ADDRESS, PHONE, MOBILE, FAX, TRAN_BARNCH \
+        FROM dbo.SITTEINGS";
+
+    let query = async {
+        match execute_sql_query(conn.clone(), full_sql.to_string()).await {
+            Ok(result) if result.row_count > 0 => Ok(parse_business_profile_full(&result.rows[0])),
+            Ok(_) => Ok(BusinessProfile::default()),
+            Err(_) => {
+                let result = execute_sql_query(conn, basic_sql.to_string()).await?;
+                if result.row_count == 0 {
+                    return Ok(BusinessProfile::default());
+                }
+                Ok(parse_business_profile_basic(&result.rows[0]))
+            }
+        }
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(8), query)
+        .await
+        .map_err(|_| "انتهت مهلة قراءة بيانات النشاط التجاري (8 ثوانٍ).".to_string())?
+}
+
+fn parse_business_profile_full(row: &[String]) -> BusinessProfile {
+    BusinessProfile {
+        company_name: non_empty(row.get(0)),
+        address: non_empty(row.get(1)),
+        city: non_empty(row.get(2)),
+        activity_code: non_empty(row.get(3)),
+        activity_name: non_empty(row.get(4)),
+        phone: non_empty(row.get(5)),
+        mobile: non_empty(row.get(6)),
+        fax: non_empty(row.get(7)),
+        branch: non_empty(row.get(8)),
+    }
+}
+
+fn parse_business_profile_basic(row: &[String]) -> BusinessProfile {
+    BusinessProfile {
+        company_name: non_empty(row.get(0)),
+        address: non_empty(row.get(1)),
+        phone: non_empty(row.get(2)),
+        mobile: non_empty(row.get(3)),
+        fax: non_empty(row.get(4)),
+        branch: non_empty(row.get(5)),
+        ..BusinessProfile::default()
+    }
+}
+
+fn non_empty(value: Option<&String>) -> Option<String> {
+    value
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+#[derive(Debug, Serialize)]
+pub struct TelegramSettingsLocal {
+    pub bot_token: String,
+    pub chat_id: String,
+}
+
+#[tauri::command]
+fn load_telegram_settings_local(
+    app: tauri::AppHandle,
+) -> Result<TelegramSettingsLocal, String> {
+    let (bot_token, chat_id) =
+        supabase_config::load_local_telegram_settings(&app, decrypt_value)?;
+    Ok(TelegramSettingsLocal { bot_token, chat_id })
 }
 
 // ─── مفتاح التشفير ────────────────────────────────────────────
@@ -362,6 +461,53 @@ async fn set_active_connection(
     Ok(())
 }
 
+// ─── المفضلة (Favorites) — للاستخدام في صفحة المحفوظات ───────
+// لا يُعاد SQL إلى الواجهة (حماية الملكية الفكرية) — التنفيذ يتم بالـ id فقط.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct FavoriteDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub created_at_unix: u64,
+}
+
+#[tauri::command]
+async fn list_favorite_queries() -> Result<Vec<FavoriteDto>, String> {
+    Ok(agent_tools::list_all_favorites_full()
+        .into_iter()
+        .map(|f| FavoriteDto {
+            id: f.id,
+            name: f.name,
+            description: f.description,
+            created_at_unix: f.created_at_unix,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn delete_favorite_query(id: String) -> Result<bool, String> {
+    agent_tools::delete_favorite_by_id(&id)
+}
+
+#[tauri::command]
+async fn execute_favorite_query(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<QueryResult, String> {
+    let fav = agent_tools::get_favorite_sql(&id)
+        .ok_or_else(|| "لم يُعثر على الاستعلام المحفوظ.".to_string())?;
+    agent_tools::validate_read_only_sql(&fav.sql)?;
+
+    let conn = {
+        let guard = state.conn.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| "لا يوجد اتصال نشط بقاعدة البيانات.".to_string())?
+    };
+
+    execute_sql_query(conn, fav.sql).await
+}
+
 #[tauri::command]
 async fn load_app_secrets_settings(
     app: tauri::AppHandle,
@@ -501,6 +647,12 @@ async fn ask_local_ai(
     app_state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    eprintln!(
+        "[ask_local_ai] start request_id={} message_len={}",
+        request_id,
+        message.len()
+    );
+
     let _agent_slot = app_state.inner().ai_request_lock.lock().await;
 
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
@@ -519,6 +671,25 @@ async fn ask_local_ai(
     }
 
     let reports_cache = crate::telegram::fetch_reports().await;
+
+    let secrets =
+        supabase_config::resolve_app_secrets(&app_handle, decrypt_value, encrypt_value).await?;
+    let groq_key = secrets.openrouter_api_key;
+    let dec_openai_key = secrets.openai_api_key;
+
+    if groq_key.trim().is_empty() {
+        eprintln!("[ask_local_ai] ERROR: OpenRouter key is empty");
+        return Err(
+            "مفتاح OpenRouter غير متوفر. تحقق من اتصال الإنترنت أو راجع إعدادات المطوّر."
+                .to_string(),
+        );
+    }
+    eprintln!(
+        "[ask_local_ai] OpenRouter key loaded (len={}) model={}",
+        groq_key.len(),
+        ai_model
+    );
+
     let state_arc = Arc::new(AppState {
         conn: app_state.inner().conn.clone(),
         bot_cancel: app_state.inner().bot_cancel.clone(),
@@ -527,11 +698,6 @@ async fn ask_local_ai(
         agent_session: app_state.inner().agent_session.clone(),
         scheduler: app_state.inner().scheduler.clone(),
     });
-
-    let secrets =
-        supabase_config::resolve_app_secrets(&app_handle, decrypt_value, encrypt_value).await?;
-    let groq_key = secrets.openrouter_api_key;
-    let dec_openai_key = secrets.openai_api_key;
 
     let result = crate::ai_agent::handle_with_groq_local(
         &message,
@@ -550,6 +716,11 @@ async fn ask_local_ai(
 
     match result {
         Ok(mut text) => {
+            eprintln!(
+                "[ask_local_ai] success request_id={} response_len={}",
+                request_id,
+                text.len()
+            );
             let last_path = {
                 let session = state_arc.agent_session.lock().await;
                 session.last_file_path.clone()
@@ -563,7 +734,10 @@ async fn ask_local_ai(
             }
             Ok(text)
         }
-        Err(e) => Err(e),
+        Err(e) => {
+            eprintln!("[ask_local_ai] error request_id={}: {}", request_id, e);
+            Err(e)
+        }
     }
 }
 
@@ -814,6 +988,14 @@ pub fn run() {
                 let state = app_handle.state::<AppState>();
                 let _ = update_telegram_settings(app_handle.clone(), state).await;
             });
+
+            // تأكيد أيقونة النافذة (Windows dev قد يعرض الافتراضية بدون rebuild كامل)
+            if let Some(icon) = app.default_window_icon().cloned() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_icon(icon);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -841,6 +1023,11 @@ pub fn run() {
             get_notifications,
             mark_notification_read,
             clear_all_notifications,
+            list_favorite_queries,
+            delete_favorite_query,
+            execute_favorite_query,
+            get_business_profile,
+            load_telegram_settings_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

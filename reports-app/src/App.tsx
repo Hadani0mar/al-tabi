@@ -1,14 +1,27 @@
-import { useState, useEffect } from "react";
-import { Bookmark } from "lucide-react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { SqlLoginPage } from "@/components/ui/sql-login-page";
-import LumaBar from "@/components/ui/futuristic-nav";
-import { GenericReportPage } from "@/components/ui/generic-report-page";
-import { SettingsPage } from "@/components/ui/settings-page";
-import { AIAssistantInterface } from "@/components/ui/ai-assistant-interface";
-import { SchedulerPage } from "@/components/ui/scheduler-page";
-import { invoke } from "@tauri-apps/api/core";
+import MihbarNav from "@/components/ui/futuristic-nav";
+import { AppShellHeader } from "@/components/ui/app-shell-header";
 import { FIXED_AI_MODEL } from "@/lib/ai-config";
-import "./App.css";
+import { applyTheme, loadActiveTheme } from "@/lib/themes";
+import { invoke } from "@tauri-apps/api/core";
+import { load } from "@tauri-apps/plugin-store";
+
+const SchedulerPage = lazy(() =>
+  import("@/components/ui/scheduler-page").then((m) => ({ default: m.SchedulerPage })),
+);
+const GenericReportPage = lazy(() =>
+  import("@/components/ui/generic-report-page").then((m) => ({ default: m.GenericReportPage })),
+);
+const AIAssistantInterface = lazy(() =>
+  import("@/components/ui/ai-assistant-interface").then((m) => ({ default: m.AIAssistantInterface })),
+);
+const SavedQueriesPage = lazy(() =>
+  import("@/components/ui/saved-queries-page").then((m) => ({ default: m.SavedQueriesPage })),
+);
+const SettingsPage = lazy(() =>
+  import("@/components/ui/settings-page").then((m) => ({ default: m.SettingsPage })),
+);
 
 export interface ConnectionInfo {
   server: string;
@@ -20,47 +33,128 @@ export interface ConnectionInfo {
   server_version: string | null;
 }
 
+const STORE_FILE = "connections.dat";
 
 type Page = "reports" | "search" | "alerts" | "ai" | "saved" | "settings";
 const PAGES: Page[] = ["reports", "search", "alerts", "ai", "saved", "settings"];
 
 export default function App() {
-  const [connected,  setConnected]  = useState(false);
-  const [connInfo,   setConnInfo]   = useState<ConnectionInfo | null>(null);
-  const [pageIndex,  setPageIndex]  = useState(0);
+  const [connected, setConnected] = useState(false);
+  const [connInfo, setConnInfo] = useState<ConnectionInfo | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
   const [groqKey, setGroqKey] = useState("");
+  const [autoConnecting, setAutoConnecting] = useState(false);
+  const [visited, setVisited] = useState({ ai: false, saved: false, settings: false });
   const aiModel = FIXED_AI_MODEL;
 
   useEffect(() => {
-    if (!connected) return;
-    async function loadKey() {
+    loadActiveTheme().then(applyTheme).catch(console.error);
+  }, []);
+
+  // دخول تلقائي في الخلفية — لا نحجب الواجهة
+  useEffect(() => {
+    let cancelled = false;
+
+    async function tryAutoLogin() {
       try {
-        const remote = await invoke<{
-          openrouter_api_key: string;
-        }>("load_app_secrets_settings");
-        setGroqKey(remote.openrouter_api_key ?? "");
+        const store = await load(STORE_FILE, { autoSave: false, defaults: {} });
+        const autoLoginEnabled = await store.get<boolean>("auto_login");
+        const lastConnName = await store.get<string>("last_connection");
+
+        if (!autoLoginEnabled || !lastConnName) return;
+
+        const enc = await store.get<Record<string, string>>(`conn_${lastConnName}`);
+        if (!enc) return;
+
+        if (!cancelled) setAutoConnecting(true);
+
+        const password = enc.password
+          ? await invoke<string>("decrypt_value", { encrypted: enc.password })
+          : "";
+
+        const conn = {
+          server: enc.server ?? "",
+          port: parseInt(enc.port ?? "1433"),
+          database: enc.database ?? "",
+          username: enc.username ?? "",
+          password,
+          use_windows_auth: enc.use_windows_auth === "true",
+        };
+
+        const result = await invoke<{ success: boolean; message: string; server_version: string | null }>(
+          "test_sql_connection",
+          { conn },
+        );
+
+        if (cancelled) return;
+
+        if (result.success) {
+          await invoke("set_active_connection", { conn }).catch(console.error);
+          setConnInfo({ ...conn, server_version: result.server_version });
+          setConnected(true);
+        }
       } catch (err) {
-        console.error("Failed to load Supabase secrets:", err);
+        console.error("Auto-login failed:", err);
+      } finally {
+        if (!cancelled) setAutoConnecting(false);
       }
     }
-    loadKey();
-  }, [connected]);
+
+    tryAutoLogin();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const currentPage = PAGES[pageIndex] ?? "reports";
+
+  useEffect(() => {
+    if (currentPage === "ai") setVisited((v) => (v.ai ? v : { ...v, ai: true }));
+    if (currentPage === "saved") setVisited((v) => (v.saved ? v : { ...v, saved: true }));
+    if (currentPage === "settings") setVisited((v) => (v.settings ? v : { ...v, settings: true }));
+  }, [currentPage]);
+
+  // مفتاح AI فقط عند فتح تبويب الوكيل
+  useEffect(() => {
+    if (!connected || !visited.ai || groqKey) return;
+    invoke<{ openrouter_api_key: string }>("load_app_secrets_settings")
+      .then((remote) => setGroqKey(remote.openrouter_api_key ?? ""))
+      .catch(console.error);
+  }, [connected, visited.ai, groqKey]);
+
+  async function handleLogout() {
+    try {
+      const store = await load(STORE_FILE, { autoSave: false, defaults: {} });
+      await store.set("auto_login", false);
+      await store.save();
+    } catch (err) {
+      console.error("Logout cleanup failed:", err);
+    }
+    setConnInfo(null);
+    setConnected(false);
+    setPageIndex(0);
+    setGroqKey("");
+  }
 
   if (!connected) {
     return (
       <SqlLoginPage
-        onConnected={(info) => { setConnInfo(info); setConnected(true); }}
+        autoConnecting={autoConnecting}
+        onConnected={(info) => {
+          setConnInfo(info);
+          setConnected(true);
+        }}
       />
     );
   }
 
-  const currentPage = PAGES[pageIndex] ?? "reports";
-
   return (
-    <div className="min-h-screen bg-background" dir="rtl">
-      <main className="pb-28">
-        {currentPage === "reports"  && <SchedulerPage />}
-        {currentPage === "search"   && (
+    <div className="flex min-h-screen flex-col" dir="rtl" style={{ background: "var(--bg-canvas)" }}>
+      <AppShellHeader businessName={connInfo?.database} connected={connected} />
+      <main className="flex-1 pb-28">
+        <Suspense fallback={null}>
+          {(currentPage === "reports" || currentPage === "alerts") && <SchedulerPage />}
+          {currentPage === "search" && (
             <div className="flex flex-col h-screen overflow-y-auto pt-6">
               <GenericReportPage
                 connInfo={connInfo!}
@@ -68,29 +162,23 @@ export default function App() {
                 reportNameAr="البحث عن تفاصيل المنتجات"
               />
             </div>
-        )}
-        {currentPage === "alerts"   && <SchedulerPage />}
-        {/* يبقى مُحمّلاً عند تغيير التبويب حتى لا تُفقد المحادثات الجارية */}
-        <div className={currentPage === "ai" ? "contents" : "hidden"} aria-hidden={currentPage !== "ai"}>
-          <AIAssistantInterface groqKey={groqKey} aiModel={aiModel} />
-        </div>
-        {currentPage === "saved"    && <PlaceholderPage title="المحفوظات"     Icon={Bookmark} />}
-        {currentPage === "settings" && <SettingsPage />}
+          )}
+          {visited.ai && (
+            <div className={currentPage === "ai" ? "contents" : "hidden"} aria-hidden={currentPage !== "ai"}>
+              <AIAssistantInterface groqKey={groqKey} aiModel={aiModel} />
+            </div>
+          )}
+          {visited.saved && currentPage === "saved" && <SavedQueriesPage />}
+          {visited.settings && (
+            <div className={currentPage === "settings" ? "contents" : "hidden"} aria-hidden={currentPage !== "settings"}>
+              <div className="flex flex-col min-h-[calc(100vh-7rem)] w-full">
+                <SettingsPage connInfo={connInfo} onLogout={handleLogout} />
+              </div>
+            </div>
+          )}
+        </Suspense>
       </main>
-      <LumaBar activeIndex={pageIndex} onNavigate={setPageIndex} />
-    </div>
-  );
-}
-
-// ── placeholder ───────────────────────────────────────────
-function PlaceholderPage({ title, Icon }: { title: string; Icon: React.ElementType }) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen gap-4 text-muted-foreground">
-      <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
-        <Icon className="w-8 h-8 text-muted-foreground/50" />
-      </div>
-      <h2 className="text-xl font-bold text-foreground">{title}</h2>
-      <p className="text-sm">قريباً</p>
+      <MihbarNav activeIndex={pageIndex} onNavigate={setPageIndex} />
     </div>
   );
 }

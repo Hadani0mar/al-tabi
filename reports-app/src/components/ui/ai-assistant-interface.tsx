@@ -3,15 +3,11 @@
 import type React from "react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  Search,
-  Mic,
   ArrowUp,
   Plus,
-  FileText,
   Code,
   BookOpen,
   PenTool,
-  BrainCircuit,
   Sparkles,
   Loader2,
   Trash2,
@@ -21,6 +17,8 @@ import {
   PlusCircle,
   Square,
   Tag,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
@@ -78,10 +76,6 @@ interface Props {
 
 export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [inputValue, setInputValue] = useState("");
-  const [searchEnabled, setSearchEnabled] = useState(false);
-  const [deepResearchEnabled, setDeepResearchEnabled] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
-  const [showUploadAnimation, setShowUploadAnimation] = useState(false);
   const [activeCommandCategory, setActiveCommandCategory] = useState<string | null>(null);
   
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
@@ -91,6 +85,8 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isInputCollapsed, setIsInputCollapsed] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mentionDropRef = useRef<HTMLDivElement>(null);
@@ -98,6 +94,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const pendingByChatRef = useRef<Record<string, string>>({});
   const loadingChatIdsRef = useRef<Set<string>>(new Set());
   const sendLockRef = useRef(false);
+  const activeChatIdRef = useRef<string | null>(null);
   const mentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [productSuggestions, setProductSuggestions] = useState<ProductMention[]>([]);
@@ -107,7 +104,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [mentionCtx, setMentionCtx] = useState<MentionContext | null>(null);
 
   const isActiveChatLoading =
-    activeChatId !== null && loadingChatIds.has(activeChatId);
+    isSending ||
+    (activeChatIdRef.current !== null &&
+      loadingChatIds.has(activeChatIdRef.current)) ||
+    (activeChatId !== null && loadingChatIds.has(activeChatId));
 
   const saveLastActiveChatId = async (id: string | null) => {
     try {
@@ -134,6 +134,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           if (lastId) {
             const last = savedChats.find((c) => c.id === lastId);
             if (last) {
+              activeChatIdRef.current = last.id;
               setActiveChatId(last.id);
               setChatHistory(last.messages);
             }
@@ -292,15 +293,6 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     ],
   };
 
-  const handleUploadFile = () => {
-    setShowUploadAnimation(true);
-    setTimeout(() => {
-      const newFile = `ملف_تصدير.pdf`;
-      setUploadedFiles((prev) => [...prev, newFile]);
-      setShowUploadAnimation(false);
-    }, 1500);
-  };
-
   const handleCommandSelect = (command: string) => {
     setInputValue(command);
     setActiveCommandCategory(null);
@@ -321,6 +313,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
   const handleNewChat = () => {
     setChatHistory([]);
+    activeChatIdRef.current = null;
     setActiveChatId(null);
     setIsSidebarOpen(false);
     saveLastActiveChatId(null);
@@ -336,17 +329,19 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   };
 
   const handleStopMessage = async () => {
-    if (!activeChatId) return;
-    const requestId = pendingByChatRef.current[activeChatId];
+    const chatId = activeChatIdRef.current ?? activeChatId;
+    if (!chatId) return;
+    const requestId = pendingByChatRef.current[chatId];
     if (!requestId) return;
     try {
       await invoke("cancel_local_ai", { requestId });
     } catch (e) {
       console.error("cancel failed:", e);
     }
-    clearChatLoading(activeChatId);
-    delete pendingByChatRef.current[activeChatId];
+    clearChatLoading(chatId);
+    delete pendingByChatRef.current[chatId];
     sendLockRef.current = false;
+    setIsSending(false);
     setToolProgress(null);
     const stopMsg: Message = {
       role: "assistant",
@@ -356,7 +351,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
       const updated = [...hist, stopMsg];
       setChats((prev) => {
         const newC = prev.map((c) =>
-          c.id === activeChatId
+          c.id === chatId
             ? { ...c, messages: updated, updatedAt: Date.now() }
             : c
         );
@@ -371,7 +366,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     const trimmed = inputValue.trim();
     if (!trimmed || sendLockRef.current) return;
 
-    let currentChatId = activeChatId;
+    let currentChatId = activeChatIdRef.current ?? activeChatId;
     let isNewChat = false;
     if (!currentChatId) {
       currentChatId = crypto.randomUUID();
@@ -381,6 +376,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     if (loadingChatIdsRef.current.has(currentChatId)) return;
 
     sendLockRef.current = true;
+    setIsSending(true);
     const userMessage = trimmed;
     setInputValue("");
     setShowMentionDrop(false);
@@ -390,14 +386,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     setChatHistory(newHistory);
     setToolProgress(null);
 
+    activeChatIdRef.current = currentChatId;
     if (isNewChat) {
       setActiveChatId(currentChatId);
       saveLastActiveChatId(currentChatId);
-    }
-
-    const prevRequestId = pendingByChatRef.current[currentChatId];
-    if (prevRequestId) {
-      invoke("cancel_local_ai", { requestId: prevRequestId }).catch(console.error);
     }
 
     const requestId = crypto.randomUUID();
@@ -453,7 +445,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             requestId,
         });
 
-        if (pendingByChatRef.current[currentChatId] !== requestId) return;
+        if (pendingByChatRef.current[currentChatId] !== requestId) {
+          console.warn("[AI] ignored stale response", { currentChatId, requestId });
+          return;
+        }
 
         const assistMsg: Message = { role: "assistant", content: response };
         const finalHistory = [...newHistory, assistMsg];
@@ -495,11 +490,12 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     } finally {
         if (pendingByChatRef.current[currentChatId] === requestId) {
           delete pendingByChatRef.current[currentChatId];
-        }
-        clearChatLoading(currentChatId);
-        sendLockRef.current = false;
-        if (activeChatId === currentChatId) {
-          setToolProgress(null);
+          clearChatLoading(currentChatId);
+          sendLockRef.current = false;
+          setIsSending(false);
+          if (activeChatIdRef.current === currentChatId) {
+            setToolProgress(null);
+          }
         }
     }
   };
@@ -508,6 +504,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     const chat = chats.find((c) => c.id === id);
     if (chat) {
       setChatHistory(chat.messages);
+      activeChatIdRef.current = chat.id;
       setActiveChatId(chat.id);
       saveLastActiveChatId(chat.id);
       setIsSidebarOpen(false);
@@ -579,7 +576,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
       <div className="flex-1 flex flex-col items-center p-4 h-[calc(100vh-6rem)] relative overflow-visible min-h-0">
         {/* Hamburger Menu Header */}
-        <div className="w-full max-w-4xl mx-auto flex items-center justify-between mb-4">
+        <div className="w-full mx-auto flex items-center justify-between mb-4 px-2">
           <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
             <Menu className="w-5 h-5" />
             <span className="text-sm font-medium">سجل المحادثات</span>
@@ -592,13 +589,13 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           )}
         </div>
 
-        <div className="w-full max-w-4xl mx-auto flex flex-col h-[calc(100vh-12rem)] min-h-0 overflow-visible">
+        <div className="w-full mx-auto flex flex-col h-[calc(100vh-12rem)] min-h-0 overflow-visible">
         
         {/* Header / Logo */}
         {chatHistory.length === 0 && (
           <div className="flex flex-col items-center justify-center flex-1 animate-in fade-in zoom-in duration-500">
-            <div className="mb-6 w-20 h-20 relative">
-               <img src="/ai.svg" alt="AI" className="w-full h-full text-primary" />
+            <div className="mb-6 w-14 h-14 rounded-[14px] flex items-center justify-center" style={{ background: "var(--brand-accent-soft)", color: "var(--brand-accent)" }}>
+               <Sparkles className="w-7 h-7" />
             </div>
             <div className="mb-8 text-center">
               <motion.div
@@ -607,11 +604,11 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                 transition={{ duration: 0.3 }}
                 className="flex flex-col items-center"
               >
-                <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-l from-indigo-600 to-violet-500 mb-2">
-                  كيف يمكنني مساعدتك اليوم؟
+                <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--fg-1)" }}>
+                  اسأل عن بياناتك بالعربية
                 </h1>
                 <p className="text-muted-foreground max-w-md text-sm">
-                  يمكنني الإجابة على أسئلتك وإعداد تقارير مفصلة من قاعدة بيانات النظام.
+                  اكتب سؤالاً أو اختر اقتراحاً. سيتم تنفيذ استعلام آمن (قراءة فقط) على Marketing2026.
                 </p>
               </motion.div>
             </div>
@@ -668,7 +665,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                           className="p-3 hover:bg-muted/50 cursor-pointer transition-colors duration-75"
                         >
                           <div className="flex items-center gap-3">
-                            <Sparkles className="w-4 h-4 text-indigo-500" />
+                            <Sparkles className="w-4 h-4 text-primary" />
                             <span className="text-sm text-foreground">
                               {suggestion}
                             </span>
@@ -685,7 +682,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
         {/* Chat History */}
          {chatHistory.length > 0 && (
-          <div className="flex-1 overflow-y-auto w-full max-w-4xl px-4 py-6 space-y-6 scrollbar-hide">
+          <div className="flex-1 overflow-y-auto w-full px-4 py-6 space-y-6 scrollbar-hide">
              {chatHistory.map((msg, i) => {
                 let content = msg.content;
                 let filePath = null;
@@ -697,23 +694,31 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                 
                 return (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                   <div className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-card border border-border text-foreground rounded-bl-sm'}`}>
+                   <div
+                     className={`max-w-[88%] rounded-2xl px-5 py-4 shadow-sm ${msg.role === 'user' ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
+                     style={
+                       msg.role === 'user'
+                         ? { background: 'var(--user-bubble-bg)', color: 'var(--user-bubble-fg)' }
+                         : { background: 'var(--ai-bubble-bg)', color: 'var(--ai-bubble-fg)', border: '1px solid var(--ai-bubble-border)' }
+                     }
+                   >
                       {msg.role === 'user' ? (
-                          <div className="text-sm whitespace-pre-wrap">{content}</div>
+                          <div className="text-[15px] whitespace-pre-wrap leading-relaxed">{content}</div>
                       ) : (
                           <div className="flex flex-col gap-3">
-                            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-muted prose-pre:border prose-pre:border-border prose-pre:text-foreground">
+                            <div className="prose prose-base dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:text-[15px] prose-li:text-[15px] prose-pre:bg-muted prose-pre:border prose-pre:border-border prose-pre:text-foreground">
                                <ReactMarkdown
                                   remarkPlugins={[remarkGfm]}
                                   components={{
                                     table: ({ node, ...props }) => (
                                       <div className="w-full overflow-x-auto my-5 rounded-xl border border-border/60 shadow-sm bg-card/50">
-                                        <table className="w-full text-sm text-right" {...props} />
+                                        <table className="w-full text-[15px] text-right border-collapse" {...props} />
                                       </div>
                                     ),
-                                    thead: ({ node, ...props }) => <thead className="bg-muted/60 text-muted-foreground text-xs uppercase tracking-wider" {...props} />,
-                                    th: ({ node, ...props }) => <th className="px-4 py-3 font-semibold border-b border-border/60 whitespace-nowrap" {...props} />,
-                                    td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-border/40 last:border-0 align-middle" {...props} />,
+                                    thead: ({ node, ...props }) => <thead className="bg-muted/70 text-foreground text-[13px] font-bold uppercase tracking-wide" {...props} />,
+                                    th: ({ node, ...props }) => <th className="px-4 py-3 font-bold border-b-2 border-border whitespace-nowrap text-right" {...props} />,
+                                    td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-border/40 last:border-0 align-middle leading-relaxed" {...props} />,
+                                    tr: ({ node, ...props }) => <tr className="hover:bg-muted/30 transition-colors" {...props} />,
                                     a: ({ href, children }) => {
                                       const handleClick = (e: React.MouseEvent) => {
                                         e.preventDefault();
@@ -737,7 +742,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                         <a
                                           href={href}
                                           onClick={handleClick}
-                                          className="text-indigo-500 underline cursor-pointer"
+                                          className="text-primary underline cursor-pointer"
                                         >
                                           {children}
                                         </a>
@@ -751,7 +756,12 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                             {filePath && (
                                 <button
                                     onClick={() => invoke("open_local_file", { path: filePath }).catch(err => alert("فشل فتح الملف: " + err))}
-                                    className="self-start flex items-center gap-2 px-4 py-2 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded-lg hover:bg-indigo-500/20 transition-colors text-sm font-semibold mt-2 shadow-sm"
+                                    className="self-start flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-semibold mt-2 shadow-sm border"
+                                    style={{
+                                      background: "var(--brand-accent-soft)",
+                                      color: "var(--brand-accent-ink)",
+                                      borderColor: "var(--ai-bubble-border)",
+                                    }}
                                 >
                                     <Download className="w-4 h-4" />
                                     فتح / معاينة الملف
@@ -765,7 +775,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
              })}
              {isActiveChatLoading && (
                  <div className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl p-4 bg-card border border-border text-foreground rounded-bl-sm flex items-center gap-3">
+                    <div className="max-w-[85%] rounded-2xl p-4 rounded-bl-sm flex items-center gap-3 border" style={{ background: 'var(--ai-bubble-bg)', borderColor: 'var(--ai-bubble-border)', color: 'var(--ai-bubble-fg)' }}>
                        <Loader2 className="w-5 h-5 animate-spin text-primary" />
                        {toolProgress ? (
                            <span className="text-sm font-medium text-primary animate-pulse">{toolProgress}</span>
@@ -780,7 +790,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         )}
 
         {/* Input + mention dropdown (wrapper must stay overflow-visible) */}
-        <div className="w-full max-w-4xl shrink-0 mt-auto mb-2 relative z-30">
+        <div className="w-full shrink-0 mt-auto mb-2 relative z-30">
           <AnimatePresence>
             {showMentionDrop && (
               <motion.div
@@ -794,10 +804,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                 <div className="rounded-2xl border border-border/60 bg-popover/95 backdrop-blur-xl text-popover-foreground shadow-2xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between gap-2 sticky top-0 z-10">
                     <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                      <Tag className="w-3.5 h-3.5 text-indigo-500" />
+                      <Tag className="w-3.5 h-3.5 text-primary" />
                       اختر المنتج (أكمل للبحث)
                     </span>
-                    {mentionLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />}
+                    {mentionLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
                   </div>
                   <div className="max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
                   {productSuggestions.length === 0 && !mentionLoading ? (
@@ -807,7 +817,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                       {productSuggestions.map((hit, idx) => (
                         <li key={`${hit.code}-${idx}`} className="relative">
                           {idx === mentionFocusIdx && (
-                              <motion.div layoutId="mention-focus-bg" className="absolute inset-x-2 inset-y-0.5 bg-indigo-500/10 rounded-lg -z-10 pointer-events-none" />
+                              <motion.div layoutId="mention-focus-bg" className="absolute inset-x-2 inset-y-0.5 bg-primary/10 rounded-lg -z-10 pointer-events-none" />
                           )}
                           <button
                             type="button"
@@ -815,7 +825,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                             onClick={() => selectProductMention(hit)}
                             className={cn(
                               "w-full text-right px-4 py-2.5 flex flex-col gap-1 transition-colors relative z-10",
-                              idx === mentionFocusIdx ? "text-indigo-600 dark:text-indigo-400" : "hover:bg-muted/40 text-foreground"
+                              idx === mentionFocusIdx ? "text-primary" : "hover:bg-muted/40 text-foreground"
                             )}
                           >
                             <span className="text-sm font-semibold line-clamp-1 leading-tight">
@@ -834,105 +844,93 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className="bg-card border border-border rounded-xl shadow-sm">
-          <div className="p-4">
-            <textarea
-              ref={inputRef}
-              rows={2}
-              placeholder="اكتب رسالتك هنا… استخدم @ لاختيار منتج من قاعدة البيانات (Enter للإرسال، Shift+Enter سطر جديد)"
-              value={inputValue}
-              onChange={handleInputChange}
-              onSelect={handleInputSelect}
-              onClick={handleInputSelect}
-              onKeyDown={handleInputKeyDown}
-              className="w-full text-foreground bg-transparent text-base outline-none placeholder:text-muted-foreground resize-none min-h-[3rem] leading-relaxed"
-              dir="rtl"
-            />
-          </div>
-
-          {/* Uploaded files */}
-          {uploadedFiles.length > 0 && (
-            <div className="px-4 pb-3">
-              <div className="flex flex-wrap gap-2">
-                {uploadedFiles.map((file, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-2 bg-muted/50 py-1 px-2 rounded-md border border-border"
+          <AnimatePresence initial={false} mode="wait">
+            {!isInputCollapsed ? (
+              <motion.div
+                key="input-expanded"
+                initial={{ opacity: 0, y: 20, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: "auto" }}
+                exit={{ opacity: 0, y: 20, height: 0 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-visible"
+              >
+                {/* مقبض الإخفاء العلوي */}
+                <div className="flex justify-center mb-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsInputCollapsed(true)}
+                    title="إخفاء مربع الكتابة"
+                    className="group flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-all text-[11px] font-medium"
                   >
-                    <FileText className="w-3 h-3 text-indigo-500" />
-                    <span className="text-xs text-foreground">{file}</span>
-                    <button
-                      onClick={() => setUploadedFiles((prev) => prev.filter((_, i) => i !== index))}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+                    <ChevronDown className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
+                    إخفاء
+                  </button>
+                </div>
 
-          {/* Tools & Send */}
-          <div className="px-4 py-3 flex items-center justify-between border-t border-border/50">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setSearchEnabled(!searchEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                  searchEnabled ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400" : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                }`}
+                <div className="bg-card border border-border rounded-xl shadow-sm flex items-end gap-2 p-2.5">
+                  <textarea
+                    ref={inputRef}
+                    rows={1}
+                    placeholder="اكتب رسالتك هنا… استخدم @ لاختيار منتج من قاعدة البيانات (Enter للإرسال، Shift+Enter سطر جديد)"
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    onSelect={handleInputSelect}
+                    onClick={handleInputSelect}
+                    onKeyDown={handleInputKeyDown}
+                    className="flex-1 text-foreground bg-transparent text-base outline-none placeholder:text-muted-foreground resize-none min-h-[2.5rem] max-h-40 leading-relaxed px-2 py-1.5"
+                    dir="rtl"
+                  />
+                  {isActiveChatLoading ? (
+                    <button
+                      type="button"
+                      onClick={handleStopMessage}
+                      title="إيقاف الرد"
+                      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:opacity-90 transition-colors"
+                    >
+                      <Square className="w-4 h-4 fill-current" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSendMessage}
+                      disabled={!inputValue.trim()}
+                      className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+                        inputValue.trim()
+                          ? "bg-primary text-primary-foreground hover:opacity-90"
+                          : "bg-muted text-muted-foreground cursor-not-allowed"
+                      }`}
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="input-collapsed"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="flex justify-center"
               >
-                <Search className="w-3.5 h-3.5" />
-                <span>بحث الويب</span>
-              </button>
-              <button
-                onClick={() => setDeepResearchEnabled(!deepResearchEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                  deepResearchEnabled ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400" : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <BrainCircuit className="w-3.5 h-3.5" />
-                <span>بحث عميق</span>
-              </button>
-              
-               <button
-                  onClick={handleUploadFile}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground hover:bg-muted transition-colors"
-                >
-                  {showUploadAnimation ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  <span>رفع مستند</span>
-               </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted/50">
-                <Mic className="w-5 h-5" />
-              </button>
-              {isActiveChatLoading ? (
-                <button
+                <motion.button
                   type="button"
-                  onClick={handleStopMessage}
-                  title="إيقاف الرد"
-                  className="w-10 h-10 flex items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:opacity-90 transition-colors"
+                  onClick={() => {
+                    setIsInputCollapsed(false);
+                    setTimeout(() => inputRef.current?.focus(), 250);
+                  }}
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  title="إظهار مربع الكتابة"
+                  className="group flex items-center gap-2 px-5 h-11 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-shadow text-sm font-bold"
                 >
-                  <Square className="w-4 h-4 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSendMessage}
-                  disabled={!inputValue.trim()}
-                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
-                    inputValue.trim()
-                      ? "bg-primary text-primary-foreground hover:opacity-90"
-                      : "bg-muted text-muted-foreground cursor-not-allowed"
-                  }`}
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
-          </div>
+                  <ChevronUp className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
+                  إظهار مربع الكتابة
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         </div>
       </div>

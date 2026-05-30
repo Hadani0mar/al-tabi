@@ -23,6 +23,11 @@ pub mod ai_agent;
 pub mod agent_tools;
 pub mod agent_memory;
 pub mod scheduler;
+pub mod pos_sale;
+pub mod erp_profile;
+pub mod erp_adapters;
+pub mod pattern_catalog;
+pub mod pharmacy_share;
 
 pub struct AppState {
     pub conn: Arc<Mutex<Option<SqlConnection>>>,
@@ -33,6 +38,8 @@ pub struct AppState {
     pub ai_request_lock: Arc<tokio::sync::Mutex<()>>,
     pub agent_session: Arc<Mutex<agent_tools::AgentSessionState>>,
     pub scheduler: scheduler::SharedScheduler,
+    /// نوع ERP المكتشف من الاتصال النشط (Marketing2026 | InfinityRetailDB)
+    pub erp_kind: Arc<Mutex<Option<erp_profile::ErpKind>>>,
 }
 
 impl Default for AppState {
@@ -44,6 +51,7 @@ impl Default for AppState {
             ai_request_lock: Arc::new(tokio::sync::Mutex::new(())),
             agent_session: Arc::new(Mutex::new(agent_tools::AgentSessionState::default())),
             scheduler: Arc::new(Mutex::new(scheduler::SchedulerState::default())),
+            erp_kind: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -64,6 +72,7 @@ pub struct ConnectionResult {
     pub success: bool,
     pub message: String,
     pub server_version: Option<String>,
+    pub erp_kind: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,9 +93,96 @@ pub struct BusinessProfile {
     pub mobile: Option<String>,
     pub fax: Option<String>,
     pub branch: Option<String>,
+    /// marketing2026 | infinity_retail_db
+    pub erp_kind: Option<String>,
+    pub erp_label: Option<String>,
 }
 
 /// بيانات النشاط التجاري من dbo.SITTEINGS (صف الإعدادات العامة)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CancelledInvoiceRow {
+    pub invoice_id: i32,
+    pub invoice_kind: String,
+    pub invoice_kind_label: String,
+    pub invoice_time: String,
+    pub updated_at: Option<String>,
+    pub party_name: String,
+    pub employee_name: String,
+    pub note: String,
+}
+
+fn parse_iso_date_param(value: &str) -> Result<String, String> {
+    let t = value.trim();
+    if t.len() != 10
+        || t.as_bytes().get(4) != Some(&b'-')
+        || t.as_bytes().get(7) != Some(&b'-')
+        || !t.chars().all(|c| c.is_ascii_digit() || c == '-')
+    {
+        return Err("صيغة التاريخ غير صالحة. استخدم YYYY-MM-DD.".to_string());
+    }
+    Ok(t.to_string())
+}
+
+#[tauri::command]
+async fn list_cancelled_invoices(
+    target_date: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CancelledInvoiceRow>, String> {
+    let day = parse_iso_date_param(&target_date)?;
+    let conn_opt = state.conn.lock().await.clone();
+    let conn = conn_opt.ok_or("غير متصل بقاعدة البيانات. سجّل الدخول أولاً.")?;
+
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
+    let sql = erp_adapters::cancelled_invoices_sql(erp, &day);
+
+    let result = execute_sql_query(conn, sql).await?;
+    if result.row_count == 0 {
+        return Ok(vec![]);
+    }
+
+    let idx = |cols: &[String], name: &str| -> Option<usize> {
+        cols.iter().position(|c| c.eq_ignore_ascii_case(name))
+    };
+
+    let id_i = idx(&result.columns, "invoice_id").ok_or("عمود invoice_id مفقود")?;
+    let kind_i = idx(&result.columns, "invoice_kind").unwrap_or(0);
+    let kind_label_i = idx(&result.columns, "invoice_kind_label").unwrap_or(0);
+    let time_i = idx(&result.columns, "invoice_time").unwrap_or(0);
+    let updated_i = idx(&result.columns, "updated_at");
+    let party_i = idx(&result.columns, "party_name").unwrap_or(0);
+    let emp_i = idx(&result.columns, "employee_name").unwrap_or(0);
+    let note_i = idx(&result.columns, "note").unwrap_or(0);
+
+    let cell = |row: &[String], i: usize| -> String {
+        row.get(i).cloned().unwrap_or_default().trim().to_string()
+    };
+
+    let rows = result
+        .rows
+        .into_iter()
+        .filter_map(|row| {
+            let id_str = cell(&row, id_i);
+            let invoice_id: i32 = id_str.parse().ok()?;
+            Some(CancelledInvoiceRow {
+                invoice_id,
+                invoice_kind: cell(&row, kind_i),
+                invoice_kind_label: cell(&row, kind_label_i),
+                invoice_time: cell(&row, time_i),
+                updated_at: updated_i
+                    .and_then(|i| {
+                        let v = cell(&row, i);
+                        if v.is_empty() || v == "—" { None } else { Some(v) }
+                    }),
+                party_name: cell(&row, party_i),
+                employee_name: cell(&row, emp_i),
+                note: cell(&row, note_i),
+            })
+        })
+        .collect();
+
+    Ok(rows)
+}
+
 #[tauri::command]
 async fn get_business_profile(
     state: tauri::State<'_, AppState>,
@@ -94,58 +190,13 @@ async fn get_business_profile(
     let conn_opt = state.conn.lock().await.clone();
     let conn = conn_opt.ok_or("غير متصل بقاعدة البيانات. سجّل الدخول أولاً.")?;
 
-    let full_sql = "SELECT TOP 1 \
-        A_NAME, A_ADDRESS, CITY, ACTIVITY, [ACTIVITYName], \
-        PHONE, MOBILE, FAX, TRAN_BARNCH \
-        FROM dbo.SITTEINGS";
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
 
-    let basic_sql = "SELECT TOP 1 \
-        A_NAME, A_ADDRESS, PHONE, MOBILE, FAX, TRAN_BARNCH \
-        FROM dbo.SITTEINGS";
-
-    let query = async {
-        match execute_sql_query(conn.clone(), full_sql.to_string()).await {
-            Ok(result) if result.row_count > 0 => Ok(parse_business_profile_full(&result.rows[0])),
-            Ok(_) => Ok(BusinessProfile::default()),
-            Err(_) => {
-                let result = execute_sql_query(conn, basic_sql.to_string()).await?;
-                if result.row_count == 0 {
-                    return Ok(BusinessProfile::default());
-                }
-                Ok(parse_business_profile_basic(&result.rows[0]))
-            }
-        }
-    };
+    let query = erp_adapters::fetch_business_profile(&conn, erp);
 
     tokio::time::timeout(std::time::Duration::from_secs(8), query)
         .await
         .map_err(|_| "انتهت مهلة قراءة بيانات النشاط التجاري (8 ثوانٍ).".to_string())?
-}
-
-fn parse_business_profile_full(row: &[String]) -> BusinessProfile {
-    BusinessProfile {
-        company_name: non_empty(row.get(0)),
-        address: non_empty(row.get(1)),
-        city: non_empty(row.get(2)),
-        activity_code: non_empty(row.get(3)),
-        activity_name: non_empty(row.get(4)),
-        phone: non_empty(row.get(5)),
-        mobile: non_empty(row.get(6)),
-        fax: non_empty(row.get(7)),
-        branch: non_empty(row.get(8)),
-    }
-}
-
-fn parse_business_profile_basic(row: &[String]) -> BusinessProfile {
-    BusinessProfile {
-        company_name: non_empty(row.get(0)),
-        address: non_empty(row.get(1)),
-        phone: non_empty(row.get(2)),
-        mobile: non_empty(row.get(3)),
-        fax: non_empty(row.get(4)),
-        branch: non_empty(row.get(5)),
-        ..BusinessProfile::default()
-    }
 }
 
 fn non_empty(value: Option<&String>) -> Option<String> {
@@ -160,6 +211,133 @@ fn non_empty(value: Option<&String>) -> Option<String> {
 pub struct TelegramSettingsLocal {
     pub bot_token: String,
     pub chat_id: String,
+}
+
+#[tauri::command]
+async fn get_pharmacy_share_settings(
+    app: tauri::AppHandle,
+) -> Result<pharmacy_share::PharmacyShareSettings, String> {
+    pharmacy_share::load_settings(&app)
+}
+
+#[tauri::command]
+async fn save_pharmacy_share_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    sync_key: String,
+    sharing_enabled: bool,
+    show_prices: bool,
+) -> Result<pharmacy_share::PharmacyShareSettings, String> {
+    let conn = state
+        .conn
+        .lock()
+        .await
+        .clone()
+        .ok_or("غير متصل بقاعدة البيانات.")?;
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
+
+    let mut settings = pharmacy_share::PharmacyShareSettings {
+        sync_key: sync_key.trim().to_string(),
+        sharing_enabled,
+        show_prices,
+        ..pharmacy_share::load_settings(&app)?
+    };
+
+    if !sharing_enabled {
+        if settings.sync_key.len() >= 8 {
+            if let Err(e) = pharmacy_share::stop_pharmacy_sharing(&settings.sync_key).await {
+                settings.last_error = Some(e);
+            } else {
+                settings.last_error = None;
+                settings.last_product_count = 0;
+                settings.last_sync_at = None;
+                settings.last_business_name = None;
+            }
+        }
+        settings.sharing_enabled = false;
+        pharmacy_share::save_settings(&app, &settings)?;
+        return Ok(settings);
+    }
+
+    if settings.sync_key.len() < 8 {
+        return Err("أدخل مفتاح المزامنة (sync_key) من Supabase (8 أحرف على الأقل).".to_string());
+    }
+
+    match pharmacy_share::sync_pharmacy_share(&app, &conn, erp, &settings).await {
+        Ok(r) => {
+            settings.last_product_count = r.product_count;
+            settings.last_business_name = Some(r.business_name);
+            settings.last_sync_at = Some(chrono::Local::now().to_rfc3339());
+            settings.last_error = None;
+            settings.sharing_enabled = true;
+            pharmacy_share::save_settings(&app, &settings)?;
+            Ok(settings)
+        }
+        Err(e) => {
+            settings.last_error = Some(e.clone());
+            pharmacy_share::save_settings(&app, &settings)?;
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+async fn sync_pharmacy_products_now(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<pharmacy_share::PharmacyShareSyncResult, String> {
+    let mut settings = pharmacy_share::load_settings(&app)?;
+    if !settings.sharing_enabled {
+        return Err("فعّل مشاركة المنتجات أولاً.".to_string());
+    }
+    let conn = state
+        .conn
+        .lock()
+        .await
+        .clone()
+        .ok_or("غير متصل بقاعدة البيانات.")?;
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
+    let result = pharmacy_share::sync_pharmacy_share(&app, &conn, erp, &settings).await?;
+    settings.last_product_count = result.product_count;
+    settings.last_business_name = Some(result.business_name.clone());
+    settings.last_sync_at = Some(chrono::Local::now().to_rfc3339());
+    settings.last_error = None;
+    pharmacy_share::save_settings(&app, &settings)?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn stop_pharmacy_sharing_cmd(
+    app: tauri::AppHandle,
+) -> Result<pharmacy_share::PharmacyShareSettings, String> {
+    let mut settings = pharmacy_share::load_settings(&app)?;
+    if settings.sync_key.trim().len() >= 8 {
+        if let Err(e) = pharmacy_share::stop_pharmacy_sharing(&settings.sync_key).await {
+            settings.last_error = Some(e);
+        } else {
+            settings.last_error = None;
+            settings.last_product_count = 0;
+            settings.last_sync_at = None;
+            settings.last_business_name = None;
+        }
+    }
+    settings.sharing_enabled = false;
+    pharmacy_share::save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn preview_pharmacy_business_profile(
+    state: tauri::State<'_, AppState>,
+) -> Result<BusinessProfile, String> {
+    let conn = state
+        .conn
+        .lock()
+        .await
+        .clone()
+        .ok_or("غير متصل بقاعدة البيانات.")?;
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
+    erp_adapters::fetch_business_profile(&conn, erp).await
 }
 
 #[tauri::command]
@@ -214,33 +392,36 @@ async fn try_connect(conn: SqlConnection) -> ConnectionResult {
 
     match TcpStream::connect(format!("{}:{}", conn.server, conn.port)).await {
         Ok(tcp) => match Client::connect(config, tcp.compat_write()).await {
-            Ok(mut client) => {
-                let version = match client.query("SELECT @@VERSION AS version", &[]).await {
-                    Ok(stream) => match stream.into_row().await {
-                        Ok(Some(row)) => row
-                            .get::<&str, _>(0)
-                            .map(|s| s.lines().next().unwrap_or(s).to_string()),
-                        _ => None,
-                    },
+            Ok(_client) => {
+                let version = match execute_sql_query(conn.clone(), "SELECT @@VERSION AS version".to_string()).await {
+                    Ok(result) => result.rows.first().and_then(|r| r.first().cloned()),
                     Err(_) => None,
                 };
+                let erp = erp_profile::detect_erp_kind(&conn).await;
+                let erp_label = erp.display_name_ar();
 
                 ConnectionResult {
                     success: true,
-                    message: format!("✅ تم الاتصال بنجاح بقاعدة البيانات «{}»", conn.database),
+                    message: format!(
+                        "✅ تم الاتصال بنجاح بقاعدة البيانات «{}» — ERP: {}",
+                        conn.database, erp_label
+                    ),
                     server_version: version,
+                    erp_kind: Some(erp.kind_id().to_string()),
                 }
             }
             Err(e) => ConnectionResult {
                 success: false,
                 message: format!("❌ فشل الاتصال: {}", e),
                 server_version: None,
+                erp_kind: None,
             },
         },
         Err(e) => ConnectionResult {
             success: false,
             message: format!("❌ تعذّر الوصول للسيرفر: {}", e),
             server_version: None,
+            erp_kind: None,
         },
     }
 }
@@ -299,19 +480,32 @@ async fn execute_sql_query(
 async fn search_products(
     conn: SqlConnection,
     query: String,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
 
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
     let escaped = query.replace('\'', "''");
-    let sql = format!(
-        "SELECT DISTINCT TOP 20 ITEM_NAME \
-         FROM dbo.BUY_ITEMS_INVOICE_VIEW \
-         WHERE ITEM_NAME LIKE N'%{}%' \
-         ORDER BY ITEM_NAME",
-        escaped
-    );
+    let sql = match erp {
+        erp_profile::ErpKind::InfinityRetailDb => {
+            erp_adapters::infinity_product_search_sql(&escaped, 20)
+        }
+        _ => format!(
+            "SELECT DISTINCT TOP 20 \
+             CASE \
+               WHEN NULLIF(LTRIM(RTRIM(CAST(I.ITEM_MODEL AS nvarchar(50)))), '') IS NOT NULL \
+                 THEN I.ITEM_NAME + N' (' + CAST(I.ITEM_MODEL AS nvarchar(50)) + N')' \
+               ELSE I.ITEM_NAME \
+             END AS label \
+             FROM dbo.ITEMS I \
+             WHERE I.ITEM_INVISIBLE = 0 \
+               AND (I.ITEM_NAME LIKE N'%{}%' OR CAST(I.ITEM_MODEL AS nvarchar(50)) LIKE N'%{}%') \
+             ORDER BY I.ITEM_NAME",
+            escaped, escaped
+        ),
+    };
 
     let mut config = build_config(&conn);
     config.trust_cert();
@@ -355,27 +549,33 @@ async fn search_product_mentions(
     let conn_opt = state.conn.lock().await.clone();
     let conn = conn_opt.ok_or("غير متصل بقاعدة البيانات. سجّل الدخول أولاً.")?;
 
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
     let q = query.trim();
     let escaped = q.replace('\'', "''");
 
-    let sql = if q.is_empty() {
-        "SELECT TOP 12 I.ITEM_NAME, I.ITEM_MODEL \
-         FROM dbo.ITEMS I \
-         WHERE I.ITEM_INVISIBLE = 0 \
-         ORDER BY I.ITEM_UPDATE_DATE DESC".to_string()
-    } else {
-        format!(
-            "SELECT TOP 15 I.ITEM_NAME, I.ITEM_MODEL \
+    let sql = match erp {
+        erp_profile::ErpKind::InfinityRetailDb => {
+            erp_adapters::infinity_product_mentions_sql(&escaped, q.is_empty())
+        }
+        _ => if q.is_empty() {
+            "SELECT TOP 12 I.ITEM_NAME, I.ITEM_MODEL \
              FROM dbo.ITEMS I \
              WHERE I.ITEM_INVISIBLE = 0 \
-               AND (I.ITEM_NAME LIKE N'%{}%' OR I.ITEM_MODEL LIKE N'%{}%') \
-             ORDER BY \
-               CASE WHEN I.ITEM_MODEL LIKE N'{}%' THEN 0 \
-                    WHEN I.ITEM_NAME LIKE N'{}%' THEN 1 \
-                    ELSE 2 END, \
-               I.ITEM_NAME",
-            escaped, escaped, escaped, escaped
-        )
+             ORDER BY I.ITEM_UPDATE_DATE DESC".to_string()
+        } else {
+            format!(
+                "SELECT TOP 15 I.ITEM_NAME, I.ITEM_MODEL \
+                 FROM dbo.ITEMS I \
+                 WHERE I.ITEM_INVISIBLE = 0 \
+                   AND (I.ITEM_NAME LIKE N'%{}%' OR I.ITEM_MODEL LIKE N'%{}%') \
+                 ORDER BY \
+                   CASE WHEN I.ITEM_MODEL LIKE N'{}%' THEN 0 \
+                        WHEN I.ITEM_NAME LIKE N'{}%' THEN 1 \
+                        ELSE 2 END, \
+                   I.ITEM_NAME",
+                escaped, escaped, escaped, escaped
+            )
+        },
     };
 
     let mut config = build_config(&conn);
@@ -425,29 +625,14 @@ async fn execute_search_report(
     conn: SqlConnection,
     sql_template: String,
     search_term: String,
+    state: tauri::State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    if search_term.is_empty() {
+    if search_term.trim().is_empty() {
         return Err("يرجى إدخال اسم أو كود المنتج".to_string());
     }
 
-    let mut final_sql = sql_template.replace("{{DAYS_RECENT}}", "60");
-    final_sql = final_sql.replace("{{DAYS_TOTAL}}",  "180");
-
-    let condition_str = search_term.split(',')
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-        .map(|t| {
-            let e = t.replace('\'', "''");
-            format!("(I.ITEM_NAME LIKE N'%{}%' OR B.BARCODE LIKE N'%{}%')", e, e)
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ");
-
-    let condition = if condition_str.is_empty() { "1=1".to_string() } else { condition_str };
-    let escaped = search_term.replace('\'', "''");
-    final_sql = final_sql.replace("{{SEARCH_CONDITION}}", &condition);
-    final_sql = final_sql.replace("{{SEARCH_TERM}}", &escaped);
-    final_sql = final_sql.replace("{{PRODUCTS_LIST}}", &format!("N'{}'", escaped));
+    let erp = erp_profile::resolve_erp_kind(&state, &conn).await;
+    let final_sql = erp_adapters::resolve_search_report_sql(erp, &sql_template, search_term.trim());
 
     execute_sql_query(conn, final_sql).await
 }
@@ -456,9 +641,17 @@ async fn execute_search_report(
 async fn set_active_connection(
     conn: SqlConnection,
     state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    let kind = erp_profile::detect_erp_kind(&conn).await;
+    *state.erp_kind.lock().await = Some(kind);
     *state.conn.lock().await = Some(conn);
-    Ok(())
+    Ok(kind.display_name_ar().to_string())
+}
+
+#[tauri::command]
+async fn get_erp_kind(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let kind = erp_profile::current_erp_kind(&state).await;
+    Ok(kind.kind_id().to_string())
 }
 
 // ─── المفضلة (Favorites) — للاستخدام في صفحة المحفوظات ───────
@@ -588,6 +781,7 @@ async fn update_telegram_settings(
             ai_request_lock: state.ai_request_lock.clone(),
             agent_session: state.agent_session.clone(),
             scheduler: state.scheduler.clone(),
+            erp_kind: state.erp_kind.clone(),
         });
 
         let dec_token = secrets.telegram_bot_token;
@@ -662,7 +856,7 @@ async fn ask_local_ai(
     }
 
     {
-        let pf = crate::agent_tools::extract_product_filter_from_text(&message)
+        let pf = crate::agent_tools::extract_product_hint_from_text(&message)
             .or_else(|| crate::agent_tools::extract_product_filter_from_history(&history));
         let mut session = app_state.inner().agent_session.lock().await;
         if pf.is_some() {
@@ -697,22 +891,41 @@ async fn ask_local_ai(
         ai_request_lock: app_state.inner().ai_request_lock.clone(),
         agent_session: app_state.inner().agent_session.clone(),
         scheduler: app_state.inner().scheduler.clone(),
+        erp_kind: app_state.inner().erp_kind.clone(),
     });
 
-    let result = crate::ai_agent::handle_with_groq_local(
-        &message,
-        history,
-        &groq_key,
-        &ai_model,
-        &state_arc,
-        &reports_cache,
-        app_handle.clone(),
-        &dec_openai_key,
-        Some(cancel_rx),
+    let advanced_mode = app_handle
+        .store("settings.json")
+        .ok()
+        .and_then(|store| store.get("ai_advanced_mode").and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+    eprintln!("[ask_local_ai] advanced_mode={}", advanced_mode);
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        crate::ai_agent::handle_with_groq_local(
+            &message,
+            history,
+            &groq_key,
+            &ai_model,
+            &state_arc,
+            &reports_cache,
+            app_handle.clone(),
+            &dec_openai_key,
+            Some(cancel_rx),
+            advanced_mode,
+        ),
     )
     .await;
 
     app_state.inner().ai_cancels.lock().await.remove(&request_id);
+
+    let result = match result {
+        Ok(inner) => inner,
+        Err(_) => Err(
+            "انتهت مهلة تحليل السؤال (5 دقائق). جرّب سؤالاً أبسط أو أعد المحاولة.".to_string(),
+        ),
+    };
 
     match result {
         Ok(mut text) => {
@@ -806,7 +1019,7 @@ async fn open_local_file(path: String) -> Result<(), String> {
 
 // ─── دوال مساعدة ──────────────────────────────────────────────
 
-fn build_config(conn: &SqlConnection) -> Config {
+pub(crate) fn build_config(conn: &SqlConnection) -> Config {
     let mut config = Config::new();
     config.host(&conn.server);
     config.port(conn.port);
@@ -967,6 +1180,7 @@ pub fn run() {
                 ai_request_lock: Arc::new(tokio::sync::Mutex::new(())),
                 agent_session: Arc::new(Mutex::new(agent_tools::AgentSessionState::default())),
                 scheduler: shared_scheduler.clone(),
+                erp_kind: Arc::new(Mutex::new(None)),
             });
 
             // بدء مهمة الجدولة في الخلفية
@@ -1010,6 +1224,7 @@ pub fn run() {
             search_products,
             search_product_mentions,
             set_active_connection,
+            get_erp_kind,
             update_telegram_settings,
             test_telegram_bot,
             ask_local_ai,
@@ -1027,7 +1242,15 @@ pub fn run() {
             delete_favorite_query,
             execute_favorite_query,
             get_business_profile,
+            list_cancelled_invoices,
+            pos_sale::search_pos_products,
+            pos_sale::print_pos_receipt,
             load_telegram_settings_local,
+            get_pharmacy_share_settings,
+            save_pharmacy_share_settings,
+            sync_pharmacy_products_now,
+            stop_pharmacy_sharing_cmd,
+            preview_pharmacy_business_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

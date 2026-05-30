@@ -1,10 +1,19 @@
-# QUERY_PATTERNS — (نسخة قديمة — Marketing2026 فقط)
-
-> ⚠️ **InfinityRetailDB:** استخدم [`AGENT_InfinityRetailDB.md`](./AGENT_InfinityRetailDB.md) — لا تستخدم هذا الملف.  
-> ⚠️ **Marketing2026:** المصدر الم preferred هو [`AGENT_Marketing2026.md`](./AGENT_Marketing2026.md).  
-> ⚠️ **معمارية النظامين:** [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md)
-
-# Marketing2026 | شركة توزيع الأدوية
+# AGENT_Marketing2026 — تعاليم الوكيل + أنماط الاستعلام
+# ERP: Marketing2026 | SQL Server | schema: dbo
+# يُحمَّل تلقائياً عند اكتشاف جداول dbo.ITEMS / dbo.SALE_INVOICE
+#
+# ════════════════════════════════════════════════════════════════════
+# 🤖 تعاليم الوكيل (إلزامية)
+# ════════════════════════════════════════════════════════════════════
+# - أنت متخصص في **Marketing2026** فقط — لا تستخدم جداول Infinity (Inventory.*, SALES.*).
+# - اللغة: عربية للمستخدم | SQL: T-SQL على SQL Server (SELECT/WITH فقط).
+# - **run_query_pattern** أو **search_query_patterns** قبل كتابة SQL من الصفر.
+# - التاريخ المرجعي: `MAX(S_DATE)` من SALE_INVOICE — لا GETDATE() وحده للتقارير التاريخية.
+# - SALE_ITEMS **لا** يحتوي S_DATE — JOIN عبر S_ID → SALE_INVOICE.
+# - الصلاحية: ITEMS_SUB.CATEOGRY3 | الكمية: ITEMS_SUB.QTY | البحث: LIKE N'%...%'.
+# - الديون: لا BALANCE_C — استخدم نمط «متابعة-الديون».
+# - العملة: د.ل | ترجم أسماء الأعمدة في PDF/Excel (جدول الترجمة أدناه).
+# - DDL مرجعي: Full_Marketing_Database_DDL.sql | ملاحظات: DATABASE_NOTES.md
 #
 # كيفية الاستخدام (للوكيل الذكي):
 #
@@ -44,6 +53,20 @@
 #   BAISC_SALARY    → الراتب الأساسي    OVER_TIME       → العمل الإضافي
 #   BONCE           → المكافأة          BORROW_DISCOUNT → خصم السلفة
 #   PENALTY         → خصم الجزاء        S_STATUES       → الحالة
+#   UNIT_DISC       → وحدة البيع       BARCODE         → الباركود
+#   PRICE1          → سعر البيع        PRICE2          → سعر 2
+#   PUBLIC_PRICE    → سعر الجمهور      LAST_COST       → آخر تكلفة
+#
+# ════════════════════════════════════════════════════════════════════
+# 📊 تقرير التطبيق: البحث عن تفاصيل المنتج (Marketing2026)
+# ════════════════════════════════════════════════════════════════════
+# يُنفَّذ من generic-report-page → execute_search_report → dbo.ITEMS+BARCODE
+# أعمدة النتيجة (عربي):
+#   الكود | اسم المنتج | وحدة البيع | الباركود | سعر البيع | سعر 2 | سعر الجمهور
+#   | آخر تكلفة | رصيد المخزون | آخر مورد | تاريخ تحديث السعر
+# ⚠️ لا تستخدم هذه التسميات على Infinity — هناك UomPrice1 = «السعر» وليس «سعر الجمهور»
+#
+# ⚠️ جميع الاستعلامات تبدأ بـ WITH أو SELECT — متوافقة مع execute_raw_sql.
 #   DailyRate       → معدل البيع/يوم    CoverageDays    → أيام التغطية
 #   SuggestedQty    → الكمية المقترحة   StockQty        → المخزون الحالي
 #   SoldQty         → الكمية المباعة    LastPurchasePrice → آخر سعر شراء
@@ -54,21 +77,34 @@
 # ════════════════════════════════════════════════════════════════════
 # 🤖 نمط Anthropic للاستعلامات والتحليل (Anthropic Prompting Pattern)
 # ════════════════════════════════════════════════════════════════════
-# عند الإجابة على أسئلة تحليلية أو تقديم نصائح، اتبع هذا الهيكل:
+# **إلزامي** عند كل سؤال تقرير أو تحليل (ليس التحيات البسيطة).
 #
-# <thinking>
-#   1. ما الذي يطلبه المستخدم فعلاً؟
-#   2. هل أحتاج get_current_datetime أولاً؟
-#   3. هل هذا استعلام معقد → run_query_pattern أو search_query_patterns؟
-#   4. ما الجداول/الأعمدة المطلوبة؟
-#   5. هل يوجد أي تحذير أو ملاحظة مهمة في البيانات؟
+# ## ترتيب الأدوات (قبل SQL مخصص)
+# 1. search_query_patterns(keywords) — اقرأ النمط المختبر
+# 2. run_query_pattern(keywords, product_filter?, days_recent?, coverage_days?) — نفّذ
+# 3. plan_complex_query → execute_query_plan — دراسة منتج / تحليل متعدد الخطوات
+# 4. get_database_views() — عند أخطاء تجميع مبيعات/موظفين
+# 5. validate_sql(sql) — قبل execute_raw_sql
+# 6. export_last_result(pdf|excel) — عند طلب تصدير
+# 7. save_favorite_query — فوراً عند «احفظ/خزّن» (لا تقل «تم الحفظ» بدون استدعاء الأداة)
+#
+# ## <thinking>  (تحليل داخلي — لا تُعرضه للمستخدم إلا إن طلب «اشرح خطواتك»)
+# 1. ما المطلوب بدقة؟ (تقرير، رقم، مقارنة، توصية، تصدير...)
+# 2. حساس للتاريخ؟ → get_current_datetime أو MAX(S_DATE) من SALE_INVOICE
+# 3. هل يطابق نمطاً في هذا الملف؟ → run_query_pattern **أولاً** (جدول keywords أعلاه)
+# 4. جداول Marketing فقط — لا Inventory.* ولا SALES.Data_*
+# 5. مخزون = ITEMS_SUB.QTY | تاريخ بيع = SALE_INVOICE.S_DATE (ليس من SALE_ITEMS)
+# 6. ديون → نمط «متابعة-الديون» — BALANCE_C فارغ
+# 7. product_filter من @mention في الرسالة؟
+# 8. ما التحذير أو الفرصة في البيانات؟ (نفاد، صلاحية، تركيز ديون...)
 # </thinking>
 #
-# <answer>
-#   - بيانات واضحة ومنظمة بعناوين وقوائم
-#   - أرقام دقيقة مع وحدات (د.ل، قطعة، يوم...)
-#   - توصية عملية إن كان السياق يستدعيها
-#   - اقتراح استعلام مكمّل إن كان مفيداً
+# ## <answer>  (ما يراه المستخدم)
+# - عربية واضحة — عناوين، قوائم، أهم الأرقام أولاً
+# - أرقام **من نتائج الأداة فقط** — مع الوحدات: د.ل، قطعة، يوم، %
+# - ترجم أسماء الأعمدة في PDF/Excel (جدول الترجمة أعلاه — لا ITEM_NAME خام)
+# - توصية عملية مختصرة + اقتراح استعلام مكمّل إن كان مفيداً
+# - Telegram: HTML (<b>, <i>, <code>) فقط — لا Markdown (** أو _)
 # </answer>
 
 ---
@@ -374,6 +410,233 @@ ORDER BY DebtType, Remaining DESC;
 
 ---
 
+## PATTERN: ديون-وسلف-ومواعيد
+TRIGGERS: ديون وسلف, سلف, قرض, مواعيد الدفع, ذمة, payment schedule, advances
+TABLES: CUSTOMERS, SALE_INVOICE, SALE_ITEMS, R_S_*, BUY_*, TAKE, GIVE, BALANCE_EDIT, SALARIES
+NOTES: 3 أجزاء — (1) ديون لي/علي (2) عمر الذمة + آخر حركة (3) سلف موظفين لم تُسترد. Marketing لا جدول مواعيد — الجزء 2 بديل بالعمر. %PARTY% = فلتر اسم.
+---
+
+```sql
+;WITH
+BalanceAdj AS (
+  SELECT CUST_ID, SUM(ISNULL(BL_DEBIT, 0)) - SUM(ISNULL(BL_CREDIT, 0)) AS AdjBalance
+  FROM dbo.BALANCE_EDIT GROUP BY CUST_ID
+),
+SaleTot AS (
+  SELECT SI.CUST_ID, SUM(SI2.QTY * SI2.PRICE) AS SalesValue, MAX(SI.S_DATE) AS LastSaleDate
+  FROM dbo.SALE_INVOICE SI
+  INNER JOIN dbo.SALE_ITEMS SI2 ON SI.S_ID = SI2.S_ID
+  GROUP BY SI.CUST_ID
+),
+SaleReturnTot AS (
+  SELECT R.CUST_ID, SUM(RI.QTY * RI.PRICE) AS ReturnValue
+  FROM dbo.R_S_INVOICE R
+  INNER JOIN dbo.R_S_ITEMS RI ON R.S_R_ID = RI.S_R_ID
+  GROUP BY R.CUST_ID
+),
+TakeTot AS (
+  SELECT CUST_ID, SUM(T_VALUE) AS PaidValue, MAX(T_DATE) AS LastTakeDate
+  FROM dbo.TAKE GROUP BY CUST_ID
+),
+BuyTot AS (
+  SELECT B.CUST_ID, SUM(BI.QTY * BI.PRICE) AS BuyValue, MAX(B.B_DATE) AS LastBuyDate
+  FROM dbo.BUY_INVOICE B
+  INNER JOIN dbo.BUY_ITEMS BI ON B.B_ID = BI.B_ID
+  GROUP BY B.CUST_ID
+),
+BuyReturnTot AS (
+  SELECT BR.CUST_ID, SUM(BRI.QTY * BRI.PRICE) AS ReturnValue
+  FROM dbo.B_R_INVOICE BR
+  INNER JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID = BRI.B_R_ID
+  GROUP BY BR.CUST_ID
+),
+GiveTot AS (
+  SELECT CUST_ID, SUM(G_VALUE) AS PaidValue, MAX(G_DATE) AS LastGiveDate
+  FROM dbo.GIVE GROUP BY CUST_ID
+),
+Receivables AS (
+  SELECT
+    N'لي — زبون' AS [نوع_الذمة],
+    C.CUST_NAME AS [الطرف],
+    CAST(
+      ISNULL(ST.SalesValue, 0) - ISNULL(SRT.ReturnValue, 0)
+      - ISNULL(TT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0)
+    AS decimal(18, 2)) AS [المبلغ_د_ل],
+    CAST(C.CUST_MAX_DEBIT AS decimal(18, 2)) AS [حد_الائتمان]
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN SaleTot ST ON C.CUST_ID = ST.CUST_ID
+  LEFT JOIN SaleReturnTot SRT ON C.CUST_ID = SRT.CUST_ID
+  LEFT JOIN TakeTot TT ON C.CUST_ID = TT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  WHERE C.CUST_CUSTOM = 1 AND C.CUST_INVISIBLE = 0
+    AND ISNULL(ST.SalesValue, 0) - ISNULL(SRT.ReturnValue, 0)
+        - ISNULL(TT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) >= 1
+    AND C.CUST_NAME LIKE N'%PARTY%'
+),
+Payables AS (
+  SELECT
+    N'علي — مورد' AS [نوع_الذمة],
+    C.CUST_NAME AS [الطرف],
+    CAST(
+      ISNULL(BT.BuyValue, 0) - ISNULL(BRT.ReturnValue, 0)
+      - ISNULL(GT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0)
+    AS decimal(18, 2)) AS [المبلغ_د_ل],
+    CAST(C.CUST_MAX_DEBIT AS decimal(18, 2)) AS [حد_الائتمان]
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN BuyTot BT ON C.CUST_ID = BT.CUST_ID
+  LEFT JOIN BuyReturnTot BRT ON C.CUST_ID = BRT.CUST_ID
+  LEFT JOIN GiveTot GT ON C.CUST_ID = GT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  WHERE C.CUST_VENDOR = 1 AND C.CUST_INVISIBLE = 0
+    AND ISNULL(BT.BuyValue, 0) - ISNULL(BRT.ReturnValue, 0)
+        - ISNULL(GT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) >= 1
+    AND C.CUST_NAME LIKE N'%PARTY%'
+)
+SELECT TOP 150 * FROM (
+  SELECT * FROM Receivables
+  UNION ALL
+  SELECT * FROM Payables
+) D
+ORDER BY [نوع_الذمة], [المبلغ_د_ل] DESC;
+```
+
+```sql
+;WITH
+BalanceAdj AS (
+  SELECT CUST_ID, SUM(ISNULL(BL_DEBIT, 0)) - SUM(ISNULL(BL_CREDIT, 0)) AS AdjBalance
+  FROM dbo.BALANCE_EDIT GROUP BY CUST_ID
+),
+SaleTot AS (
+  SELECT SI.CUST_ID, SUM(SI2.QTY * SI2.PRICE) AS SalesValue, MAX(SI.S_DATE) AS LastSaleDate
+  FROM dbo.SALE_INVOICE SI
+  INNER JOIN dbo.SALE_ITEMS SI2 ON SI.S_ID = SI2.S_ID
+  GROUP BY SI.CUST_ID
+),
+SaleReturnTot AS (
+  SELECT R.CUST_ID, SUM(RI.QTY * RI.PRICE) AS ReturnValue
+  FROM dbo.R_S_INVOICE R
+  INNER JOIN dbo.R_S_ITEMS RI ON R.S_R_ID = RI.S_R_ID
+  GROUP BY R.CUST_ID
+),
+TakeTot AS (
+  SELECT CUST_ID, SUM(T_VALUE) AS PaidValue, MAX(T_DATE) AS LastTakeDate
+  FROM dbo.TAKE GROUP BY CUST_ID
+),
+BuyTot AS (
+  SELECT B.CUST_ID, SUM(BI.QTY * BI.PRICE) AS BuyValue, MAX(B.B_DATE) AS LastBuyDate
+  FROM dbo.BUY_INVOICE B
+  INNER JOIN dbo.BUY_ITEMS BI ON B.B_ID = BI.B_ID
+  GROUP BY B.CUST_ID
+),
+BuyReturnTot AS (
+  SELECT BR.CUST_ID, SUM(BRI.QTY * BRI.PRICE) AS ReturnValue
+  FROM dbo.B_R_INVOICE BR
+  INNER JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID = BRI.B_R_ID
+  GROUP BY BR.CUST_ID
+),
+GiveTot AS (
+  SELECT CUST_ID, SUM(G_VALUE) AS PaidValue, MAX(G_DATE) AS LastGiveDate
+  FROM dbo.GIVE GROUP BY CUST_ID
+),
+Rec AS (
+  SELECT
+    C.CUST_NAME,
+    ISNULL(ST.SalesValue, 0) - ISNULL(SRT.ReturnValue, 0)
+      - ISNULL(TT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) AS Remaining,
+    ST.LastSaleDate,
+    TT.LastTakeDate
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN SaleTot ST ON C.CUST_ID = ST.CUST_ID
+  LEFT JOIN SaleReturnTot SRT ON C.CUST_ID = SRT.CUST_ID
+  LEFT JOIN TakeTot TT ON C.CUST_ID = TT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  WHERE C.CUST_CUSTOM = 1 AND C.CUST_INVISIBLE = 0
+    AND ISNULL(ST.SalesValue, 0) - ISNULL(SRT.ReturnValue, 0)
+        - ISNULL(TT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) >= 1
+    AND C.CUST_NAME LIKE N'%PARTY%'
+),
+Pay AS (
+  SELECT
+    C.CUST_NAME,
+    ISNULL(BT.BuyValue, 0) - ISNULL(BRT.ReturnValue, 0)
+      - ISNULL(GT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) AS Remaining,
+    BT.LastBuyDate,
+    GT.LastGiveDate
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN BuyTot BT ON C.CUST_ID = BT.CUST_ID
+  LEFT JOIN BuyReturnTot BRT ON C.CUST_ID = BRT.CUST_ID
+  LEFT JOIN GiveTot GT ON C.CUST_ID = GT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  WHERE C.CUST_VENDOR = 1 AND C.CUST_INVISIBLE = 0
+    AND ISNULL(BT.BuyValue, 0) - ISNULL(BRT.ReturnValue, 0)
+        - ISNULL(GT.PaidValue, 0) + ISNULL(BA.AdjBalance, 0) >= 1
+    AND C.CUST_NAME LIKE N'%PARTY%'
+)
+SELECT TOP 150
+  [الاتجاه],
+  [الطرف],
+  [المبلغ_د_ل],
+  [آخر_حركة],
+  [آخر_سداد],
+  [أيام_من_آخر_حركة]
+FROM (
+  SELECT
+    N'تحصيل — زبون' AS [الاتجاه],
+    CUST_NAME AS [الطرف],
+    CAST(Remaining AS decimal(18, 2)) AS [المبلغ_د_ل],
+    CONVERT(varchar(10), LastSaleDate, 103) AS [آخر_حركة],
+    CONVERT(varchar(10), LastTakeDate, 103) AS [آخر_سداد],
+    DATEDIFF(day, LastSaleDate, GETDATE()) AS [أيام_من_آخر_حركة]
+  FROM Rec
+  UNION ALL
+  SELECT
+    N'دفع — مورد',
+    CUST_NAME,
+    CAST(Remaining AS decimal(18, 2)),
+    CONVERT(varchar(10), LastBuyDate, 103),
+    CONVERT(varchar(10), LastGiveDate, 103),
+    DATEDIFF(day, LastBuyDate, GETDATE())
+  FROM Pay
+) S
+ORDER BY [أيام_من_آخر_حركة] DESC, [المبلغ_د_ل] DESC;
+```
+
+```sql
+;WITH EmpGive AS (
+  SELECT C.CUST_ID, C.CUST_NAME, SUM(G.G_VALUE) AS GivenAdv
+  FROM dbo.GIVE G
+  INNER JOIN dbo.CUSTOMERS C ON G.CUST_ID = C.CUST_ID
+  WHERE C.CUST_EMP = 1
+  GROUP BY C.CUST_ID, C.CUST_NAME
+),
+EmpTake AS (
+  SELECT C.CUST_ID, SUM(T.T_VALUE) AS Repaid
+  FROM dbo.TAKE T
+  INNER JOIN dbo.CUSTOMERS C ON T.CUST_ID = C.CUST_ID
+  WHERE C.CUST_EMP = 1
+  GROUP BY C.CUST_ID
+),
+SalaryDeduct AS (
+  SELECT CUST_ID, SUM(ISNULL(BORROW_DISCOUNT, 0)) AS Deducted
+  FROM dbo.SALARIES
+  GROUP BY CUST_ID
+)
+SELECT
+  g.CUST_NAME AS [الموظف/الطرف],
+  CAST(g.GivenAdv AS decimal(18, 2)) AS [سلف_صُرفت],
+  CAST(ISNULL(t.Repaid, 0) AS decimal(18, 2)) AS [مسترد_تحصيل],
+  CAST(ISNULL(s.Deducted, 0) AS decimal(18, 2)) AS [مخصوم_راتب],
+  CAST(g.GivenAdv - ISNULL(t.Repaid, 0) - ISNULL(s.Deducted, 0) AS decimal(18, 2)) AS [متبقي_للاسترداد]
+FROM EmpGive g
+LEFT JOIN EmpTake t ON g.CUST_ID = t.CUST_ID
+LEFT JOIN SalaryDeduct s ON g.CUST_ID = s.CUST_ID
+WHERE g.CUST_NAME LIKE N'%PARTY%'
+  AND g.GivenAdv - ISNULL(t.Repaid, 0) - ISNULL(s.Deducted, 0) >= 0.01
+ORDER BY [متبقي_للاسترداد] DESC;
+```
+
+---
+
 ## PATTERN: ديون-الموردين-مبسط
 TRIGGERS: ديون الموردين, ديون موردين, ديون الموردين فقط, تقرير ديون الموردين, الذي علي للموردين, اللي علي للموردين, كم علي للموردين, supplier debts, supplier balances only, vendor debts simple
 TABLES: CUSTOMERS, BUY_INVOICE, BUY_ITEMS, B_R_INVOICE, B_R_ITEMS, GIVE, BALANCE_EDIT
@@ -538,7 +801,11 @@ DECLARE @RecentFrom date = DATEADD(month, -@MonthsBack, CAST(GETDATE() AS date))
     LEFT JOIN dbo.BUY_ITEMS BI ON I.ITEM_ID = BI.ITEM_ID AND BI.PRICE > 0
     LEFT JOIN dbo.BUY_INVOICE B ON BI.B_ID = B.B_ID
     WHERE I.ITEM_INVISIBLE = 0
-      AND (I.ITEM_MODEL LIKE N'%PRODUCT%' OR I.ITEM_NAME LIKE N'%PRODUCT%')
+      AND (
+        I.ITEM_MODEL LIKE N'%PRODUCT%'
+        OR I.ITEM_NAME LIKE N'%PRODUCT%'
+        OR EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = I.ITEM_ID AND BC.BARCODE LIKE N'%PRODUCT%')
+      )
     GROUP BY I.ITEM_ID, I.ITEM_MODEL, I.ITEM_NAME
 ),
 ProductPick AS (
@@ -1246,7 +1513,11 @@ ItemPick AS (
     I.LAST_COST, I.AVER_COST, I.PLACE
   FROM dbo.ITEMS I
   WHERE I.ITEM_INVISIBLE = 0
-    AND (I.ITEM_MODEL LIKE N'%PRODUCT%' OR I.ITEM_NAME LIKE N'%PRODUCT%')
+    AND (
+      I.ITEM_MODEL LIKE N'%PRODUCT%'
+      OR I.ITEM_NAME LIKE N'%PRODUCT%'
+      OR EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = I.ITEM_ID AND BC.BARCODE LIKE N'%PRODUCT%')
+    )
   ORDER BY CASE WHEN I.ITEM_MODEL LIKE N'%PRODUCT%' THEN 0 ELSE 1 END, I.ITEM_ID DESC
 ),
 AsOf AS (SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE),
@@ -1386,6 +1657,581 @@ JOIN (
 LEFT JOIN dbo.UNITS U ON X.UNIT_ID = U.UNIT_ID
 GROUP BY U.UNIT_DISC
 ORDER BY NetQty DESC;
+```
+
+---
+
+## PATTERN: مردودات-مبيعات
+TRIGGERS: مردودات مبيعات, مردود بيع, إرجاع من زبون, sales returns, return invoice, R_S, مرتجعات مبيعات
+TABLES: R_S_INVOICE, R_S_ITEMS, ITEMS
+NOTES: آخر 30 يوماً من MAX(S_R_DATE). القيمة = QTY×PRICE.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_R_DATE) AS date) AS d FROM dbo.R_S_INVOICE
+)
+SELECT TOP 100
+  CAST(R.S_R_DATE AS date) AS [تاريخ_المردود],
+  R.S_R_ID AS [رقم_المردود],
+  ISNULL(R.CUST_NAME, N'—') AS [العميل],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(RSI.QTY AS decimal(18,2)) AS [الكمية],
+  CAST(RSI.PRICE AS decimal(18,2)) AS [السعر],
+  CAST(RSI.QTY * RSI.PRICE AS decimal(18,2)) AS [قيمة_السطر]
+FROM dbo.R_S_INVOICE R
+INNER JOIN dbo.R_S_ITEMS RSI ON R.S_R_ID = RSI.S_R_ID
+INNER JOIN dbo.ITEMS I ON RSI.ITEM_ID = I.ITEM_ID
+WHERE CAST(R.S_R_DATE AS date) >= DATEADD(day, -30, (SELECT d FROM AsOf))
+  AND I.ITEM_INVISIBLE = 0
+ORDER BY R.S_R_DATE DESC, R.S_R_ID DESC;
+```
+
+---
+
+## PATTERN: مردودات-مشتريات
+TRIGGERS: مردودات مشتريات, مردود شراء, إرجاع لمورد, purchase returns, B_R, مرتجعات شراء
+TABLES: B_R_INVOICE, B_R_ITEMS, ITEMS, CUSTOMERS
+NOTES: آخر 30 يوماً من MAX(B_R_DATE). المورد = CUSTOMERS.CUST_NAME.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(B_R_DATE) AS date) AS d FROM dbo.B_R_INVOICE
+)
+SELECT TOP 100
+  CAST(BR.B_R_DATE AS date) AS [تاريخ_المردود],
+  BR.B_R_ID AS [رقم_المردود],
+  ISNULL(C.CUST_NAME, N'—') AS [المورد],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(BRI.QTY AS decimal(18,2)) AS [الكمية],
+  CAST(BRI.PRICE AS decimal(18,2)) AS [السعر],
+  CAST(BRI.QTY * BRI.PRICE AS decimal(18,2)) AS [قيمة_السطر]
+FROM dbo.B_R_INVOICE BR
+INNER JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID = BRI.B_R_ID
+INNER JOIN dbo.ITEMS I ON BRI.ITEM_ID = I.ITEM_ID
+LEFT JOIN dbo.CUSTOMERS C ON BR.CUST_ID = C.CUST_ID
+WHERE CAST(BR.B_R_DATE AS date) >= DATEADD(day, -30, (SELECT d FROM AsOf))
+  AND I.ITEM_INVISIBLE = 0
+ORDER BY BR.B_R_DATE DESC;
+```
+
+---
+
+## PATTERN: مقبوضات-تحصيلات
+TRIGGERS: مقبوضات, تحصيلات, سندات قبض, TAKE, تحصيل من زبون, collections, customer receipts, مدفوعات واردة
+TABLES: TAKE, CUSTOMERS
+NOTES: T_VALUE = المبلغ المحصَّل. آخر 30 يوماً من MAX(T_DATE).
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(T_DATE) AS date) AS d FROM dbo.TAKE
+)
+SELECT TOP 100
+  CAST(T.T_DATE AS date) AS [تاريخ_التحصيل],
+  T.T_ID AS [رقم_السند],
+  ISNULL(C.CUST_NAME, N'—') AS [العميل],
+  CAST(T.T_VALUE AS decimal(18,2)) AS [المبلغ_د_ل],
+  ISNULL(T.T_NOTE, N'') AS [ملاحظة]
+FROM dbo.TAKE T
+LEFT JOIN dbo.CUSTOMERS C ON T.CUST_ID = C.CUST_ID
+WHERE CAST(T.T_DATE AS date) >= DATEADD(day, -30, (SELECT d FROM AsOf))
+ORDER BY T.T_DATE DESC, T.T_ID DESC;
+```
+
+---
+
+## PATTERN: مدفوعات-موردين-سندات
+TRIGGERS: مدفوعات موردين, سندات صرف, GIVE, دفع لمورد, supplier payments, disbursements, صرف نقد
+TABLES: GIVE, CUSTOMERS
+NOTES: G_VALUE = المبلغ المدفوع. EXPENCES_ID=0 عادةً لدفع مورد. آخر 30 يوماً.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(G_DATE) AS date) AS d FROM dbo.GIVE
+)
+SELECT TOP 100
+  CAST(G.G_DATE AS date) AS [تاريخ_الدفع],
+  G.G_ID AS [رقم_السند],
+  ISNULL(C.CUST_NAME, N'—') AS [المورد],
+  CAST(G.G_VALUE AS decimal(18,2)) AS [المبلغ_د_ل],
+  ISNULL(G.G_NOTE, N'') AS [ملاحظة]
+FROM dbo.GIVE G
+LEFT JOIN dbo.CUSTOMERS C ON G.CUST_ID = C.CUST_ID
+WHERE CAST(G.G_DATE AS date) >= DATEADD(day, -30, (SELECT d FROM AsOf))
+  AND ISNULL(G.EXPENCES_ID, 0) = 0
+ORDER BY G.G_DATE DESC, G.G_ID DESC;
+```
+
+---
+
+## PATTERN: تحويلات-مخازن
+TRIGGERS: تحويل مخزن, تحويل بين مخازن, نقل مخزون, warehouse transfer, stock transfer, TRANSFER
+TABLES: TRANSFER_INVOICE, TRANSFER_ITEMS, ITEMS, STORES
+NOTES: STORE_F_ID = من | STORE_T_ID = إلى. آخر 90 يوماً.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(TR_DATE) AS date) AS d FROM dbo.TRANSFER_INVOICE
+)
+SELECT TOP 100
+  CAST(TR.TR_DATE AS date) AS [التاريخ],
+  TR.TR_ID AS [رقم_التحويل],
+  ISNULL(SF.STORE_NAME, N'—') AS [من_مخزن],
+  ISNULL(ST.STORE_NAME, N'—') AS [إلى_مخزن],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(TI.QTY AS decimal(18,2)) AS [الكمية]
+FROM dbo.TRANSFER_INVOICE TR
+INNER JOIN dbo.TRANSFER_ITEMS TI ON TR.TR_ID = TI.TR_ID
+INNER JOIN dbo.ITEMS I ON TI.ITEM_ID = I.ITEM_ID
+LEFT JOIN dbo.STORES SF ON TI.STORE_F_ID = SF.STORE_ID
+LEFT JOIN dbo.STORES ST ON TI.STORE_T_ID = ST.STORE_ID
+WHERE CAST(TR.TR_DATE AS date) >= DATEADD(day, -90, (SELECT d FROM AsOf))
+  AND I.ITEM_INVISIBLE = 0
+ORDER BY TR.TR_DATE DESC;
+```
+
+---
+
+## PATTERN: أصناف-تالفة
+TRIGGERS: تالف, متلف, إتلاف, spoiled, damaged stock, SPOIL, أدوية تالفة, صنف تالف
+TABLES: SPOIL_INVOICE, SPOIL_ITEMS, ITEMS, STORES
+NOTES: SPOIL = فواتير الإتلاف. آخر 90 يوماً.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(SP_DATE) AS date) AS d FROM dbo.SPOIL_INVOICE
+)
+SELECT TOP 100
+  CAST(SP.SP_DATE AS date) AS [تاريخ_الإتلاف],
+  SP.SP_ID AS [رقم_السند],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  ISNULL(ST.STORE_NAME, N'—') AS [المخزن],
+  CAST(SPI.QTY AS decimal(18,2)) AS [الكمية],
+  CAST(SPI.PRICE AS decimal(18,2)) AS [التكلفة],
+  CAST(SPI.QTY * SPI.PRICE AS decimal(18,2)) AS [قيمة_التالف]
+FROM dbo.SPOIL_INVOICE SP
+INNER JOIN dbo.SPOIL_ITEMS SPI ON SP.SP_ID = SPI.SP_ID
+INNER JOIN dbo.ITEMS I ON SPI.ITEM_ID = I.ITEM_ID
+LEFT JOIN dbo.STORES ST ON SPI.STORE_ID = ST.STORE_ID
+WHERE CAST(SP.SP_DATE AS date) >= DATEADD(day, -90, (SELECT d FROM AsOf))
+  AND I.ITEM_INVISIBLE = 0
+ORDER BY SP.SP_DATE DESC;
+```
+
+---
+
+## PATTERN: أصناف-راكة
+TRIGGERS: راكد, راكدة, بطيء الحركة, slow moving, dead stock, بدون مبيعات, stock no sales, راكد بالمخزن
+TABLES: ITEMS, ITEMS_SUB, SALE_INVOICE, SALE_ITEMS
+NOTES: مخزون > 0 ولا مبيعات في آخر 90 يوم (صافي بعد المردودات). مرتب حسب قيمة المخزون.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+),
+Stock AS (
+  SELECT ITEM_ID, SUM(ISNULL(QTY, 0)) AS StockQty FROM dbo.ITEMS_SUB GROUP BY ITEM_ID
+),
+NetSales90 AS (
+  SELECT X.ITEM_ID, SUM(X.QtyNet) AS SoldQty, MAX(X.TxDate) AS LastSaleDate
+  FROM (
+    SELECT SI.ITEM_ID, SI.QTY AS QtyNet, INV.S_DATE AS TxDate
+    FROM dbo.SALE_ITEMS SI
+    INNER JOIN dbo.SALE_INVOICE INV ON SI.S_ID = INV.S_ID
+    WHERE CAST(INV.S_DATE AS date) BETWEEN DATEADD(day, -90, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+    UNION ALL
+    SELECT RSI.ITEM_ID, -RSI.QTY, RINV.S_R_DATE
+    FROM dbo.R_S_ITEMS RSI
+    INNER JOIN dbo.R_S_INVOICE RINV ON RSI.S_R_ID = RINV.S_R_ID
+    WHERE CAST(RINV.S_R_DATE AS date) BETWEEN DATEADD(day, -90, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+  ) X
+  GROUP BY X.ITEM_ID
+)
+SELECT TOP 100
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(S.StockQty AS decimal(18,2)) AS [المخزون],
+  CAST(ISNULL(NS.SoldQty, 0) AS decimal(18,2)) AS [مبيعات_90_يوم],
+  CAST(NS.LastSaleDate AS date) AS [آخر_بيع],
+  CAST(S.StockQty * ISNULL(I.LAST_COST, I.AVER_COST) AS decimal(18,2)) AS [قيمة_تقديرية_د_ل]
+FROM dbo.ITEMS I
+INNER JOIN Stock S ON I.ITEM_ID = S.ITEM_ID
+LEFT JOIN NetSales90 NS ON I.ITEM_ID = NS.ITEM_ID
+WHERE I.ITEM_INVISIBLE = 0
+  AND S.StockQty > 0
+  AND ISNULL(NS.SoldQty, 0) <= 0
+ORDER BY S.StockQty * ISNULL(I.LAST_COST, I.AVER_COST) DESC;
+```
+
+---
+
+## PATTERN: مقارنة-مبيعات-شهرية
+TRIGGERS: مقارنة شهرية, مبيعات الشهر, الشهر الماضي, month over month, monthly comparison, نمو المبيعات, مقارنة أشهر
+TABLES: SALE_INVOICE, SALE_ITEMS
+NOTES: يقارن الشهر الحالي (حسب MAX(S_DATE)) بالشهر السابق. الإيراد = SUM(QTY×PRICE).
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+),
+MonthSales AS (
+  SELECT
+    YEAR(CAST(INV.S_DATE AS date)) AS Y,
+    MONTH(CAST(INV.S_DATE AS date)) AS M,
+    CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS Revenue,
+    COUNT(DISTINCT INV.S_ID) AS InvoiceCount
+  FROM dbo.SALE_INVOICE INV
+  INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+  WHERE CAST(INV.S_DATE AS date) >= DATEADD(month, -2, DATEFROMPARTS(YEAR((SELECT d FROM AsOf)), MONTH((SELECT d FROM AsOf)), 1))
+  GROUP BY YEAR(CAST(INV.S_DATE AS date)), MONTH(CAST(INV.S_DATE AS date))
+),
+Cur AS (
+  SELECT * FROM MonthSales
+  WHERE Y = YEAR((SELECT d FROM AsOf)) AND M = MONTH((SELECT d FROM AsOf))
+),
+Prev AS (
+  SELECT * FROM MonthSales
+  WHERE DATEFROMPARTS(Y, M, 1) = DATEADD(month, -1, DATEFROMPARTS(YEAR((SELECT d FROM AsOf)), MONTH((SELECT d FROM AsOf)), 1))
+)
+SELECT
+  N'الشهر الحالي' AS [الفترة],
+  C.Y AS [السنة], C.M AS [الشهر],
+  C.Revenue AS [الإيراد_د_ل],
+  C.InvoiceCount AS [عدد_الفواتير],
+  P.Revenue AS [إيراد_الشهر_السابق],
+  CAST(C.Revenue - ISNULL(P.Revenue, 0) AS decimal(18,2)) AS [الفرق_د_ل],
+  CAST(CASE WHEN ISNULL(P.Revenue, 0) > 0 THEN (C.Revenue - P.Revenue) / P.Revenue * 100 ELSE NULL END AS decimal(10,1)) AS [نسبة_التغير_%]
+FROM Cur C
+LEFT JOIN Prev P ON 1 = 1;
+```
+
+---
+
+## PATTERN: سجل-مبيعات-عميل
+TRIGGERS: سجل عميل, مشتريات عميل, فواتير زبون, customer history, customer purchases, ماذا اشترى, تاريخ مبيعات عميل
+TABLES: SALE_INVOICE, SALE_ITEMS, ITEMS, CUSTOMERS
+NOTES: استبدل %CUSTOMER% بجزء من اسم العميل. آخر 180 يوماً.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+)
+SELECT TOP 100
+  CAST(INV.S_DATE AS date) AS [التاريخ],
+  INV.S_ID AS [رقم_الفاتورة],
+  ISNULL(INV.CUST_NAME, C.CUST_NAME) AS [العميل],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(SI.QTY AS decimal(18,2)) AS [الكمية],
+  CAST(SI.PRICE AS decimal(18,2)) AS [السعر],
+  CAST(SI.QTY * SI.PRICE AS decimal(18,2)) AS [إجمالي_السطر]
+FROM dbo.SALE_INVOICE INV
+INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+INNER JOIN dbo.ITEMS I ON SI.ITEM_ID = I.ITEM_ID
+LEFT JOIN dbo.CUSTOMERS C ON INV.CUST_ID = C.CUST_ID
+WHERE CAST(INV.S_DATE AS date) >= DATEADD(day, -180, (SELECT d FROM AsOf))
+  AND (
+    ISNULL(INV.CUST_NAME, N'') LIKE N'%CUSTOMER%'
+    OR ISNULL(C.CUST_NAME, N'') LIKE N'%CUSTOMER%'
+  )
+ORDER BY INV.S_DATE DESC;
+```
+
+---
+
+## PATTERN: فواتير-شراء-حديثة
+TRIGGERS: فواتير شراء, آخر مشتريات, purchase invoices, recent buys, فاتورة شراء, مشتريات حديثة
+TABLES: BUY_INVOICE, BUY_ITEMS, ITEMS, CUSTOMERS
+NOTES: آخر 30 يوماً من MAX(B_DATE). المورد = CUSTOMERS.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(B_DATE) AS date) AS d FROM dbo.BUY_INVOICE
+)
+SELECT TOP 100
+  CAST(B.B_DATE AS date) AS [تاريخ_الشراء],
+  B.B_ID AS [رقم_الفاتورة],
+  ISNULL(C.CUST_NAME, N'—') AS [المورد],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(BI.QTY AS decimal(18,2)) AS [الكمية],
+  CAST(BI.PRICE AS decimal(18,2)) AS [سعر_الشراء],
+  CAST(BI.QTY * BI.PRICE AS decimal(18,2)) AS [قيمة_السطر]
+FROM dbo.BUY_INVOICE B
+INNER JOIN dbo.BUY_ITEMS BI ON B.B_ID = BI.B_ID
+INNER JOIN dbo.ITEMS I ON BI.ITEM_ID = I.ITEM_ID
+LEFT JOIN dbo.CUSTOMERS C ON B.CUST_ID = C.CUST_ID
+WHERE CAST(B.B_DATE AS date) >= DATEADD(day, -30, (SELECT d FROM AsOf))
+  AND I.ITEM_INVISIBLE = 0
+ORDER BY B.B_DATE DESC, B.B_ID DESC;
+```
+
+---
+
+## PATTERN: معلومات-منتج-كاملة
+TRIGGERS: معلومات منتج, معلومات عن, تفاصيل المنتج, بيانات المنتج, معدل السحب, معدل سحب, سرعة البيع, سعر البيع, صلاحية, باركود, product info, اعرضلي, اعرض لي, ابحث عن منتج
+TABLES: ITEMS, ITEMS_SUB, BARCODE, SALE_ITEMS, SALE_INVOICE, R_S_ITEMS, R_S_INVOICE, BUY_ITEMS, BUY_INVOICE, CUSTOMERS
+NOTES: **الافتراضي عند إرسال اسم أو باركود فقط.** صف واحد: مخزون، سعر بيع، تكلفة، معدل سحب يومي، أيام تغطية، صلاحية، آخر مورد. مرّر product_filter.
+---
+
+```sql
+;WITH ItemPick AS (
+  SELECT TOP 1 I.ITEM_ID, I.ITEM_MODEL, I.ITEM_NAME, I.MIN_LEVEL, I.MAX_LEVEL,
+    I.LAST_COST, I.AVER_COST
+  FROM dbo.ITEMS I
+  WHERE I.ITEM_INVISIBLE = 0
+    AND (
+      I.ITEM_MODEL LIKE N'%PRODUCT%'
+      OR I.ITEM_NAME LIKE N'%PRODUCT%'
+      OR EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = I.ITEM_ID AND BC.BARCODE LIKE N'%PRODUCT%')
+    )
+  ORDER BY CASE WHEN I.ITEM_MODEL LIKE N'%PRODUCT%' THEN 0 ELSE 1 END, I.ITEM_ID DESC
+),
+UnitPick AS (
+  SELECT TOP 1 BC.BARCODE, BC.PRICE1, BC.UNIT_DISC
+  FROM dbo.BARCODE BC
+  INNER JOIN ItemPick IP ON BC.ITEM_ID = IP.ITEM_ID
+  ORDER BY BC.PRICE1 DESC, BC.BARCODE
+),
+AsOf AS (SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE),
+Stock AS (
+  SELECT IP.ITEM_ID,
+    SUM(ISNULL(SUB.QTY, 0)) AS TotalStock,
+    MIN(CASE WHEN ISNULL(SUB.QTY, 0) > 0 AND SUB.CATEOGRY3 IS NOT NULL THEN CAST(SUB.CATEOGRY3 AS date) END) AS NearestExpiry
+  FROM ItemPick IP
+  LEFT JOIN dbo.ITEMS_SUB SUB ON IP.ITEM_ID = SUB.ITEM_ID
+  GROUP BY IP.ITEM_ID
+),
+SalesRecent AS (
+  SELECT IP.ITEM_ID, SUM(X.QTY) AS SoldQty,
+    COUNT(DISTINCT CAST(X.S_DATE AS date)) AS ActiveSaleDays,
+    MAX(X.S_DATE) AS LastSaleDate
+  FROM ItemPick IP
+  JOIN (
+    SELECT SI.ITEM_ID, SI.QTY, INV.S_DATE
+    FROM dbo.SALE_ITEMS SI JOIN dbo.SALE_INVOICE INV ON SI.S_ID = INV.S_ID
+    WHERE CAST(INV.S_DATE AS date) BETWEEN DATEADD(day, -60, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+    UNION ALL
+    SELECT RSI.ITEM_ID, -RSI.QTY, RINV.S_R_DATE
+    FROM dbo.R_S_ITEMS RSI JOIN dbo.R_S_INVOICE RINV ON RSI.S_R_ID = RINV.S_R_ID
+    WHERE CAST(RINV.S_R_DATE AS date) BETWEEN DATEADD(day, -60, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+  ) X ON IP.ITEM_ID = X.ITEM_ID
+  GROUP BY IP.ITEM_ID
+),
+LastBuy AS (
+  SELECT BI.ITEM_ID, BI.PRICE AS LastBuyPrice, CU.CUST_NAME AS LastSupplier, B.B_DATE AS LastBuyDate
+  FROM dbo.BUY_ITEMS BI JOIN dbo.BUY_INVOICE B ON BI.B_ID = B.B_ID
+  LEFT JOIN dbo.CUSTOMERS CU ON B.CUST_ID = CU.CUST_ID
+  WHERE BI.B_ITEM_ID IN (
+    SELECT MAX(BI2.B_ITEM_ID) FROM dbo.BUY_ITEMS BI2
+    JOIN dbo.BUY_INVOICE B2 ON BI2.B_ID = B2.B_ID
+    JOIN ItemPick IP2 ON BI2.ITEM_ID = IP2.ITEM_ID
+    GROUP BY BI2.ITEM_ID
+  )
+)
+SELECT
+  IP.ITEM_MODEL AS [الكود],
+  LEFT(IP.ITEM_NAME, 80) AS [الاسم],
+  ISNULL(U.BARCODE, N'') AS [الباركود],
+  ISNULL(U.UNIT_DISC, N'') AS [الوحدة],
+  CAST(ISNULL(U.PRICE1, 0) AS decimal(18,2)) AS [سعر_البيع],
+  CAST(IP.LAST_COST AS decimal(18,2)) AS [آخر_تكلفة],
+  CAST(IP.AVER_COST AS decimal(18,2)) AS [متوسط_التكلفة],
+  CAST(ISNULL(SK.TotalStock, 0) AS decimal(18,2)) AS [المخزون],
+  CAST(SK.NearestExpiry AS date) AS [أقرب_صلاحية],
+  CAST(ISNULL(SR.SoldQty, 0) AS decimal(18,2)) AS [مبيعات_60_يوم],
+  CAST(ISNULL(SR.SoldQty, 0) / NULLIF(CAST(SR.ActiveSaleDays AS float), 0) AS decimal(12,3)) AS [معدل_السحب_اليومي],
+  CAST(ISNULL(SK.TotalStock, 0) / NULLIF(ISNULL(SR.SoldQty, 0) / NULLIF(CAST(SR.ActiveSaleDays AS float), 0), 0) AS decimal(12,1)) AS [أيام_تغطية_المخزون],
+  CAST(SR.LastSaleDate AS date) AS [آخر_تاريخ_بيع],
+  ISNULL(LB.LastSupplier, N'—') AS [آخر_مورد],
+  CAST(LB.LastBuyPrice AS decimal(18,2)) AS [آخر_سعر_شراء],
+  CAST(LB.LastBuyDate AS date) AS [آخر_تاريخ_شراء],
+  CASE
+    WHEN ISNULL(SK.TotalStock, 0) <= 0 AND ISNULL(SR.SoldQty, 0) > 0 THEN N'نفاد'
+    WHEN ISNULL(SK.TotalStock, 0) / NULLIF(ISNULL(SR.SoldQty, 0) / NULLIF(CAST(SR.ActiveSaleDays AS float), 0), 0) < 7 THEN N'حرج'
+    WHEN ISNULL(SK.TotalStock, 0) / NULLIF(ISNULL(SR.SoldQty, 0) / NULLIF(CAST(SR.ActiveSaleDays AS float), 0), 0) < 30 THEN N'يحتاج شراء'
+    ELSE N'كافٍ'
+  END AS [حالة_المخزون]
+FROM ItemPick IP
+LEFT JOIN UnitPick U ON 1 = 1
+LEFT JOIN Stock SK ON IP.ITEM_ID = SK.ITEM_ID
+LEFT JOIN SalesRecent SR ON IP.ITEM_ID = SR.ITEM_ID
+LEFT JOIN LastBuy LB ON IP.ITEM_ID = LB.ITEM_ID;
+```
+
+---
+
+## PATTERN: بحث-منتج-سريع
+TRIGGERS: ابحث عن, find product, منتج, باركود, barcode lookup, بحث منتج, product search
+TABLES: ITEMS, BARCODE, ITEMS_SUB
+NOTES: بحث بالاسم/الكود/الباركود — استبدل %PRODUCT% أو مرّر product_filter.
+---
+
+```sql
+;WITH Stock AS (
+  SELECT ITEM_ID, SUM(ISNULL(QTY, 0)) AS StockQty FROM dbo.ITEMS_SUB GROUP BY ITEM_ID
+)
+SELECT TOP 25
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 70) AS [اسم_المنتج],
+  B.BARCODE AS [باركود],
+  CAST(B.PRICE1 AS decimal(18,2)) AS [سعر_البيع],
+  CAST(I.LAST_COST AS decimal(18,2)) AS [آخر_تكلفة],
+  CAST(ISNULL(S.StockQty, 0) AS decimal(18,2)) AS [رصيد_المخزون]
+FROM dbo.ITEMS I
+LEFT JOIN dbo.BARCODE B ON I.ITEM_ID = B.ITEM_ID
+LEFT JOIN Stock S ON I.ITEM_ID = S.ITEM_ID
+WHERE I.ITEM_INVISIBLE = 0
+  AND (
+    I.ITEM_MODEL LIKE N'%PRODUCT%'
+    OR I.ITEM_NAME LIKE N'%PRODUCT%'
+    OR B.BARCODE LIKE N'%PRODUCT%'
+  )
+ORDER BY I.ITEM_NAME;
+```
+
+---
+
+## PATTERN: جرد-مخزون-حسب-المخزن
+TRIGGERS: مخزون حسب المخزن, رصيد المخازن, stock by store, inventory by warehouse, جرد مخزن
+TABLES: ITEMS_SUB, ITEMS, STORES
+NOTES: تجميع ITEMS_SUB حسب STORE + ITEM. TOP 200.
+---
+
+```sql
+SELECT TOP 200
+  ST.STORE_NAME AS [المخزن],
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(SUM(ISNULL(SUB.QTY, 0)) AS decimal(18,2)) AS [الكمية],
+  CAST(MIN(SUB.CATEOGRY3) AS date) AS [أقرب_صلاحية]
+FROM dbo.ITEMS_SUB SUB
+INNER JOIN dbo.ITEMS I ON SUB.ITEM_ID = I.ITEM_ID
+INNER JOIN dbo.STORES ST ON SUB.STORE_ID = ST.STORE_ID
+WHERE I.ITEM_INVISIBLE = 0 AND ISNULL(SUB.QTY, 0) <> 0
+GROUP BY ST.STORE_NAME, I.ITEM_MODEL, I.ITEM_NAME
+ORDER BY ST.STORE_NAME, I.ITEM_NAME;
+```
+
+---
+
+## PATTERN: أعلى-منتجات-مبيعاً
+TRIGGERS: أعلى منتجات, أكثر مبيعاً, best sellers, top products, الأكثر مبيعاً, ranking products
+TABLES: SALE_INVOICE, SALE_ITEMS, ITEMS, R_S_INVOICE, R_S_ITEMS
+NOTES: آخر 30 يوماً صافي (مبيعات − مردودات). ترتيب حسب الكمية.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+),
+NetSales AS (
+  SELECT X.ITEM_ID, SUM(X.QtyNet) AS NetQty, SUM(X.Revenue) AS NetRevenue
+  FROM (
+    SELECT SI.ITEM_ID, SI.QTY AS QtyNet, SI.QTY * SI.PRICE AS Revenue
+    FROM dbo.SALE_ITEMS SI
+    INNER JOIN dbo.SALE_INVOICE INV ON SI.S_ID = INV.S_ID
+    WHERE CAST(INV.S_DATE AS date) BETWEEN DATEADD(day, -30, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+    UNION ALL
+    SELECT RSI.ITEM_ID, -RSI.QTY, -RSI.QTY * RSI.PRICE
+    FROM dbo.R_S_ITEMS RSI
+    INNER JOIN dbo.R_S_INVOICE RINV ON RSI.S_R_ID = RINV.S_R_ID
+    WHERE CAST(RINV.S_R_DATE AS date) BETWEEN DATEADD(day, -30, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+  ) X
+  GROUP BY X.ITEM_ID
+)
+SELECT TOP 30
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(NS.NetQty AS decimal(18,2)) AS [كمية_صافية],
+  CAST(NS.NetRevenue AS decimal(18,2)) AS [إيراد_صافي_د_ل]
+FROM NetSales NS
+INNER JOIN dbo.ITEMS I ON NS.ITEM_ID = I.ITEM_ID
+WHERE I.ITEM_INVISIBLE = 0 AND NS.NetQty > 0
+ORDER BY NS.NetQty DESC;
+```
+
+---
+
+## PATTERN: مبيعات-حسب-المخزن
+TRIGGERS: مبيعات مخزن, إيرادات المخزن, sales by store, warehouse revenue, أداء المخزن
+TABLES: SALE_INVOICE, SALE_ITEMS, STORES
+NOTES: آخر 30 يوماً. STORE_ID من SALE_ITEMS.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+)
+SELECT
+  ISNULL(ST.STORE_NAME, N'غير محدد') AS [المخزن],
+  COUNT(DISTINCT INV.S_ID) AS [عدد_الفواتير],
+  CAST(SUM(SI.QTY) AS decimal(18,1)) AS [الوحدات],
+  CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [الإيراد_د_ل]
+FROM dbo.SALE_INVOICE INV
+INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+LEFT JOIN dbo.STORES ST ON SI.STORE_ID = ST.STORE_ID
+WHERE CAST(INV.S_DATE AS date) BETWEEN DATEADD(day, -30, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
+GROUP BY ST.STORE_NAME
+ORDER BY [الإيراد_د_ل] DESC;
+```
+
+---
+
+## PATTERN: عدد-المنتجات
+TRIGGERS: عدد المنتجات, كم منتج, count products, عدد الاصناف, كم صنف
+TABLES: ITEMS
+NOTES: عدد الأصناف النشطة فقط — بدون أسماء.
+---
+
+```sql
+SELECT COUNT(*) AS [عدد_المنتجات_النشطة]
+FROM dbo.ITEMS
+WHERE ITEM_INVISIBLE = 0;
+```
+
+---
+
+## PATTERN: أعلى-منتجات-كل-الوقت
+TRIGGERS: أعلى منتجات كل الوقت, بدون تاريخ, all time sellers, أكثر مبيعاً تاريخياً
+TABLES: SALE_ITEMS, R_S_ITEMS, ITEMS
+NOTES: **بدون نافذة زمنية** — صافي مبيعات − مردودات من كل السجل.
+---
+
+```sql
+;WITH NetSales AS (
+  SELECT X.ITEM_ID, SUM(X.QtyNet) AS NetQty, SUM(X.Revenue) AS NetRevenue
+  FROM (
+    SELECT SI.ITEM_ID, SI.QTY AS QtyNet, SI.QTY * SI.PRICE AS Revenue
+    FROM dbo.SALE_ITEMS SI
+    UNION ALL
+    SELECT RSI.ITEM_ID, -RSI.QTY, -RSI.QTY * RSI.PRICE
+    FROM dbo.R_S_ITEMS RSI
+  ) X
+  GROUP BY X.ITEM_ID
+)
+SELECT TOP 30
+  I.ITEM_MODEL AS [كود],
+  LEFT(I.ITEM_NAME, 60) AS [اسم_المنتج],
+  CAST(NS.NetQty AS decimal(18,2)) AS [كمية_صافية],
+  CAST(NS.NetRevenue AS decimal(18,2)) AS [إيراد_صافي_د_ل]
+FROM NetSales NS
+INNER JOIN dbo.ITEMS I ON NS.ITEM_ID = I.ITEM_ID
+WHERE I.ITEM_INVISIBLE = 0 AND NS.NetQty > 0
+ORDER BY NS.NetQty DESC;
 ```
 
 ---

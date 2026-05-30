@@ -28,6 +28,7 @@ SUPABASE_KEY = (
     ".bva5PiwsoBiLR7u2upQV7q2spl6GhAg-JqrQ8nnUC8E"
 )
 DDL_FILE = r"C:\Users\DELL\Desktop\al-tabi\Full_Marketing_Database_DDL.sql"
+INFINITY_DDL_FILE = r"C:\Users\DELL\Desktop\al-tabi\reports-app\InfinityRetailDB_DDL.sql"
 
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -37,15 +38,25 @@ SUPABASE_HEADERS = {
 }
 
 # ── تقطيع DDL بحسب حدود الجداول ─────────────────────────────────────
+def read_ddl_text(path: str) -> str:
+    """يقرأ ملف DDL — يدعم UTF-8 و UTF-16 (BOM) كما في InfinityRetailDB_DDL.sql."""
+    raw_bytes = open(path, "rb").read()
+    if raw_bytes.startswith(b"\xff\xfe") or raw_bytes.startswith(b"\xfe\xff"):
+        return raw_bytes.decode("utf-16")
+    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+        return raw_bytes.decode("utf-8-sig")
+    try:
+        return raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw_bytes.decode("utf-16", errors="replace")
+
+
 def parse_ddl_into_table_chunks(path: str) -> list[dict]:
     """
     يُقسّم ملف DDL إلى قطع — كل قطعة تحتوي تعريف جدول واحد كامل.
     يُعيد قائمة من: {"table_name": str, "content": str}
     """
-    with open(path, encoding="utf-8") as f:
-        raw = f.read()
-
-    # نُقسّم عند كل "-- Marketing2026.dbo.XXX definition"
+    raw = read_ddl_text(path)
     pattern = re.compile(
         r"--\s*Marketing2026\.dbo\.(\w+)\s+definition",
         re.MULTILINE,
@@ -89,15 +100,73 @@ def parse_ddl_into_table_chunks(path: str) -> list[dict]:
         )
         full_chunk = header + block
 
-        chunks.append({"table_name": table_name, "content": full_chunk})
+        chunks.append({
+            "table_name": table_name,
+            "content": full_chunk,
+            "erp_kind": "marketing2026",
+            "source": "Full_Marketing_Database_DDL.sql",
+        })
 
     print(f"[parse] Unique tables to embed: {len(chunks)}")
     return chunks
 
 
-# text-embedding-3-small يقبل حتى 8191 token. حرف ≈ 0.25 token تقريباً للنص الإنجليزي/SQL.
-# 30000 حرف ≈ 7500 token — أمان كافٍ.
-MAX_CHARS_PER_CHUNK = 30000
+def parse_infinity_ddl_into_chunks(path: str) -> list[dict]:
+    """Parse InfinityRetailDB DDL — one chunk per CREATE TABLE/VIEW."""
+    raw = read_ddl_text(path)
+
+    pattern = re.compile(
+        r"CREATE\s+(?:TABLE|VIEW)\s+\[(\w+)\]\.\[(\w+)\]",
+        re.IGNORECASE,
+    )
+    splits = list(pattern.finditer(raw))
+    print(f"[parse-infinity] Found {len(splits)} CREATE TABLE/VIEW blocks.")
+
+    chunks = []
+    seen = set()
+    for i, match in enumerate(splits):
+        schema, table = match.group(1), match.group(2)
+        key = f"{schema}.{table}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        start = match.start()
+        end = splits[i + 1].start() if i + 1 < len(splits) else len(raw)
+        block = raw[start:end].strip()
+        if len(block) < 40:
+            continue
+
+        header = (
+            f"SQL Server Table/View: InfinityRetailDB.{schema}.{table}\n"
+            f"Database: InfinityRetailDB (retail ERP — Inventory, SALES, Purchase)\n"
+            f"erp_kind: infinity_retail_db\n"
+        )
+        chunks.append({
+            "table_name": key,
+            "content": header + block,
+            "erp_kind": "infinity_retail_db",
+            "source": "InfinityRetailDB_DDL.sql",
+        })
+
+    print(f"[parse-infinity] Unique objects to embed: {len(chunks)}")
+    return chunks
+
+
+def delete_documents_for_erp(erp_kind: str):
+    """Delete documents filtered by metadata erp_kind."""
+    print(f"[supabase] Deleting documents for erp_kind={erp_kind}...")
+    url = f"{SUPABASE_URL}/rest/v1/documents?metadata->>erp_kind=eq.{erp_kind}"
+    res = requests.delete(url, headers=SUPABASE_HEADERS, timeout=60)
+    if res.status_code not in (200, 204):
+        print(f"  [supabase] Warning: delete returned {res.status_code}: {res.text[:200]}")
+    else:
+        print(f"  [supabase] Deleted. Status: {res.status_code}")
+
+
+# text-embedding-3-small يقبل حتى 8191 token. SQL/DDL غالباً ~4 chars/token.
+# 24000 حرف ≈ 6000 token — هامش أمان تحت حد 8192.
+MAX_CHARS_PER_CHUNK = 24000
 
 
 def safe_truncate(text: str, max_chars: int = MAX_CHARS_PER_CHUNK) -> str:
@@ -147,7 +216,7 @@ def embed_batch(texts: list[str], openai_key: str) -> list[list[float]]:
             if not res.ok:
                 print(f"    [embed-single] item {i} (len={len(t)}) HTTP {res.status_code}: {res.text[:300]}")
                 # كحل أخير: قص أكثر
-                t_shorter = t[:10000] + "\n-- [HEAVILY TRUNCATED]"
+                t_shorter = t[:8000] + "\n-- [HEAVILY TRUNCATED]"
                 payload_single = {"model": "text-embedding-3-small", "input": [t_shorter]}
                 res = requests.post(url, headers=headers, json=payload_single, timeout=60)
             res.raise_for_status()
@@ -200,10 +269,28 @@ def main():
         default=20,
         help="How many texts to send to OpenAI per request (default 20)",
     )
+    parser.add_argument(
+        "--erp",
+        choices=["marketing", "infinity", "both"],
+        default="marketing",
+        help="Which DDL to embed (default: marketing). Use 'both' to merge Marketing + Infinity.",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="When set, delete only documents for the target erp_kind instead of wiping all.",
+    )
     args = parser.parse_args()
 
-    # 1. قراءة وتقطيع ملف DDL
-    chunks = parse_ddl_into_table_chunks(DDL_FILE)
+    chunks: list[dict] = []
+    if args.erp in ("marketing", "both"):
+        chunks.extend(parse_ddl_into_table_chunks(DDL_FILE))
+        for c in chunks:
+            if "erp_kind" not in c:
+                c["erp_kind"] = "marketing2026"
+    if args.erp in ("infinity", "both"):
+        infinity_chunks = parse_infinity_ddl_into_chunks(INFINITY_DDL_FILE)
+        chunks.extend(infinity_chunks)
 
     if not chunks:
         print("ERROR: No table chunks found. Check DDL file path.")
@@ -235,9 +322,14 @@ def main():
     # 3. بناء صفوف الإدراج
     rows = []
     for chunk, emb in zip(chunks, embeddings):
+        erp_kind = chunk.get("erp_kind", "marketing2026")
         rows.append({
             "content": chunk["content"],
-            "metadata": {"table": chunk["table_name"], "source": "Full_Marketing_Database_DDL.sql"},
+            "metadata": {
+                "table": chunk["table_name"],
+                "source": chunk.get("source", "DDL"),
+                "erp_kind": erp_kind,
+            },
             "embedding": emb,
         })
 
@@ -248,11 +340,20 @@ def main():
         return
 
     # 4. حذف القديم وإدراج الجديد
-    delete_all_documents()
+    if args.merge:
+        if args.erp == "both":
+            delete_documents_for_erp("marketing2026")
+            delete_documents_for_erp("infinity_retail_db")
+        elif args.erp == "infinity":
+            delete_documents_for_erp("infinity_retail_db")
+        else:
+            delete_documents_for_erp("marketing2026")
+    else:
+        delete_all_documents()
     print(f"\n[supabase] Inserting {len(rows)} new documents...")
     insert_documents(rows)
 
-    print(f"\n✅ Done! {len(rows)} table definitions embedded and stored in Supabase.")
+    print(f"\n[done] {len(rows)} table definitions embedded and stored in Supabase.")
     print("   Each chunk = one complete table definition with context header.")
     print("   match_count=15 in the app will now reliably retrieve the right tables.")
 

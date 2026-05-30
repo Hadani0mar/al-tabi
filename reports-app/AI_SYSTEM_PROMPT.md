@@ -1,15 +1,16 @@
 # رسالة النظام (System Prompt) — وكيل الذكاء الاصطناعي
 
-> مستخرجة من `src-tauri/src/ai_agent.rs` — بدون أكواد SQL طويلة  
-> مرجع تشغيلي موسّع: `AGENTS.md` | أنماط SQL جاهزة: `QUERY_PATTERNS.md`
+> مستخرجة من `src-tauri/src/ai_agent.rs` — **Marketing-heavy** في DOMAIN_CRITICAL_FACTS  
+> **نظامان ERP:** [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md) | Infinity: `INFINITY_DOMAIN_CRITICAL_FACTS` في `erp_profile.rs`  
+> مرجع تشغيلي: `AGENTS.md` | Marketing: `AGENT_Marketing2026.md` | Infinity: `AGENT_InfinityRetailDB.md`
 
 **سياقان:** Telegram (`handle_with_groq`) — HTML فقط | Desktop (`handle_with_groq_local`) — Markdown + `[FILE_PATH:...]`
 
 ---
 
-## DOMAIN_CRITICAL_FACTS
+## DOMAIN_CRITICAL_FACTS (Marketing2026 — افتراضي في هذا الملف)
 
-**اقرأ هذا أولاً.** هذا معرفتك المسبقة بقاعدة بيانات Marketing2026. استخدمه كمرجع أساسي. استدعِ `search_schema` فقط إذا احتجت جدولاً غير مذكور هنا.
+**اقرأ `ERP_ARCHITECTURE.md` أولاً.** على InfinityRetailDB يُحقَن `INFINITY_DOMAIN_CRITICAL_FACTS` بدلاً من Marketing. استدعِ `search_schema` فقط إذا احتجت جدولاً غير مذكور.
 
 ### الجداول الأساسية (تغطي 90% من الاستعلامات)
 

@@ -10,9 +10,6 @@ import { load } from "@tauri-apps/plugin-store";
 const SchedulerPage = lazy(() =>
   import("@/components/ui/scheduler-page").then((m) => ({ default: m.SchedulerPage })),
 );
-const GenericReportPage = lazy(() =>
-  import("@/components/ui/generic-report-page").then((m) => ({ default: m.GenericReportPage })),
-);
 const AIAssistantInterface = lazy(() =>
   import("@/components/ui/ai-assistant-interface").then((m) => ({ default: m.AIAssistantInterface })),
 );
@@ -21,6 +18,9 @@ const SavedQueriesPage = lazy(() =>
 );
 const SettingsPage = lazy(() =>
   import("@/components/ui/settings-page").then((m) => ({ default: m.SettingsPage })),
+);
+const AddonsPage = lazy(() =>
+  import("@/components/ui/addons-page").then((m) => ({ default: m.AddonsPage })),
 );
 
 export interface ConnectionInfo {
@@ -35,23 +35,25 @@ export interface ConnectionInfo {
 
 const STORE_FILE = "connections.dat";
 
-type Page = "reports" | "search" | "alerts" | "ai" | "saved" | "settings";
-const PAGES: Page[] = ["reports", "search", "alerts", "ai", "saved", "settings"];
+type Page = "reports" | "saved" | "ai" | "addons" | "settings";
+const PAGES: Page[] = ["reports", "saved", "ai", "addons", "settings"];
+
+/** الذكاء في المنتصف — index 2 */
+const DEFAULT_PAGE_INDEX = 2;
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [connInfo, setConnInfo] = useState<ConnectionInfo | null>(null);
-  const [pageIndex, setPageIndex] = useState(0);
+  const [pageIndex, setPageIndex] = useState(DEFAULT_PAGE_INDEX);
   const [groqKey, setGroqKey] = useState("");
   const [autoConnecting, setAutoConnecting] = useState(false);
-  const [visited, setVisited] = useState({ ai: false, saved: false, settings: false });
+  const [visited, setVisited] = useState({ ai: true, saved: false, addons: false, settings: false });
   const aiModel = FIXED_AI_MODEL;
 
   useEffect(() => {
     loadActiveTheme().then(applyTheme).catch(console.error);
   }, []);
 
-  // دخول تلقائي في الخلفية — لا نحجب الواجهة
   useEffect(() => {
     let cancelled = false;
 
@@ -92,6 +94,7 @@ export default function App() {
           await invoke("set_active_connection", { conn }).catch(console.error);
           setConnInfo({ ...conn, server_version: result.server_version });
           setConnected(true);
+          setPageIndex(DEFAULT_PAGE_INDEX);
         }
       } catch (err) {
         console.error("Auto-login failed:", err);
@@ -106,15 +109,14 @@ export default function App() {
     };
   }, []);
 
-  const currentPage = PAGES[pageIndex] ?? "reports";
+  const currentPage = PAGES[pageIndex] ?? "ai";
 
   useEffect(() => {
-    if (currentPage === "ai") setVisited((v) => (v.ai ? v : { ...v, ai: true }));
     if (currentPage === "saved") setVisited((v) => (v.saved ? v : { ...v, saved: true }));
+    if (currentPage === "addons") setVisited((v) => (v.addons ? v : { ...v, addons: true }));
     if (currentPage === "settings") setVisited((v) => (v.settings ? v : { ...v, settings: true }));
   }, [currentPage]);
 
-  // مفتاح AI فقط عند فتح تبويب الوكيل
   useEffect(() => {
     if (!connected || !visited.ai || groqKey) return;
     invoke<{ openrouter_api_key: string }>("load_app_secrets_settings")
@@ -132,18 +134,23 @@ export default function App() {
     }
     setConnInfo(null);
     setConnected(false);
-    setPageIndex(0);
+    setPageIndex(DEFAULT_PAGE_INDEX);
     setGroqKey("");
+    setVisited({ ai: true, saved: false, addons: false, settings: false });
+  }
+
+  function handleConnected(info: ConnectionInfo) {
+    setConnInfo(info);
+    setConnected(true);
+    setPageIndex(DEFAULT_PAGE_INDEX);
+    setVisited({ ai: true, saved: false, addons: false, settings: false });
   }
 
   if (!connected) {
     return (
       <SqlLoginPage
         autoConnecting={autoConnecting}
-        onConnected={(info) => {
-          setConnInfo(info);
-          setConnected(true);
-        }}
+        onConnected={handleConnected}
       />
     );
   }
@@ -153,15 +160,8 @@ export default function App() {
       <AppShellHeader businessName={connInfo?.database} connected={connected} />
       <main className="flex-1 pb-28">
         <Suspense fallback={null}>
-          {(currentPage === "reports" || currentPage === "alerts") && <SchedulerPage />}
-          {currentPage === "search" && (
-            <div className="flex flex-col h-screen overflow-y-auto pt-6">
-              <GenericReportPage
-                connInfo={connInfo!}
-                reportName="Product Comprehensive Details"
-                reportNameAr="البحث عن تفاصيل المنتجات"
-              />
-            </div>
+          {currentPage === "reports" && (
+            <SchedulerPage connInfo={connInfo} />
           )}
           {visited.ai && (
             <div className={currentPage === "ai" ? "contents" : "hidden"} aria-hidden={currentPage !== "ai"}>
@@ -169,6 +169,7 @@ export default function App() {
             </div>
           )}
           {visited.saved && currentPage === "saved" && <SavedQueriesPage />}
+          {visited.addons && currentPage === "addons" && <AddonsPage />}
           {visited.settings && (
             <div className={currentPage === "settings" ? "contents" : "hidden"} aria-hidden={currentPage !== "settings"}>
               <div className="flex flex-col min-h-[calc(100vh-7rem)] w-full">

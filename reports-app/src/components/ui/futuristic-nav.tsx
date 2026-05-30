@@ -2,36 +2,27 @@
 
 import {
   FileBarChart2,
-  Search,
-  Bell,
   Bookmark,
   Settings,
   Sparkles,
+  Puzzle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface NavItem {
-  id: number;
-  icon: React.ReactNode;
-  label: string;
-  accent?: boolean;
-}
-
-const items: NavItem[] = [
+const items = [
   { id: 0, icon: <FileBarChart2 size={16} />, label: "التقارير" },
-  { id: 1, icon: <Search size={16} />, label: "بحث" },
-  { id: 2, icon: <Bell size={16} />, label: "تنبيهات" },
-  { id: 3, icon: <Sparkles size={16} />, label: "الذكاء", accent: true },
-  { id: 4, icon: <Bookmark size={16} />, label: "محفوظات" },
-  { id: 5, icon: <Settings size={16} />, label: "إعدادات" },
-];
+  { id: 1, icon: <Bookmark size={16} />, label: "المحفوظات" },
+  { id: 2, icon: <Sparkles size={16} />, label: "الذكاء", accent: true },
+  { id: 3, icon: <Puzzle size={16} />, label: "الإضافات" },
+  { id: 4, icon: <Settings size={16} />, label: "الإعدادات" },
+] as const;
 
 interface MihbarNavProps {
   activeIndex?: number;
   onNavigate?: (index: number) => void;
 }
 
-export default function MihbarNav({ activeIndex = 0, onNavigate }: MihbarNavProps) {
+export default function MihbarNav({ activeIndex = 2, onNavigate }: MihbarNavProps) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-[18px] z-50 flex justify-center">
       <nav
@@ -42,6 +33,7 @@ export default function MihbarNav({ activeIndex = 0, onNavigate }: MihbarNavProp
           boxShadow: "var(--shadow-lg)",
         }}
         dir="ltr"
+        aria-label="التنقل الرئيسي"
       >
         {items.map((item) => {
           const isActive = item.id === activeIndex;

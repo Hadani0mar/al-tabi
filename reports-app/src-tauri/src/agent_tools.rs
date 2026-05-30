@@ -89,67 +89,81 @@ pub async fn record_exported_file(app_state: &Arc<AppState>, path: &std::path::P
     session.last_file_path = Some(path.display().to_string());
 }
 
-static PRODUCT_SCHEMA_CACHE: OnceLock<String> = OnceLock::new();
+static MARKETING_PRODUCT_SCHEMA: OnceLock<String> = OnceLock::new();
+static INFINITY_PRODUCT_SCHEMA: OnceLock<String> = OnceLock::new();
 const PRODUCT_SCHEMA_EMBED: &str = include_str!("../../PRODUCT_SCHEMA.md");
+const INFINITY_PRODUCT_SCHEMA_EMBED: &str = include_str!("../../INFINITY_PRODUCT_SCHEMA.md");
 
-static DATABASE_VIEWS_CACHE: OnceLock<String> = OnceLock::new();
+static MARKETING_DATABASE_VIEWS: OnceLock<String> = OnceLock::new();
+static INFINITY_DATABASE_VIEWS: OnceLock<String> = OnceLock::new();
 const DATABASE_VIEWS_EMBED: &str = include_str!("../../DATABASE_VIEWS.md");
+const INFINITY_DATABASE_VIEWS_EMBED: &str = include_str!("../../INFINITY_DATABASE_VIEWS.md");
 
-pub fn load_database_views() -> &'static str {
-    DATABASE_VIEWS_CACHE.get_or_init(|| {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default();
-        let candidates = [
-            exe_dir.join("DATABASE_VIEWS.md"),
-            exe_dir.join("../DATABASE_VIEWS.md"),
-            exe_dir.join("../../DATABASE_VIEWS.md"),
-            std::path::PathBuf::from(
-                r"C:\Users\DELL\Desktop\al-tabi\reports-app\DATABASE_VIEWS.md",
-            ),
-        ];
-        for path in &candidates {
-            if let Ok(c) = std::fs::read_to_string(path) {
-                if c.contains("SALE_ITEMS_INVOICE_VIEW") {
-                    return c;
-                }
+fn load_md_doc(file_name: &str, marker: &str, embed: &str) -> String {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default();
+    let candidates = [
+        exe_dir.join(file_name),
+        exe_dir.join("..").join(file_name),
+        exe_dir.join("../..").join(file_name),
+        exe_dir.join("../../..").join(file_name),
+        std::path::PathBuf::from(r"C:\Users\DELL\Desktop\al-tabi\reports-app").join(file_name),
+    ];
+    for path in &candidates {
+        if let Ok(c) = std::fs::read_to_string(path) {
+            if c.contains(marker) {
+                return c;
             }
         }
-        if DATABASE_VIEWS_EMBED.contains("SALE_ITEMS_INVOICE_VIEW") {
-            return DATABASE_VIEWS_EMBED.to_string();
-        }
-        "# DATABASE_VIEWS not found\n".to_string()
-    })
+    }
+    if embed.contains(marker) {
+        return embed.to_string();
+    }
+    format!("# {file_name} not found\n")
 }
 
-pub fn load_product_schema() -> &'static str {
-    PRODUCT_SCHEMA_CACHE.get_or_init(|| {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default();
-        let candidates = [
-            exe_dir.join("PRODUCT_SCHEMA.md"),
-            exe_dir.join("../PRODUCT_SCHEMA.md"),
-            exe_dir.join("../../PRODUCT_SCHEMA.md"),
-            exe_dir.join("../../../PRODUCT_SCHEMA.md"),
-            std::path::PathBuf::from(
-                r"C:\Users\DELL\Desktop\al-tabi\reports-app\PRODUCT_SCHEMA.md",
-            ),
-        ];
-        for path in &candidates {
-            if let Ok(c) = std::fs::read_to_string(path) {
-                if c.contains("ITEMS") {
-                    return c;
-                }
-            }
-        }
-        if PRODUCT_SCHEMA_EMBED.contains("ITEMS") {
-            return PRODUCT_SCHEMA_EMBED.to_string();
-        }
-        "# PRODUCT_SCHEMA not found\n".to_string()
-    })
+pub fn load_database_views(erp: crate::erp_profile::ErpKind) -> &'static str {
+    match erp {
+        crate::erp_profile::ErpKind::InfinityRetailDb => INFINITY_DATABASE_VIEWS
+            .get_or_init(|| {
+                load_md_doc(
+                    "INFINITY_DATABASE_VIEWS.md",
+                    "Data_View_SalesInvoiceItems",
+                    INFINITY_DATABASE_VIEWS_EMBED,
+                )
+            })
+            .as_str(),
+        _ => MARKETING_DATABASE_VIEWS
+            .get_or_init(|| {
+                load_md_doc(
+                    "DATABASE_VIEWS.md",
+                    "SALE_ITEMS_INVOICE_VIEW",
+                    DATABASE_VIEWS_EMBED,
+                )
+            })
+            .as_str(),
+    }
+}
+
+pub fn load_product_schema(erp: crate::erp_profile::ErpKind) -> &'static str {
+    match erp {
+        crate::erp_profile::ErpKind::InfinityRetailDb => INFINITY_PRODUCT_SCHEMA
+            .get_or_init(|| {
+                load_md_doc(
+                    "INFINITY_PRODUCT_SCHEMA.md",
+                    "Data_Products",
+                    INFINITY_PRODUCT_SCHEMA_EMBED,
+                )
+            })
+            .as_str(),
+        _ => MARKETING_PRODUCT_SCHEMA
+            .get_or_init(|| {
+                load_md_doc("PRODUCT_SCHEMA.md", "ITEMS", PRODUCT_SCHEMA_EMBED)
+            })
+            .as_str(),
+    }
 }
 
 /// يزيل @ والأقواس الفارغة من @mention (مثل `TRADOL ()` → `TRADOL 10ML (TUNISIA)`)
@@ -181,6 +195,20 @@ pub fn sanitize_product_filter(raw: &str) -> String {
         break;
     }
     s
+}
+
+/// يستخرج @mention أو باركود (8–14 رقم) من نص المستخدم
+pub fn extract_product_hint_from_text(text: &str) -> Option<String> {
+    if let Some(pf) = extract_product_filter_from_text(text) {
+        return Some(pf);
+    }
+    for word in text.split_whitespace() {
+        let digits: String = word.chars().filter(|c| c.is_ascii_digit()).collect();
+        if (8..=14).contains(&digits.len()) {
+            return Some(digits);
+        }
+    }
+    None
 }
 
 /// يستخرج اسم/كود المنتج من @mention في نص المستخدم
@@ -240,14 +268,60 @@ fn product_match_or(model_col: &str, name_col: &str, tokens: &[String]) -> Strin
     )
 }
 
-/// يستبدل N'%PRODUCT%' ببحث AND لكل كلمة — يتجاوز فرق المسافات (مثل ARTAMIN ثلاث مسافات)
+fn is_barcode_filter(filter: &str) -> bool {
+    let s = filter.trim();
+    !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_digit())
+        && (8..=14).contains(&s.len())
+}
+
+fn item_pick_barcode_or(model_col: &str, name_col: &str, item_id_col: &str, escaped: &str) -> String {
+    format!(
+        "({model} LIKE N'%{e}%' OR {name} LIKE N'%{e}%' OR EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = {id} AND BC.BARCODE LIKE N'%{e}%'))",
+        model = model_col,
+        name = name_col,
+        id = item_id_col,
+        e = escaped,
+    )
+}
+
+/// يستبدل N'%PRODUCT%' / {{PRODUCT_FILTER}} — Marketing و Infinity
 pub fn apply_product_filter(sql: &str, filter: &str) -> String {
     let tokens = product_tokens(filter);
     if tokens.is_empty() {
         return sql.to_string();
     }
     let mut out = sql.to_string();
-    for (model, name) in [("I.ITEM_MODEL", "I.ITEM_NAME"), ("ITEM_MODEL", "ITEM_NAME")] {
+    if is_barcode_filter(filter) {
+        let escaped = filter.trim().replace('\'', "''");
+        for (model, name, id) in [
+            ("I.ITEM_MODEL", "I.ITEM_NAME", "I.ITEM_ID"),
+            ("ITEM_MODEL", "ITEM_NAME", "ITEM_ID"),
+        ] {
+            let two_col = format!(
+                "({model} LIKE N'%PRODUCT%' OR {name} LIKE N'%PRODUCT%')",
+                model = model,
+                name = name,
+            );
+            if out.contains(&two_col) {
+                out = out.replace(&two_col, &item_pick_barcode_or(model, name, id, &escaped));
+            }
+            let bare = format!("{model} LIKE N'%PRODUCT%' OR {name} LIKE N'%PRODUCT%'", model = model, name = name);
+            if out.contains(&bare) {
+                out = out.replace(&bare, &item_pick_barcode_or(model, name, id, &escaped));
+            }
+        }
+    }
+    // Infinity placeholders
+    out = out.replace("{{PRODUCT_FILTER}}", filter.trim());
+    for (model, name) in [
+        ("I.ITEM_MODEL", "I.ITEM_NAME"),
+        ("ITEM_MODEL", "ITEM_NAME"),
+        ("p.ProductCode", "p.ProductName"),
+        ("ProductCode", "ProductName"),
+        ("vi.ProductCode", "vi.ProductName"),
+        ("rf.ProductCode", "rf.ProductName"),
+    ] {
         for wrapper in [true, false] {
             let bare = format!(
                 "{} LIKE N'%PRODUCT%' OR {} LIKE N'%PRODUCT%'",
@@ -265,23 +339,161 @@ pub fn apply_product_filter(sql: &str, filter: &str) -> String {
             out = out.replace(&bare, &product_match_or(model, name, &tokens));
         }
     }
-    for col in ["I.ITEM_MODEL", "I.ITEM_NAME", "ITEM_MODEL", "ITEM_NAME"] {
+    for col in [
+        "I.ITEM_MODEL",
+        "I.ITEM_NAME",
+        "ITEM_MODEL",
+        "ITEM_NAME",
+        "p.ProductCode",
+        "p.ProductName",
+        "ProductCode",
+        "ProductName",
+        "b.ProductBarcode",
+        "B.BARCODE",
+        "BC.BARCODE",
+    ] {
         let old = format!("{} LIKE N'%PRODUCT%'", col);
         if out.contains(&old) {
             out = out.replace(&old, &token_and_likes(col, &tokens));
         }
+        let old_inf = format!("{} LIKE N'%{{{{PRODUCT_FILTER}}}}%'", col);
+        if out.contains(&old_inf) {
+            out = out.replace(&old_inf, &token_and_likes(col, &tokens));
+        }
+    }
+    // أي placeholder متبقٍ — مهم للباركود داخل EXISTS
+    let clean = sanitize_product_filter(filter).replace('\'', "''");
+    if !clean.is_empty() {
+        out = out.replace("%PRODUCT%", &clean);
+        out = out.replace("{{PRODUCT_FILTER}}", &clean);
     }
     out
 }
 
-/// يبحث في رسائل المستخدم السابقة عن @mention (لـ «كل شي» بعد سؤال منتج)
+/// يستبدل %CUSTOMER% بجزء من اسم العميل (من keywords أو نص مُمرَّر)
+pub fn apply_customer_filter(sql: &str, customer: &str) -> String {
+    let c = customer.trim();
+    if c.is_empty() || !sql.contains("%CUSTOMER%") {
+        return sql.to_string();
+    }
+    let escaped = c.replace('\'', "''");
+    sql.replace("%CUSTOMER%", &escaped)
+}
+
+/// يستبدل %EMPLOYEE% — إن وُجدت keywords تُفلتر، وإلا `%` (الكل)
+pub fn apply_employee_filter(sql: &str, employee: &str) -> String {
+    if !sql.contains("%EMPLOYEE%") {
+        return sql.to_string();
+    }
+    let c = employee.trim();
+    let replacement = if c.is_empty() {
+        "%".to_string()
+    } else {
+        c.replace('\'', "''")
+    };
+    sql.replace("%EMPLOYEE%", &replacement)
+}
+
+/// يستخرج اسم موظف من السؤال — إن لم يُذكر اسم محدد يُرجع None (يعني الكل = %)
+pub fn apply_party_filter(sql: &str, party: &str) -> String {
+    if !sql.contains("%PARTY%") {
+        return sql.to_string();
+    }
+    let c = party.trim();
+    let replacement = if c.is_empty() {
+        "%".to_string()
+    } else {
+        c.replace('\'', "''")
+    };
+    sql.replace("%PARTY%", &replacement)
+}
+
+pub fn extract_party_hint_from_text(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let lower = t.to_lowercase();
+    const STOP: &[&str] = &[
+        "ديون", "سلف", "قرض", "ذمة", "مواعيد", "موعد", "الدفع", "تحصيل", "متابعة",
+        "تقرير", "عرض", "اعرض", "اعرضلي", "زبون", "زبائن", "عميل", "عملاء", "مورد",
+        "موردين", "موظف", "موظفين", "employee", "customer", "supplier",
+        "advance", "advances", "debts", "payment", "schedule", "due", "what", "show", "list",
+    ];
+    let mut cleaned = lower;
+    for w in STOP {
+        cleaned = cleaned.replace(w, " ");
+    }
+    let name: String = cleaned
+        .split_whitespace()
+        .filter(|w| w.chars().count() >= 2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if name.trim().is_empty() {
+        None
+    } else {
+        Some(name.trim().to_string())
+    }
+}
+
+pub fn extract_employee_hint_from_text(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let lower = t.to_lowercase();
+    const STOP: &[&str] = &[
+        "خصومات",
+        "ديون",
+        "موظفين",
+        "موظف",
+        "الموظفين",
+        "الموظف",
+        "employee",
+        "discount",
+        "debt",
+        "debts",
+        "ذمة",
+        "كشف",
+        "تقرير",
+        "عرض",
+        "اعرض",
+        "اعرضلي",
+        "كل",
+        "جميع",
+        "الكل",
+        "what",
+        "show",
+        "list",
+    ];
+    let mut cleaned = lower;
+    for w in STOP {
+        cleaned = cleaned.replace(w, " ");
+    }
+    for w in ["و", "ال", "على", "في", "من"] {
+        cleaned = cleaned.replace(w, " ");
+    }
+    let name: String = cleaned
+        .split_whitespace()
+        .filter(|w| w.chars().count() >= 2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let name = name.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// يبحث في رسائل المستخدم السابقة عن @mention أو باركود (لـ «موردين له» بعد سؤال منتج)
 pub fn extract_product_filter_from_history(history: &[serde_json::Value]) -> Option<String> {
     for msg in history.iter().rev() {
         if msg.get("role").and_then(|r| r.as_str()) != Some("user") {
             continue;
         }
         if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-            if let Some(pf) = extract_product_filter_from_text(content) {
+            if let Some(pf) = extract_product_hint_from_text(content) {
                 return Some(pf);
             }
         }
@@ -448,6 +660,32 @@ pub async fn package_query_result(
     })
 }
 
+/// يعدّ SELECT على عمق الأقواس 0 فقط — CTE و EXISTS لا تُحسب (آمن مع Unicode)
+fn count_top_level_selects(sql: &str) -> usize {
+    let upper = sql.to_uppercase();
+    let bytes = upper.as_bytes();
+    let mut depth: i32 = 0;
+    let mut count = 0usize;
+    for (byte_idx, ch) in upper.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && upper[byte_idx..].starts_with("SELECT") => {
+                let before_ok =
+                    byte_idx == 0 || !bytes[byte_idx - 1].is_ascii_alphanumeric();
+                let after_idx = byte_idx + 6;
+                let after_ok =
+                    after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
 /// يزيل تعليقات/DECLARE/فاصلة من البداية قبل التحقق
 pub fn normalize_sql_for_readonly(sql: &str) -> String {
     let mut s = sql.trim().trim_start_matches('\u{FEFF}').to_string();
@@ -462,17 +700,18 @@ pub fn normalize_sql_for_readonly(sql: &str) -> String {
             break;
         }
     }
-    let upper = s.to_uppercase();
-    if upper.starts_with("DECLARE ") {
-        if let Some(idx) = upper.rfind("; SELECT ") {
-            s = s[idx + 2..].trim_start().to_string();
-        } else if let Some(idx) = upper.rfind("\nSELECT ") {
-            s = s[idx + 1..].trim_start().to_string();
-        } else if let Some(idx) = upper.rfind("; WITH ") {
-            s = s[idx + 2..].trim_start().to_string();
-        } else if let Some(idx) = upper.rfind("\nWITH ") {
-            s = s[idx + 1..].trim_start().to_string();
+    loop {
+        let upper = s.to_uppercase();
+        if upper.starts_with("DECLARE ") {
+            if let Some(semi) = s.find(';') {
+                s = s[semi + 1..].trim_start().to_string();
+                continue;
+            }
         }
+        break;
+    }
+    while s.starts_with(';') {
+        s = s[1..].trim_start().to_string();
     }
     s
 }
@@ -506,20 +745,14 @@ pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     if trimmed.is_empty() {
         return Err("الاستعلام فارغ.".to_string());
     }
-    let select_count = normalized
-        .match_indices("SELECT")
-        .filter(|(idx, _)| {
-            let before_ok = *idx == 0 || !normalized.as_bytes()[idx - 1].is_ascii_alphanumeric();
-            let after_idx = idx + 6;
-            let after_ok = after_idx >= normalized.len()
-                || !normalized.as_bytes()[after_idx].is_ascii_alphanumeric();
-            before_ok && after_ok
-        })
-        .count();
+    let select_count = count_top_level_selects(&normalized);
     if select_count > 1 {
         return Err(
-            "استعلام واحد فقط في كل مرة — لا تدمج عدة SELECT. استخدم plan_complex_query + execute_query_plan لدراسة منتج شاملة.".to_string(),
+            "استعلام واحد فقط في كل مرة — لا تدمج عدة SELECT منفصلة بفاصلة منقوطة.".to_string(),
         );
+    }
+    if select_count == 0 {
+        return Err("لم يُعثر على SELECT في الاستعلام.".to_string());
     }
     let sql_upper = trimmed.to_uppercase();
     if !(sql_upper.starts_with("SELECT ") || sql_upper.starts_with("WITH ")) {
@@ -550,6 +783,30 @@ fn is_safe_identifier(name: &str) -> bool {
 }
 
 // ─── تعريفات الأدوات (JSON) ─────────────────────────────────────────────────
+
+/// أدوات الوضع السريع — أنماط جاهزة + تصدير + محفوظات فقط
+pub const FAST_EXTENDED_TOOL_NAMES: &[&str] = &[
+    "run_query_pattern",
+    "export_last_result",
+    "save_favorite_query",
+    "list_favorite_queries",
+];
+
+pub fn tool_definitions_for_mode(advanced: bool) -> Vec<Value> {
+    let all = tool_definitions();
+    if advanced {
+        return all;
+    }
+    all.into_iter()
+        .filter(|t| {
+            t.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|n| FAST_EXTENDED_TOOL_NAMES.contains(&n))
+                .unwrap_or(false)
+        })
+        .collect()
+}
 
 pub fn tool_definitions() -> Vec<Value> {
     vec![
@@ -624,24 +881,33 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "run_query_pattern",
-                "description": "Finds a QUERY_PATTERNS template by keywords, executes it, returns rows. Results >25 rows auto-export as PDF (preview + file_path). For مقارنة أسعار موردين pass product_filter (product name/code). Prefer over writing complex SQL from scratch.",
+                "description": "Executes a pre-tested SQL pattern for the active ERP. Prefer pattern_id from list_available_patterns.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "keywords": { "type": "string", "description": "Pattern search keywords (Arabic/English)." },
+                        "pattern_id": { "type": "string", "description": "Stable id e.g. product_count, top_sellers_all_time." },
+                        "keywords": { "type": "string", "description": "Fallback Arabic keywords if pattern_id unknown." },
                         "days_recent": { "type": "integer", "description": "Override sales window days (default 60)." },
                         "coverage_days": { "type": "integer", "description": "For purchase patterns: target coverage days (default 30)." },
                         "product_filter": { "type": "string", "description": "Product code or name fragment — replaces %PRODUCT% in pattern SQL." }
                     },
-                    "required": ["keywords"]
+                    "required": []
                 }
             }
         }),
         json!({
             "type": "function",
             "function": {
+                "name": "list_available_patterns",
+                "description": "Lists report patterns available on the currently connected ERP database.",
+                "parameters": { "type": "object", "properties": {}, "required": [] }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "get_database_views",
-                "description": "Returns DATABASE_VIEWS.md: SQL Server views (SALE_ITEMS_INVOICE_VIEW, etc.), join rules, revenue formulas SUM(QTY*PRICE), employee=USERS.FULL_NAME via SALE_INVOICE.USERS_ID. Call BEFORE writing sales/employee SQL or when aggregation errors occur.",
+                "description": "Returns DATABASE_VIEWS.md (Marketing2026) or INFINITY_DATABASE_VIEWS.md (InfinityRetailDB) for the active ERP connection: views, join rules, revenue formulas. Marketing: SUM(QTY*PRICE), SALE_ITEMS_INVOICE_VIEW. Infinity: Data_View_SalesInvoiceItems, CreatedByUserName, SUM(QYT*UnitPrice). Call BEFORE writing sales/employee SQL.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -655,7 +921,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "get_product_schema",
-                "description": "Returns PRODUCT_SCHEMA.md: ITEMS, ITEMS_SUB, UNITS, BARCODE, unit prices, stock formulas. Call before complex product analysis or when unsure which columns hold description/units/prices.",
+                "description": "Returns PRODUCT_SCHEMA.md (Marketing2026) or INFINITY_PRODUCT_SCHEMA.md (InfinityRetailDB) for the active ERP: product master, units, barcodes, stock, prices. Call before complex product analysis when unsure which columns hold description/units/prices.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -766,6 +1032,7 @@ pub const EXTENDED_TOOL_NAMES: &[&str] = &[
     "save_favorite_query",
     "list_favorite_queries",
     "run_query_pattern",
+    "list_available_patterns",
     "compare_periods",
     "suggest_indexes",
     "export_last_result",
@@ -780,7 +1047,72 @@ pub fn is_extended_tool(name: &str) -> bool {
 }
 
 /// أنماط SQL ممنوعة (تسبب Msg 130 أو نتائج خاطئة) — تُستخدم قبل التنفيذ
-pub fn sql_antipattern_issues(sql: &str) -> Vec<(bool, String)> {
+pub fn sql_antipattern_issues(
+    sql: &str,
+    erp: crate::erp_profile::ErpKind,
+) -> Vec<(bool, String)> {
+    match erp {
+        crate::erp_profile::ErpKind::InfinityRetailDb => infinity_sql_antipattern_issues(sql),
+        _ => marketing_sql_antipattern_issues(sql),
+    }
+}
+
+fn infinity_sql_antipattern_issues(sql: &str) -> Vec<(bool, String)> {
+    let upper = sql.to_uppercase();
+    let mut out: Vec<(bool, String)> = Vec::new();
+
+    if upper.contains("DBO.ITEMS")
+        || upper.contains("SALE_INVOICE")
+        || upper.contains("SALE_ITEMS")
+        || upper.contains("BUY_ITEMS")
+        || upper.contains("BUY_INVOICE")
+        || upper.contains("ITEMS_SUB")
+    {
+        out.push((
+            true,
+            "جداول Marketing2026 (dbo.ITEMS, SALE_INVOICE...) غير موجودة على InfinityRetailDB. \
+             استخدم Inventory.Data_Products و SALES.Data_SalesInvoices و Purchase.* — أو run_query_pattern."
+                .to_string(),
+        ));
+    }
+
+    if upper.contains("DATA_SALESINVOICEITEMS")
+        && !upper.contains("DATA_SALESINVOICES")
+        && !upper.contains("DATA_VIEW_SALESINVOICEITEMS")
+        && (upper.contains("SALESINVOICEDATE") || upper.contains("CONVERT(DATE"))
+    {
+        out.push((
+            true,
+            "Data_SalesInvoiceItems لا يحتوي SalesInvoiceDate — JOIN إلى SALES.Data_SalesInvoices \
+             أو استخدم SALES.Data_View_SalesInvoiceItems."
+                .to_string(),
+        ));
+    }
+
+    if (upper.contains("DATA_SALESINVOICEITEMS") || upper.contains("DATA_VIEW_SALESINVOICEITEMS"))
+        && upper.contains("SUM(")
+        && upper.contains("PRICE")
+        && !upper.contains("QYT *")
+        && !upper.contains("QYT*")
+        && !upper.contains("UNITPRICE")
+    {
+        out.push((
+            true,
+            "إيراد المبيعات على Infinity = SUM(QYT * UnitPrice) — لا SUM(UnitPrice) وحده.".to_string(),
+        ));
+    }
+
+    if upper.contains("LIMIT ") {
+        out.push((
+            true,
+            "استخدم TOP وليس LIMIT (SQL Server).".to_string(),
+        ));
+    }
+
+    out
+}
+
+fn marketing_sql_antipattern_issues(sql: &str) -> Vec<(bool, String)> {
     let upper = sql.to_uppercase();
     let mut out: Vec<(bool, String)> = Vec::new();
 
@@ -868,8 +1200,11 @@ pub fn sql_antipattern_issues(sql: &str) -> Vec<(bool, String)> {
     out
 }
 
-pub fn antipattern_block_message(sql: &str) -> Option<String> {
-    let blocking: Vec<String> = sql_antipattern_issues(sql)
+pub fn antipattern_block_message(
+    sql: &str,
+    erp: crate::erp_profile::ErpKind,
+) -> Option<String> {
+    let blocking: Vec<String> = sql_antipattern_issues(sql, erp)
         .into_iter()
         .filter(|(b, _)| *b)
         .map(|(_, m)| m)
@@ -883,7 +1218,7 @@ pub fn antipattern_block_message(sql: &str) -> Option<String> {
 
 // ─── معالجات الأدوات ────────────────────────────────────────────────────────
 
-pub async fn handle_validate_sql(sql: &str) -> Value {
+pub async fn handle_validate_sql(sql: &str, erp: crate::erp_profile::ErpKind) -> Value {
     let mut issues: Vec<String> = Vec::new();
     let mut ok = true;
 
@@ -892,7 +1227,7 @@ pub async fn handle_validate_sql(sql: &str) -> Value {
         ok = false;
     }
 
-    for (blocking, msg) in sql_antipattern_issues(sql) {
+    for (blocking, msg) in sql_antipattern_issues(sql, erp) {
         issues.push(msg);
         if blocking {
             ok = false;
@@ -1117,8 +1452,8 @@ fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: u32) -> 
     out
 }
 
-fn sql_from_pattern_keywords(keywords: &str) -> Option<String> {
-    let pattern_text = crate::ai_agent::search_query_patterns_local(keywords);
+fn sql_from_pattern_keywords(keywords: &str, erp: crate::erp_profile::ErpKind) -> Option<String> {
+    let pattern_text = crate::ai_agent::search_query_patterns_local(keywords, erp);
     if pattern_text.contains("لم يُعثر على نمط") {
         return None;
     }
@@ -1126,58 +1461,101 @@ fn sql_from_pattern_keywords(keywords: &str) -> Option<String> {
     extract_sql_from_pattern_section(section)
 }
 
-pub fn handle_get_database_views(section: Option<&str>) -> Value {
-    let full = load_database_views();
+pub fn handle_get_database_views(
+    section: Option<&str>,
+    erp: crate::erp_profile::ErpKind,
+) -> Value {
+    let full = load_database_views(erp);
     let content = match section.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
         Some(s) if s.contains("employee") || s.contains("موظف") => full
             .lines()
-            .skip_while(|l| !l.contains("موظف") && !l.contains("USERS"))
+            .skip_while(|l| {
+                !l.contains("موظف")
+                    && !l.contains("CreatedByUserName")
+                    && !l.contains("USERS")
+                    && !l.contains("FULL_NAME")
+            })
             .take(80)
             .collect::<Vec<_>>()
             .join("\n"),
         Some(s) if s.contains("sales") || s.contains("مبيع") || s.contains("view") => full
             .lines()
-            .skip_while(|l| !l.contains("SALE_ITEMS_INVOICE_VIEW") && !l.contains("Views"))
+            .skip_while(|l| {
+                !l.contains("SALE_ITEMS_INVOICE_VIEW")
+                    && !l.contains("Data_View_SalesInvoiceItems")
+                    && !l.contains("Views")
+            })
             .take(100)
             .collect::<Vec<_>>()
             .join("\n"),
         _ => full.to_string(),
     };
+    let hint = match erp {
+        crate::erp_profile::ErpKind::InfinityRetailDb => {
+            "INFINITY_DATABASE_VIEWS — Data_View_SalesInvoiceItems + CreatedByUserName. run_query_pattern('مبيعات يومية موظف')."
+        }
+        _ => {
+            "DATABASE_VIEWS — SALE_ITEMS_INVOICE_VIEW. run_query_pattern('مبيعات يومية موظف') أو SUM(QTY*PRICE)."
+        }
+    };
     json!({
+        "erp": erp.display_name_ar(),
         "views_guide": content,
-        "message": "استخدم run_query_pattern('مبيعات يومية موظف') أو SALE_ITEMS_INVOICE_VIEW مع SUM(QTY*PRICE)."
+        "message": hint
     })
 }
 
-pub fn handle_get_product_schema(section: Option<&str>) -> Value {
-    let full = load_product_schema();
+pub fn handle_get_product_schema(
+    section: Option<&str>,
+    erp: crate::erp_profile::ErpKind,
+) -> Value {
+    let full = load_product_schema(erp);
     let content = match section.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
         Some(s) if s.contains("unit") || s.contains("وحدة") => {
             full.lines()
-                .skip_while(|l| !l.contains("UNITS") && !l.contains("BARCODE"))
+                .skip_while(|l| {
+                    !l.contains("UNITS")
+                        && !l.contains("BARCODE")
+                        && !l.contains("UOM")
+                        && !l.contains("RefUOMs")
+                })
                 .take(80)
                 .collect::<Vec<_>>()
                 .join("\n")
         }
         Some(s) if s.contains("price") || s.contains("سعر") => {
             full.lines()
-                .skip_while(|l| !l.contains("PRICE") && !l.contains("BARCODE"))
+                .skip_while(|l| {
+                    !l.contains("PRICE")
+                        && !l.contains("BARCODE")
+                        && !l.contains("UomPrice")
+                })
                 .take(80)
                 .collect::<Vec<_>>()
                 .join("\n")
         }
         Some(s) if s.contains("stock") || s.contains("مخزون") => {
             full.lines()
-                .skip_while(|l| !l.contains("ITEMS_SUB") && !l.contains("مخزون"))
+                .skip_while(|l| {
+                    !l.contains("ITEMS_SUB")
+                        && !l.contains("ProductInventories")
+                        && !l.contains("StockOnHand")
+                        && !l.contains("مخزون")
+                })
                 .take(60)
                 .collect::<Vec<_>>()
                 .join("\n")
         }
         _ => full.to_string(),
     };
+    let doc = match erp {
+        crate::erp_profile::ErpKind::InfinityRetailDb => "INFINITY_PRODUCT_SCHEMA.md",
+        _ => "PRODUCT_SCHEMA.md",
+    };
     json!({
+        "erp": erp.display_name_ar(),
         "schema": content,
-        "message": "مرجع PRODUCT_SCHEMA — استخدم run_query_pattern أو execute_query_plan للتنفيذ."
+        "message": format!("مرجع {doc} — استخدم run_query_pattern أو execute_query_plan للتنفيذ.")
     })
 }
 
@@ -1186,6 +1564,7 @@ fn build_complex_plan(
     product_filter: Option<&str>,
     days_recent: u32,
     coverage_days: u32,
+    erp: crate::erp_profile::ErpKind,
 ) -> QueryPlan {
     let q = question.to_lowercase();
     let pf = product_filter
@@ -1216,7 +1595,7 @@ fn build_complex_plan(
             purpose: "BUY_ITEMS + BUY_INVOICE — آخر/أقل/أعلى/متوسط سعر لكل مورد لصنف واحد".to_string(),
             recommended_tool: "run_query_pattern".to_string(),
             pattern_keywords: Some("مقارنة أسعار موردين".to_string()),
-            sql_query: sql_from_pattern_keywords("مقارنة أسعار موردين"),
+            sql_query: sql_from_pattern_keywords("مقارنة أسعار موردين", erp),
         }];
         (
             "supplier_price_comparison".to_string(),
@@ -1243,7 +1622,7 @@ fn build_complex_plan(
         let mut steps = Vec::new();
         let mut n = 1u32;
 
-        if let Some(mut sql) = sql_from_pattern_keywords("دراسة منتج شاملة") {
+        if let Some(mut sql) = sql_from_pattern_keywords("دراسة منتج شاملة", erp) {
             sql = apply_product_filter(&sql, product);
             sql = sql.replace("DATEADD(day,-60,", &format!("DATEADD(day,-{},", days_recent));
             sql = sql.replace("*30 -", &format!("*{} -", coverage_days));
@@ -1258,7 +1637,7 @@ fn build_complex_plan(
             n += 1;
         }
 
-        if let Some(sql) = sql_from_pattern_keywords("تفاصيل منتج وحدات أسعار")
+        if let Some(sql) = sql_from_pattern_keywords("تفاصيل منتج وحدات أسعار", erp)
             .map(|s| apply_product_filter(&s, product))
         {
             steps.push(QueryPlanStep {
@@ -1272,7 +1651,7 @@ fn build_complex_plan(
             n += 1;
         }
 
-        if let Some(sql) = sql_from_pattern_keywords("مبيعات منتج حسب الوحدة")
+        if let Some(sql) = sql_from_pattern_keywords("مبيعات منتج حسب الوحدة", erp)
             .map(|s| apply_product_filter(&s, product))
         {
             steps.push(QueryPlanStep {
@@ -1286,8 +1665,33 @@ fn build_complex_plan(
             n += 1;
         }
 
-        let purchases_sql = apply_product_filter(
-            r";WITH ItemPick AS (
+        let purchases_sql = if erp == crate::erp_profile::ErpKind::InfinityRetailDb {
+            apply_product_filter(
+                r";WITH P AS (
+  SELECT TOP 1 ProductID_PK, ProductCode, ProductName
+  FROM Inventory.Data_Products
+  WHERE IsInActive = 0
+    AND (ProductName LIKE N'%PRODUCT%' OR ProductCode LIKE N'%PRODUCT%')
+  ORDER BY ProductName
+)
+SELECT TOP 15
+  CAST(inv.InvoiceDate AS date) AS BuyDate,
+  s.SupplierName AS Supplier,
+  pi.QYT AS Qty,
+  u.UOMName AS UnitName,
+  pi.UnitCost AS Price,
+  pi.QYT * pi.UnitCost AS LineValue
+FROM Purchase.Data_PurchaseInvoiceItems pi
+INNER JOIN Purchase.Data_PurchaseInvoices inv ON pi.InvoiceID_FK = inv.InvoiceID_PK
+INNER JOIN P ON pi.ProductID_FK = P.ProductID_PK
+LEFT JOIN Purchase.Data_Suppliers s ON inv.SupplierID_FK = s.SupplierID_PK
+LEFT JOIN Inventory.RefUOMs u ON pi.UnitID_FK = u.UOMID_PK
+ORDER BY inv.InvoiceDate DESC",
+                product,
+            )
+        } else {
+            apply_product_filter(
+                r";WITH ItemPick AS (
   SELECT TOP 1 ITEM_ID FROM dbo.ITEMS
   WHERE ITEM_INVISIBLE=0 AND (ITEM_MODEL LIKE N'%PRODUCT%' OR ITEM_NAME LIKE N'%PRODUCT%')
   ORDER BY CASE WHEN ITEM_MODEL LIKE N'%PRODUCT%' THEN 0 ELSE 1 END
@@ -1300,8 +1704,9 @@ JOIN ItemPick IP ON BI.ITEM_ID=IP.ITEM_ID
 LEFT JOIN dbo.CUSTOMERS CU ON B.CUST_ID=CU.CUST_ID
 LEFT JOIN dbo.UNITS U ON BI.UNIT_ID=U.UNIT_ID
 ORDER BY B.B_DATE DESC",
-            product,
-        );
+                product,
+            )
+        };
         steps.push(QueryPlanStep {
             step_id: n,
             title: "آخر مشتريات للصنف".to_string(),
@@ -1320,6 +1725,28 @@ ORDER BY B.B_DATE DESC",
             "بعد التنفيذ: لخّص DaysCoverage و SuggestedBuyQty و Priority للمستخدم.".to_string(),
         ];
         ("product_study".to_string(), mermaid, steps, notes)
+    } else if (q.contains("منتج") || q.contains("منتجات") || q.contains("صنف") || q.contains("أصناف"))
+        && (q.contains("بيع") || q.contains("مبيع") || q.contains("sold"))
+        && (q.contains("اليوم") || q.contains("today") || q.contains("آخر"))
+    {
+        let steps = vec![QueryPlanStep {
+            step_id: 1,
+            title: "آخر منتجات بيعت اليوم".to_string(),
+            purpose: "SALE_ITEMS_INVOICE_VIEW — بنود مبيعات يوم @SaleDay، الأحدث أولاً — ليس تجميع موظفين".to_string(),
+            recommended_tool: "run_query_pattern".to_string(),
+            pattern_keywords: Some("آخر منتجات بيعت اليوم".to_string()),
+            sql_query: sql_from_pattern_keywords("آخر منتجات بيعت اليوم", erp),
+        }];
+        (
+            "products_sold_today".to_string(),
+            "flowchart TD\n  Q[آخر منتجات بيعت اليوم] --> P[run_query_pattern]\n  P --> V[SALE_ITEMS_INVOICE_VIEW]\n  V --> R[جدول بنود حسب وقت البيع]"
+                .to_string(),
+            steps,
+            vec![
+                "SALE_ITEMS لا S_DATE — استخدم VIEW أو JOIN SALE_INVOICE".to_string(),
+                "إن فارغ اليوم التقويمي → @SaleDay = MAX(S_DATE)".to_string(),
+            ],
+        )
     } else if q.contains("موظف") || q.contains("مبيعات يوم") || q.contains("employee") || q.contains("daily sales") {
         let steps = vec![QueryPlanStep {
             step_id: 1,
@@ -1327,7 +1754,7 @@ ORDER BY B.B_DATE DESC",
             purpose: "SALE_ITEMS_INVOICE_VIEW أو CTE — SUM(QTY*PRICE) — لا subquery على PRICE".to_string(),
             recommended_tool: "run_query_pattern".to_string(),
             pattern_keywords: Some("مبيعات يومية موظف".to_string()),
-            sql_query: sql_from_pattern_keywords("مبيعات يومية موظف"),
+            sql_query: sql_from_pattern_keywords("مبيعات يومية موظف", erp),
         }];
         (
             "employee_daily_sales".to_string(),
@@ -1346,7 +1773,7 @@ ORDER BY B.B_DATE DESC",
             purpose: "أرصدة الزبائن والموردين".to_string(),
             recommended_tool: "run_query_pattern".to_string(),
             pattern_keywords: Some("متابعة الديون".to_string()),
-            sql_query: sql_from_pattern_keywords("متابعة الديون"),
+            sql_query: sql_from_pattern_keywords("متابعة الديون", erp),
         }];
         (
             "debts".to_string(),
@@ -1376,7 +1803,7 @@ ORDER BY B.B_DATE DESC",
             purpose: "قائمة أصناف مع كميات مقترحة".to_string(),
             recommended_tool: "run_query_pattern".to_string(),
             pattern_keywords: Some(kw.to_string()),
-            sql_query: sql_from_pattern_keywords(kw),
+            sql_query: sql_from_pattern_keywords(kw, erp),
         }];
         (
             "purchase".to_string(),
@@ -1438,9 +1865,10 @@ pub async fn handle_plan_complex_query(
     coverage_days: Option<u32>,
     app_state: &Arc<AppState>,
 ) -> Value {
+    let erp = crate::erp_profile::current_erp_kind(app_state).await;
     let dr = days_recent.unwrap_or(60);
     let cov = coverage_days.unwrap_or(30);
-    let plan = build_complex_plan(question, product_filter, dr, cov);
+    let plan = build_complex_plan(question, product_filter, dr, cov, erp);
 
     {
         let mut s = app_state.agent_session.lock().await;
@@ -1603,6 +2031,7 @@ pub async fn handle_execute_query_plan(
 }
 
 pub async fn handle_run_query_pattern(
+    pattern_id: Option<&str>,
     keywords: &str,
     days_recent: Option<u32>,
     coverage_days: Option<u32>,
@@ -1610,21 +2039,70 @@ pub async fn handle_run_query_pattern(
     app_state: &Arc<AppState>,
     delivery: &ExportDelivery,
 ) -> Value {
-    let pattern_text = crate::ai_agent::search_query_patterns_local(keywords);
-    if pattern_text.contains("لم يُعثر على نمط") {
-        return json!({ "error": pattern_text });
+    let erp = crate::erp_profile::current_erp_kind(app_state).await;
+
+    let catalog_entry = pattern_id
+        .and_then(crate::pattern_catalog::find_by_id)
+        .filter(|e| e.available_on(erp))
+        .or_else(|| crate::pattern_catalog::resolve_pattern_id(keywords, erp));
+
+    if let Some(entry) = catalog_entry {
+        if entry.needs_product_filter
+            && product_filter.filter(|s| !s.trim().is_empty()).is_none()
+        {
+            return json!({
+                "error": "هذا النمط يحتاج product_filter (باركود أو @mention أو اسم/كود المنتج).",
+                "pattern_id": entry.id,
+                "hint": "مرّر product_filter أو اذكر الباركود/المنتج في نفس الرسالة."
+            });
+        }
     }
 
-    let section = pattern_text
+    let (pattern_label, section) = if let Some(entry) = catalog_entry {
+        let slug = match entry.section_slug(erp) {
+            Some(s) => s,
+            None => {
+                return json!({
+                    "error": format!(
+                        "النمط `{}` غير متاح على {}.",
+                        entry.id,
+                        erp.display_name_ar()
+                    )
+                });
+            }
+        };
+        let section_text = crate::ai_agent::extract_pattern_section_by_slug(slug, erp)
+            .unwrap_or_else(|| crate::ai_agent::search_query_patterns_local(entry.name_ar, erp));
+        (entry.id.to_string(), section_text)
+    } else {
+        let pattern_text = crate::ai_agent::search_query_patterns_local(keywords, erp);
+        if pattern_text.contains("لم يُعثر على نمط") {
+            return json!({
+                "error": pattern_text,
+                "hint": "استخدم list_available_patterns لعرض pattern_id المدعومة."
+            });
+        }
+        (keywords.to_string(), pattern_text)
+    };
+
+    if section.contains("لم يُعثر على نمط") {
+        return json!({
+            "error": section,
+            "pattern_id": pattern_label,
+            "hint": "النمط مسجّل في الكatalog لكن SQL غير موجود في ملف AGENT — أضف ## PATTERN."
+        });
+    }
+
+    let section_body = section
         .split("\n\n---\n\n")
         .next()
-        .unwrap_or(&pattern_text);
+        .unwrap_or(&section);
 
-    let sql_blocks = extract_all_sql_from_pattern_section(section);
+    let sql_blocks = extract_all_sql_from_pattern_section(section_body);
     if sql_blocks.is_empty() {
         return json!({
             "error": "وُجد النمط لكن لم تُستخرج كتلة SQL. استخدم search_query_patterns ثم انسخ SQL يدوياً.",
-            "pattern_excerpt": pattern_text.lines().take(15).collect::<Vec<_>>().join("\n")
+            "pattern_excerpt": section.lines().take(15).collect::<Vec<_>>().join("\n")
         });
     }
 
@@ -1647,16 +2125,25 @@ pub async fn handle_run_query_pattern(
         let mut sql = apply_pattern_sql_params(block, dr, cov);
         if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
             sql = apply_product_filter(&sql, pf);
+        } else if sql.contains("%EMPLOYEE%") {
+            let emp = extract_employee_hint_from_text(keywords).unwrap_or_default();
+            sql = apply_employee_filter(&sql, &emp);
+        } else if sql.contains("%PARTY%") {
+            let party = extract_party_hint_from_text(keywords).unwrap_or_default();
+            sql = apply_party_filter(&sql, &party);
+        } else if sql.contains("%CUSTOMER%") {
+            sql = apply_customer_filter(&sql, keywords);
         }
         if let Err(e) = validate_read_only_sql(&sql) {
             return json!({ "error": e, "sql_attempted": sql, "part_index": idx + 1 });
         }
-        match execute_sql_query(conn.clone(), sql.clone()).await {
+        let exec_sql = prepare_sql_batch(&sql);
+        match execute_sql_query(conn.clone(), exec_sql).await {
             Ok(result) => {
                 let part_title = if sql_blocks.len() > 1 {
-                    format!("{} - جزء {}", keywords, idx + 1)
+                    format!("{} - جزء {}", pattern_label, idx + 1)
                 } else {
-                    keywords.to_string()
+                    pattern_label.clone()
                 };
                 let packaged = package_query_result(
                     app_state,
@@ -1694,10 +2181,69 @@ pub async fn handle_run_query_pattern(
 
     set_last_result(app_state, &last_sql, &last_columns, &last_rows).await;
 
+    if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
+        let clean = sanitize_product_filter(pf);
+        if !clean.is_empty() {
+            let mut session = app_state.agent_session.lock().await;
+            session.last_product_filter = Some(clean);
+        }
+    }
+
     if parts.len() == 1 {
         let mut p = parts[0].clone();
         if let Some(obj) = p.as_object_mut() {
-            obj.insert("pattern_keywords".to_string(), json!(keywords));
+            obj.insert("pattern_keywords".to_string(), json!(pattern_label));
+            obj.insert("pattern_id".to_string(), json!(pattern_label));
+            obj.insert("active_erp".to_string(), json!(erp.display_name_ar()));
+            obj.insert("database".to_string(), json!(conn.database.clone()));
+            if total_rows == 0 {
+                if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
+                    let probe_sql = prepare_sql_batch(&crate::erp_adapters::product_probe_sql(erp, pf));
+                    if let Ok(probe) = execute_sql_query(conn.clone(), probe_sql).await {
+                        let found = probe.row_count > 0;
+                        obj.insert("product_found".to_string(), json!(found));
+                        if found {
+                            obj.insert(
+                                "product_preview".to_string(),
+                                json!({
+                                    "columns": probe.columns,
+                                    "rows": probe.rows,
+                                }),
+                            );
+                            let hint = if pattern_label == "supplier_prices" {
+                                "المنتج موجود في القاعدة لكن لا توجد مشتريات من موردين في آخر 36 شهراً — لا تقل «غير موجود». اعرض product_preview واذكر أنه لا بيانات موردين."
+                            } else {
+                                "المنتج موجود — row_count=0 لأن النمط لم يُرجع صفوفاً إضافية. استخدم product_preview."
+                            };
+                            obj.insert("agent_hint".to_string(), json!(hint));
+                        } else {
+                            obj.insert(
+                                "agent_hint".to_string(),
+                                json!(format!(
+                                    "product_found=false على {} (قاعدة: {}). تحقق من الباركود أو اتصال ERP الصحيح — لا تخترع بيانات.",
+                                    erp.display_name_ar(),
+                                    conn.database
+                                )),
+                            );
+                        }
+                    } else {
+                        obj.insert(
+                            "agent_hint".to_string(),
+                            json!("row_count=0 — لا تخترع بيانات. جرّب product_search أو تحقق من product_filter."),
+                        );
+                    }
+                } else {
+                    obj.insert(
+                        "agent_hint".to_string(),
+                        json!("row_count=0 — لا تخترع بيانات. مرّر product_filter أو جرّب product_search."),
+                    );
+                }
+            } else {
+                obj.insert(
+                    "agent_hint".to_string(),
+                    json!("لخّص هذه الأرقام فقط — ممنوع اختراع صفوف إضافية."),
+                );
+            }
             if !obj.contains_key("message") {
                 obj.insert(
                     "message".to_string(),
@@ -1709,7 +2255,8 @@ pub async fn handle_run_query_pattern(
     }
 
     json!({
-        "pattern_keywords": keywords,
+        "pattern_keywords": pattern_label,
+        "pattern_id": pattern_label,
         "parts": parts,
         "part_count": parts.len(),
         "row_count": total_rows,
@@ -1936,8 +2483,80 @@ pub async fn handle_export_last_result(
 }
 
 #[cfg(test)]
+mod sql_validation_tests {
+    use super::*;
+
+    #[test]
+    fn allows_cte_with_multiple_inner_selects() {
+        let sql = r"
+DECLARE @MonthsBack int = 36;
+;WITH Matches AS (
+    SELECT I.ITEM_ID FROM dbo.ITEMS I
+    WHERE EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = I.ITEM_ID)
+),
+ProductPick AS (
+    SELECT TOP 1 ITEM_ID FROM Matches
+)
+SELECT ITEM_ID FROM ProductPick;
+";
+        assert!(validate_read_only_sql(sql).is_ok());
+    }
+
+    #[test]
+    fn allows_correlated_subquery_in_select_list() {
+        let sql = r"
+;WITH ItemPick AS (SELECT TOP 1 I.ITEM_ID FROM dbo.ITEMS I)
+SELECT IP.ITEM_ID,
+  (SELECT STRING_AGG(x, ',') FROM (SELECT N'a' AS x) t) AS StockByStore
+FROM ItemPick IP;
+";
+        assert!(validate_read_only_sql(sql).is_ok());
+    }
+
+    #[test]
+    fn rejects_two_top_level_selects() {
+        let sql = "SELECT 1; SELECT 2";
+        let err = validate_read_only_sql(sql).unwrap_err();
+        assert!(err.contains("استعلام واحد فقط"));
+    }
+
+    #[test]
+    fn allows_arabic_column_aliases_in_cte_query() {
+        let sql = r"
+;WITH Matches AS (
+    SELECT I.ITEM_ID FROM dbo.ITEMS I
+)
+SELECT LEFT(I.ITEM_NAME, 70) AS [اسم المنتج], I.ITEM_MODEL AS [الكود]
+FROM Matches M
+INNER JOIN dbo.ITEMS I ON M.ITEM_ID = I.ITEM_ID;
+";
+        assert!(validate_read_only_sql(sql).is_ok());
+    }
+
+    #[test]
+    fn normalize_strips_multiple_declare() {
+        let sql = "DECLARE @A int = 1;\nDECLARE @B int = 2;\n;WITH X AS (SELECT 1 AS n) SELECT n FROM X";
+        let n = normalize_sql_for_readonly(sql);
+        assert!(n.to_uppercase().starts_with("WITH"));
+        assert!(!n.to_uppercase().contains("DECLARE"));
+    }
+}
+
+#[cfg(test)]
 mod product_filter_tests {
     use super::*;
+
+    #[test]
+    fn apply_barcode_clears_all_product_placeholders() {
+        let sql = r"AND (
+        I.ITEM_MODEL LIKE N'%PRODUCT%'
+        OR I.ITEM_NAME LIKE N'%PRODUCT%'
+        OR EXISTS (SELECT 1 FROM dbo.BARCODE BC WHERE BC.ITEM_ID = I.ITEM_ID AND BC.BARCODE LIKE N'%PRODUCT%')
+      )";
+        let out = apply_product_filter(sql, "8718951291010");
+        assert!(!out.contains("%PRODUCT%"));
+        assert!(out.contains("8718951291010"));
+    }
 
     #[test]
     fn sanitize_strips_empty_parens_from_mention() {
@@ -1960,6 +2579,29 @@ mod product_filter_tests {
     }
 
     #[test]
+    fn extract_barcode_from_plain_text() {
+        let pf = extract_product_hint_from_text("8718951291010 اعرضلي معلومات").unwrap();
+        assert_eq!(pf, "8718951291010");
+    }
+
+    #[test]
+    fn apply_product_filter_barcode_adds_exists() {
+        let sql = "WHERE (I.ITEM_MODEL LIKE N'%PRODUCT%' OR I.ITEM_NAME LIKE N'%PRODUCT%')";
+        let out = apply_product_filter(sql, "8718951291010");
+        assert!(out.contains("BARCODE"));
+        assert!(out.contains("8718951291010"));
+        assert!(!out.contains("%PRODUCT%"));
+    }
+
+    #[test]
+    fn apply_product_filter_barcode_on_b_column() {
+        let sql = "WHERE B.BARCODE LIKE N'%PRODUCT%'";
+        let out = apply_product_filter(sql, "8718951291010");
+        assert!(out.contains("8718951291010"));
+        assert!(!out.contains("%PRODUCT%"));
+    }
+
+    #[test]
     fn apply_product_filter_keeps_wildcards() {
         let sql = "WHERE (I.ITEM_MODEL LIKE N'%PRODUCT%' OR I.ITEM_NAME LIKE N'%PRODUCT%')";
         let out = apply_product_filter(sql, "TRADOL 10ML (TUNISIA) ()");
@@ -1977,6 +2619,48 @@ mod product_filter_tests {
         assert!(out.contains("AUSTRIA"));
         assert!(out.contains(" AND "));
     }
+
+    #[test]
+    fn extract_employee_none_for_generic_query() {
+        assert!(extract_employee_hint_from_text("خصومات وديون الموظفين").is_none());
+    }
+
+    #[test]
+    fn extract_employee_name_from_query() {
+        assert_eq!(
+            extract_employee_hint_from_text("خصومات موظف بسام").as_deref(),
+            Some("بسام")
+        );
+    }
+
+    #[test]
+    fn apply_employee_filter_empty_means_all() {
+        let sql = "WHERE EmpName LIKE N'%EMPLOYEE%'";
+        let out = apply_employee_filter(&sql, "");
+        assert!(out.contains("N'%'") || out.contains("N'%%'"));
+        assert!(!out.contains("%EMPLOYEE%"));
+    }
+
+    #[test]
+    fn extract_party_none_for_generic() {
+        assert!(extract_party_hint_from_text("ديون وسلف ومواعيد الدفع").is_none());
+    }
+
+    #[test]
+    fn extract_party_name_from_query() {
+        assert_eq!(
+            extract_party_hint_from_text("ديون زبون موسى").as_deref(),
+            Some("موسى")
+        );
+    }
+
+    #[test]
+    fn apply_employee_filter_specific_name() {
+        let sql = "WHERE EmpName LIKE N'%EMPLOYEE%'";
+        let out = apply_employee_filter(&sql, "بسام");
+        assert!(out.contains("بسام"));
+        assert!(!out.contains("%EMPLOYEE%"));
+    }
 }
 
 pub async fn dispatch_extended_tool(
@@ -1989,11 +2673,12 @@ pub async fn dispatch_extended_tool(
         return None;
     }
 
+    let erp = crate::erp_profile::current_erp_kind(app_state).await;
     let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
     let result = match name {
         "validate_sql" => {
             let sql = args.get("sql_query").and_then(|v| v.as_str()).unwrap_or("");
-            handle_validate_sql(sql).await
+            handle_validate_sql(sql, erp).await
         }
         "explain_sql" => {
             let sql = args.get("sql_query").and_then(|v| v.as_str()).unwrap_or("");
@@ -2012,6 +2697,7 @@ pub async fn dispatch_extended_tool(
         }
         "list_favorite_queries" => handle_list_favorites(),
         "run_query_pattern" => {
+            let pid = args.get("pattern_id").and_then(|v| v.as_str());
             let kw = args.get("keywords").and_then(|v| v.as_str()).unwrap_or("");
             let dr = args.get("days_recent").and_then(|v| v.as_u64()).map(|v| v as u32);
             let cov = args.get("coverage_days").and_then(|v| v.as_u64()).map(|v| v as u32);
@@ -2021,15 +2707,16 @@ pub async fn dispatch_extended_tool(
                 s.last_product_filter.clone()
             };
             let pf = resolve_product_filter(explicit_pf, session_pf.as_deref());
-            handle_run_query_pattern(kw, dr, cov, pf.as_deref(), app_state, &delivery).await
+            handle_run_query_pattern(pid, kw, dr, cov, pf.as_deref(), app_state, &delivery).await
         }
+        "list_available_patterns" => crate::pattern_catalog::handle_list_available_patterns(erp),
         "get_product_schema" => {
             let sec = args.get("section").and_then(|v| v.as_str());
-            handle_get_product_schema(sec)
+            handle_get_product_schema(sec, erp)
         }
         "get_database_views" => {
             let sec = args.get("section").and_then(|v| v.as_str());
-            handle_get_database_views(sec)
+            handle_get_database_views(sec, erp)
         }
         "plan_complex_query" => {
             let q = args.get("question").and_then(|v| v.as_str()).unwrap_or("");

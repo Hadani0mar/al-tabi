@@ -1,6 +1,8 @@
 # AGENTS.md — دليل الوكلاء
 
-دليل مختصر لتطوير **reports-app**: تطبيق Tauri (React + Rust) يتصل بـ MSSQL (Marketing2026) وينفّذ تقارير عبر وكيل AI.
+دليل مختصر لتطوير **reports-app**: تطبيق Tauri (React + Rust) يتصل بـ MSSQL ويدعم **نظامين ERP** (Marketing2026 + InfinityRetailDB) وينفّذ تقارير عبر وكيل AI.
+
+> **ابدأ من:** [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md) — خريطة النظامين، الاكتشاف، المحوّلات، وتسميات الأعمدة.
 
 ---
 
@@ -25,14 +27,24 @@ reports-app/
 │       ├── ai-assistant-interface.tsx # شات الوكيل
 │       ├── saved-queries-page.tsx    # استعلامات محفوظة (بدون عرض SQL)
 │       ├── scheduler-page.tsx        # جدولة + إشعارات
-│       ├── generic-report-page.tsx   # بحث عام
-│       ├── settings-page.tsx         # Telegram + تحديثات + حساب
+│       ├── generic-report-page.tsx   # بحث منتج (ERP-aware)
+│       ├── settings-page.tsx         # Telegram + تحديثات + حساب + erp_label
 │       └── futuristic-nav.tsx        # 6 تبويبات
-├── QUERY_PATTERNS.md                 # ⭐ أنماط SQL — المصدر الرئيسي للوكيل
-├── DATABASE_NOTES.md                 # اكتشافات DB — حدّث عند كل معرفة جديدة
+├── ERP_ARCHITECTURE.md               # ⭐ نقطة البداية — نظامان ERP
+├── AGENT_Marketing2026.md            # ⭐ أنماط + تعاليم Marketing
+├── AGENT_InfinityRetailDB.md         # ⭐ أنماط + تعاليم Infinity
+├── QUERY_PATTERNS.md                 # legacy Marketing — يُفضّل AGENT_Marketing2026.md
+├── PRODUCT_SCHEMA.md                 # منتجات Marketing
+├── INFINITY_PRODUCT_SCHEMA.md        # منتجات Infinity
+├── DATABASE_NOTES.md                 # Marketing (+ إحالة Infinity)
+├── INFINITY_DATABASE_NOTES.md        # Infinity
+├── DATABASE_VIEWS.md                 # Views Marketing
+├── INFINITY_DATABASE_VIEWS.md        # Views Infinity
 └── src-tauri/src/
-    ├── lib.rs          # AppState، Tauri commands، ask_local_ai
-    ├── ai_agent.rs     # handle_with_groq_local + handle_with_groq + أدوات
+    ├── lib.rs          # AppState، Tauri commands، erp_kind
+    ├── erp_profile.rs  # اكتشاف ERP + تحميل AGENT_*.md
+    ├── erp_adapters.rs # SQL مشترك الشكل (profile, products, reports, POS)
+    ├── ai_agent.rs     # handle_with_groq_local + system prompt حسب ERP
     ├── agent_tools.rs  # validate_sql، patterns، favorites، export
     ├── scheduler.rs    # تقارير مجدولة + notifications.json
     ├── telegram.rs     # بوت Telegram
@@ -79,6 +91,13 @@ taskkill /f /im reports-app.exe   # إيقاف قبل إعادة البناء (W
 
 ## الوكيل الذكي — قواعد إلزامية
 
+### ERP أولاً
+
+1. بعد الاتصال: `get_erp_kind` → `marketing2026` | `infinity_retail_db`
+2. **Marketing:** `AGENT_Marketing2026.md` — جداول `dbo.*`
+3. **Infinity:** `AGENT_InfinityRetailDB.md` — `Inventory.*`, `SALES.*`, `Purchase.*`
+4. **لا تخلط** — `dbo.ITEMS` على Infinity = خطأ 208
+
 ### ترتيب القرار
 
 1. وقت/تاريخ؟ → `get_current_datetime` أولاً
@@ -91,11 +110,13 @@ taskkill /f /im reports-app.exe   # إيقاف قبل إعادة البناء (W
 
 - **SELECT فقط** — ممنوع INSERT/UPDATE/DELETE/DROP/EXEC
 - **أداة SQL واحدة في كل دور** — لا `execute_raw_sql` متوازي
-- **ترجمة الأعمدة للعربية** في PDF/Excel — راجع جدول الترجمة في `QUERY_PATTERNS.md`
+- **ترجمة الأعمدة للعربية** في PDF/Excel — راجع `ERP_ARCHITECTURE.md` §6 (تسميات مختلفة لكل ERP)
 - **T-SQL فقط:** `TOP`، `GETDATE()`، `LIKE N'%…%'` — لا `LIMIT`/`ILIKE`
-- **SALE_ITEMS** لا يحتوي `S_DATE` — JOIN دائماً مع `SALE_INVOICE`
+- **Marketing — SALE_ITEMS** لا يحتوي `S_DATE` — JOIN مع `SALE_INVOICE`
+- **Infinity — بنود البيع** — JOIN `SALES.Data_SalesInvoices` للتاريخ (`SalesInvoiceDate`)
 - **COMM_ID = 0** دائماً — تجاهل `COMMISSIONER`
-- **مرجع التاريخ:** `MAX(S_DATE)` من `SALE_INVOICE` (ليس `GETDATE()` وحده)
+- **Marketing — مرجع التاريخ:** `MAX(S_DATE)` من `SALE_INVOICE`
+- **Infinity — مرجع التاريخ:** `MAX(SalesInvoiceDate)` من `SALES.Data_SalesInvoices`
 - **DAYS_RECENT = 60** افتراضياً (ليس 30)
 - **المبالغ:** أضف `د.ل` في الردود العربية
 - **حفظ مفضلة:** بعد `execute_raw_sql` ناجح → **يجب** استدعاء `save_favorite_query` — لا تقل «تم الحفظ» بدون tool call
@@ -166,9 +187,11 @@ open_local_file(path)   # PDF→متصفح، xlsx→Excel
 
 ---
 
-## QUERY_PATTERNS.md
+## QUERY_PATTERNS / AGENT_*.md
 
-**اقرأ الملف قبل كتابة SQL معقد.** الأنماط الرئيسية:
+**Marketing:** `AGENT_Marketing2026.md` | **Infinity:** `AGENT_InfinityRetailDB.md` | **معمارية:** `ERP_ARCHITECTURE.md`
+
+**اقرأ الملف المناسب قبل SQL معقد.** أنماط Marketing الرئيسية (legacy في QUERY_PATTERNS.md):
 
 | النمط | الاستخدام |
 |-------|-----------|
@@ -207,7 +230,17 @@ sqlcmd -E -S localhost -d Marketing2026
 - `SALARIES` غالباً فارغ → `CUSTOMERS.EMP_SALARY` احتياطي
 - `BALANCE_C` فارغ — لا تعتمد عليه
 
-**سجّل كل اكتشاف جديد في `DATABASE_NOTES.md`.**
+**سجّل كل اكتشاف Marketing في `DATABASE_NOTES.md` — وInfinity في `INFINITY_DATABASE_NOTES.md`.**
+
+---
+
+## InfinityRetailDB (ملخص)
+
+```bash
+sqlcmd -E -S localhost -d InfinityRetailDB
+```
+
+`Inventory.Data_Products`, `SALES.Data_SalesInvoices`, `MyCompany.Config_Branchs` — راجع `INFINITY_DATABASE_NOTES.md`.
 
 ---
 
@@ -440,21 +473,29 @@ requests.put(f"{api}/SECRET_NAME", headers=hdr,
 
 | الملف | متى تقرأه |
 |-------|-----------|
-| `QUERY_PATTERNS.md` | قبل أي استعلام معقد |
-| `DATABASE_NOTES.md` | قبل افتراضات DB جديدة |
-| `Full_Marketing_Database_DDL.sql` | DDL كامل — استخدم Grep |
+| **`ERP_ARCHITECTURE.md`** | **أولاً — نظامان ERP، محوّلات، أعمدة تقارير** |
+| `AGENT_Marketing2026.md` | SQL معقد على Marketing |
+| `AGENT_InfinityRetailDB.md` | SQL معقد على Infinity |
+| `QUERY_PATTERNS.md` | legacy Marketing |
+| `PRODUCT_SCHEMA.md` / `INFINITY_PRODUCT_SCHEMA.md` | أعمدة منتجات |
+| `DATABASE_NOTES.md` / `INFINITY_DATABASE_NOTES.md` | اكتشافات تشغيلية |
+| `DATABASE_VIEWS.md` / `INFINITY_DATABASE_VIEWS.md` | Views وربط |
+| `src-tauri/src/erp_adapters.rs` | تقارير UI + POS + profile |
+| `src-tauri/src/erp_profile.rs` | اكتشاف ERP |
 | `src-tauri/src/ai_agent.rs` | system prompt + tool loop |
 | `src-tauri/src/agent_tools.rs` | تنفيذ الأدوات |
+| `Full_Marketing_Database_DDL.sql` / `InfinityRetailDB_DDL.sql` | DDL |
 | `.github/workflows/release.yml` | CI/CD |
-| `RELEASE.md` | دليل الإصدار + رفع الأسرار + النشر |
+| `RELEASE.md` | دليل الإصدار |
 
 ---
 
 ## قواعد للوكلاء
 
-1. **اقرأ قبل التعديل** — لا تخمّن schema؛ راجع `QUERY_PATTERNS.md` و `DATABASE_NOTES.md`
+1. **اقرأ قبل التعديل** — `ERP_ARCHITECTURE.md` + AGENT_* + DATABASE_* / INFINITY_*
 2. **أقل diff ممكن** — لا ت refactor واسع بدون طلب
 3. **لا secrets في git** — مفاتيح API، `al-tabi.key`
 4. **لا tag/release** إلا بطلب صريح من المستخدم
 5. **لا تعرض SQL للمستخدم** في صفحة المحفوظات
-6. **حدّث `DATABASE_NOTES.md`** عند كل اكتشاف DB جديد
+6. **حدّث** `DATABASE_NOTES.md` أو `INFINITY_DATABASE_NOTES.md` عند كل اكتشاف DB
+7. **SQL تقارير Infinity** — في `erp_adapters.rs` وليس في React

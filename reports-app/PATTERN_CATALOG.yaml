@@ -1,0 +1,164 @@
+# كatalog الأنماط المنطقي — مرجع للمطورين
+# التنفيذ: pattern_catalog.rs | SQL: AGENT_Marketing2026.md / AGENT_InfinityRetailDB.md
+#
+# pattern_id     — معرف ثابت (يُمرَّر لـ run_query_pattern)
+# name_ar        — الاسم العربي للمستخدم
+# section        — يطابق ## PATTERN: {section} في ملف AGENT_*.md
+# marketing      — متاح على Marketing2026
+# infinity       — متاح على InfinityRetailDB
+# triggers       — كلمات مفتاحية (للمطور / fallback)
+# product_filter — يحتاج product_filter
+
+patterns:
+  - id: product_count
+    name_ar: عدد المنتجات
+    section: عدد-المنتجات
+    marketing: true
+    infinity: true
+    triggers: [عدد المنتجات, كم منتج, count products]
+
+  - id: top_sellers
+    name_ar: أعلى منتجات مبيعاً (30 يوم)
+    section: أعلى-منتجات-مبيعاً
+    marketing: true
+    infinity: true
+    triggers: [أعلى منتجات, أكثر مبيعاً, best sellers]
+
+  - id: top_sellers_all_time
+    name_ar: أعلى منتجات مبيعاً (كل الوقت)
+    section: أعلى-منتجات-كل-الوقت
+    marketing: true
+    infinity: true
+    triggers: [أعلى منتجات كل الوقت, بدون تاريخ, all time sellers]
+
+  - id: sales_last_day_employee
+    name_ar: مبيعات آخر يوم لكل موظف
+    section: مبيعات-آخر-يوم-موظف
+    marketing: true
+    infinity: true
+    triggers: [مبيعات آخر يوم, آخر يوم مبيعات, last sale day]
+
+  - id: sales_daily_employee
+    name_ar: مبيعات يومية لكل موظف
+    section: مبيعات-يومية-لكل-موظف
+    marketing: true
+    infinity: true
+    triggers: [مبيعات يومية موظف, daily sales employee]
+
+  - id: products_sold_today
+    name_ar: آخر منتجات بيعت اليوم
+    section: آخر-منتجات-بيعت-اليوم
+    marketing: true
+    infinity: true
+    triggers: [منتجات بيعت اليوم, what sold today]
+
+  - id: debts_full
+    name_ar: متابعة الديون (لي وعلي)
+    section: متابعة-الديون
+    marketing: true
+    infinity: true
+    triggers: [متابعة الديون, ديون, اللي لي واللي علي]
+
+  - id: debts_suppliers
+    name_ar: ديون الموردين
+    section_marketing: ديون-الموردين-مبسط
+    section_infinity: ديون-الموردين
+    marketing: true
+    infinity: true
+    triggers: [ديون الموردين, supplier debts]
+
+  - id: debts_advances_schedule
+    name_ar: ديون وسلf ومواعيد الدفع
+    section: ديون-وسلف-ومواعيد
+    marketing: true
+    infinity: true
+    triggers: [ديون وسلf, مواعيد الدفع, سلف, قرض, payment schedule, advances]
+
+  - id: financial_summary
+    name_ar: ملخص مالي شهري
+    section: ملخص-مالي-شهري
+    marketing: true
+    infinity: true
+    triggers: [ملخص مالي, مصاريف شهرية, رواتب شهرية]
+
+  - id: shortage_monitor
+    name_ar: متابعة النواقص
+    section: متابعة-النواقص
+    marketing: true
+    infinity: true
+    triggers: [متابعة النواقص, نواقص, shortage]
+
+  - id: shortage_supplier
+    name_ar: نواقص نشطة مع المورد
+    section: نواقص-نشطة-مورد
+    marketing: true
+    infinity: true
+    triggers: [نواقص نشطة, آخر سعر شراء مورد]
+
+  - id: smart_purchase
+    name_ar: طلبية شراء ذكية
+    section: طلبية-شراء-ذكية
+    marketing: true
+    infinity: true
+    triggers: [طلبية شراء, شراء ذكي, smart purchase]
+
+  - id: supplier_prices
+    name_ar: مقارنة أسعار الموردين
+    section: مقارنة-أسعار-موردين
+    marketing: true
+    infinity: true
+    product_filter: true
+    triggers: [مقارنة أسعار, موردين, supplier prices]
+
+  - id: product_info
+    name_ar: معلومات منتج كاملة
+    section: معلومات-منتج-كاملة
+    marketing: true
+    infinity: true
+    product_filter: true
+    triggers: [معلومات منتج, تفاصيل المنتج, معدل السحب, سعر البيع, باركود, product info]
+
+  - id: product_study
+    name_ar: دراسة منتج شاملة
+    section: دراسة-منتج-شاملة
+    marketing: true
+    infinity: true
+    product_filter: true
+    triggers: [دراسة منتج, تفاصيل منتج, product study]
+
+  - id: expiry_report
+    name_ar: تقرير الصلاحية
+    section: تقرير-الصلاحية
+    marketing: true
+    infinity: true
+    triggers: [صلاحية, منتهية, expiry]
+
+  - id: best_customers
+    name_ar: أفضل عملاء مبيعات
+    section: أفضل-عملاء-مبيعات
+    marketing: true
+    infinity: true
+    triggers: [أفضل عملاء, top customers]
+
+  - id: employee_discounts_debts
+    name_ar: خصومات وديون الموظفين
+    section: خصومات-وديون-موظفين
+    marketing: false
+    infinity: true
+    triggers: [خصومات موظف, ديون موظف, employee discount, employee debt]
+
+  - id: sales_by_location
+    name_ar: مبيعات حسب المخزن/الفرع
+    section_marketing: مبيعات-حسب-المخزن
+    section_infinity: مبيعات-حسب-الفرع
+    marketing: true
+    infinity: true
+    triggers: [مبيعات مخزن, مبيعات فرع, sales by store]
+
+  - id: product_search
+    name_ar: بحث منتج سريع
+    section: بحث-منتج-سريع
+    marketing: true
+    infinity: true
+    product_filter: true
+    triggers: [بحث منتج, product search]

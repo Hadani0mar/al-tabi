@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
+use crate::erp_profile::ErpKind;
 use crate::supabase_config::{self, SUPABASE_ANON_KEY, SUPABASE_URL};
 use crate::AppState;
 
@@ -66,6 +67,7 @@ pub async fn fetch_reports() -> Vec<SupabaseReport> {
 #[derive(serde::Deserialize)]
 struct DocumentRecord {
     content: Option<String>,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -91,9 +93,28 @@ struct MatchDocumentsRequest {
     match_count: i32,
 }
 
-fn enrich_query_with_english(query: &str) -> String {
+fn enrich_query_with_english(query: &str, erp: ErpKind) -> String {
     let mut enriched = query.to_string();
     let query_lower = query.to_lowercase();
+
+    if erp == ErpKind::InfinityRetailDb {
+        if query_lower.contains("منتج") || query_lower.contains("صنف") || query_lower.contains("أدوية") {
+            enriched.push_str(" Data_Products ProductCode ProductName Inventory StockOnHand");
+        }
+        if query_lower.contains("بيع") || query_lower.contains("فاتورة") || query_lower.contains("مبيع") {
+            enriched.push_str(" Data_SalesInvoices SalesInvoiceDate Data_SalesInvoiceItems QYT UnitPrice");
+        }
+        if query_lower.contains("شراء") || query_lower.contains("مورد") {
+            enriched.push_str(" Data_PurchaseInvoices Data_PurchaseInvoiceItems Data_Suppliers UnitCost");
+        }
+        if query_lower.contains("مخزون") || query_lower.contains("جرد") || query_lower.contains("صلاحية") {
+            enriched.push_str(" Data_ProductInventories ExpiryDate BranchID_FK Config_Branchs");
+        }
+        if query_lower.contains("موظف") {
+            enriched.push_str(" CreatedByUserName sales employee");
+        }
+        return enriched;
+    }
     
     // expiry / expiration / date
     if query_lower.contains("صلاحية") || query_lower.contains("منتهي") || query_lower.contains("تاريخ انتهاء") || query_lower.contains("اكسباير") || query_lower.contains("انتهاء") {
@@ -138,14 +159,44 @@ fn enrich_query_with_english(query: &str) -> String {
     enriched
 }
 
-pub async fn search_schema(keywords: &str, openai_key: &str) -> String {
+fn document_matches_erp(doc: &DocumentRecord, erp: ErpKind) -> bool {
+    let Some(meta) = doc.metadata.as_ref() else {
+        // Legacy Marketing docs without metadata
+        return erp != ErpKind::InfinityRetailDb;
+    };
+    let erp_tag = meta
+        .get("erp_kind")
+        .or_else(|| meta.get("source"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match erp {
+        ErpKind::InfinityRetailDb => {
+            erp_tag.contains("infinity")
+                || doc
+                    .content
+                    .as_deref()
+                    .map(|c| c.contains("InfinityRetailDB") || c.contains("[Inventory]."))
+                    .unwrap_or(false)
+        }
+        ErpKind::Marketing2026 | ErpKind::Unknown => {
+            !erp_tag.contains("infinity_retail")
+                && doc
+                    .content
+                    .as_deref()
+                    .map(|c| !c.contains("InfinityRetailDB.Inventory"))
+                    .unwrap_or(true)
+        }
+    }
+}
+
+pub async fn search_schema(keywords: &str, openai_key: &str, erp: ErpKind) -> String {
     println!("search_schema called with keywords: {}, openai_key length: {}", keywords, openai_key.len());
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
     let api_key = SUPABASE_ANON_KEY;
     
     if !openai_key.trim().is_empty() {
         println!("Using Vector RAG with OpenAI...");
-        let enriched = enrich_query_with_english(keywords);
+        let enriched = enrich_query_with_english(keywords, erp);
         println!("Enriched query for embedding: {}", enriched);
         
         let req = OpenAiEmbeddingRequest {
@@ -181,6 +232,9 @@ pub async fn search_schema(keywords: &str, openai_key: &str) -> String {
                             println!("Supabase returned {} documents from RAG", docs.len());
                             let mut result = String::new();
                             for doc in docs {
+                                if !document_matches_erp(&doc, erp) {
+                                    continue;
+                                }
                                 if let Some(c) = doc.content {
                                     // Use a much larger truncation limit to avoid cutting off table DDL definitions (definitions are typically ~1000-1500 chars)
                                     let truncated = if c.len() > 800 { &c[..800] } else { &c };
@@ -215,7 +269,7 @@ pub async fn search_schema(keywords: &str, openai_key: &str) -> String {
 
     println!("Falling back to ILIKE text matching...");
     // Enrich with English so ILIKE can match the English DDL content
-    let enriched_for_ilike = enrich_query_with_english(keywords);
+    let enriched_for_ilike = enrich_query_with_english(keywords, erp);
     let terms: Vec<&str> = enriched_for_ilike.split(|c: char| c == ',' || c == ' ')
         .filter(|s: &&str| !s.trim().is_empty() && s.trim().chars().count() > 2)
         .collect();
@@ -231,7 +285,7 @@ pub async fn search_schema(keywords: &str, openai_key: &str) -> String {
     };
     
     let url = format!(
-        "{}/rest/v1/documents?select=content&{}&limit=5",
+        "{}/rest/v1/documents?select=content,metadata&{}&limit=5",
         SUPABASE_URL, query_param
     );
     
@@ -245,6 +299,9 @@ pub async fn search_schema(keywords: &str, openai_key: &str) -> String {
             if let Ok(docs) = res.json::<Vec<DocumentRecord>>().await {
                 let mut result = String::new();
                 for doc in docs {
+                    if !document_matches_erp(&doc, erp) {
+                        continue;
+                    }
                     if let Some(c) = doc.content {
                         result.push_str(&c);
                         result.push_str("\n\n");

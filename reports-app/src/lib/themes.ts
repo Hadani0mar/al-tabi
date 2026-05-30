@@ -40,6 +40,10 @@ export const THEME_OPTIONS: {
   },
 ];
 
+export const VISIBLE_THEME_OPTIONS = THEME_OPTIONS.filter(
+  (t) => t.id === "mihbar" || t.id === "mihbar-dark",
+);
+
 const LEGACY_THEME_CLASS: Record<Exclude<ThemeId, "mihbar" | "mihbar-dark">, string> = {
   "elegant-luxury": "theme-elegant-luxury",
   "cosmic-night": "theme-cosmic-night",

@@ -5,9 +5,6 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   ArrowUp,
   Plus,
-  Code,
-  BookOpen,
-  PenTool,
   Sparkles,
   Loader2,
   Trash2,
@@ -76,8 +73,7 @@ interface Props {
 
 export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [inputValue, setInputValue] = useState("");
-  const [activeCommandCategory, setActiveCommandCategory] = useState<string | null>(null);
-  
+
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [loadingChatIds, setLoadingChatIds] = useState<Set<string>>(new Set());
   const [toolProgress, setToolProgress] = useState<string | null>(null);
@@ -273,32 +269,18 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     }
   };
 
-  const commandSuggestions = {
-    learn: [
-      "اعرض لي أفضل 10 عملاء لدينا",
-      "ما هي المنتجات التي تقارب على الانتهاء؟",
-      "اعرض تقرير مبيعات هذا الشهر",
-      "من هو أفضل مورد للبنادول؟",
-    ],
-    code: [
-      "اكتب لي استعلام SQL لمعرفة المبيعات",
-      "كيف أبحث برقم الباركود؟",
-      "أريد تقريراً للديون المستحقة",
-      "كيف أقارن بين أسعار الموردين؟",
-    ],
-    write: [
-      "اكتب لي رسالة تذكير للعملاء بالديون",
-      "اكتب لي تقريراً مبهراً للإدارة",
-      "صغ لي رسالة شكر لعميل مميز",
-    ],
-  };
+  const quickPrompts = [
+    "ما مبيعات اليوم؟",
+    "اعرض ديون العملاء",
+    "اعرض ديون الموظفين",
+    "ما المنتجات المنقطعة؟",
+    "من هم أفضل 10 عملاء؟",
+    "منتجات قاربت على الانتهاء",
+  ];
 
-  const handleCommandSelect = (command: string) => {
-    setInputValue(command);
-    setActiveCommandCategory(null);
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
+  const handleQuickPrompt = (prompt: string) => {
+    setInputValue(prompt);
+    inputRef.current?.focus();
   };
 
   const saveChatsToStore = async (newChats: ChatSession[]) => {
@@ -326,6 +308,25 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
       next.delete(chatId);
       return next;
     });
+  };
+
+  const releaseChatRequest = (chatId: string, requestId: string) => {
+    if (pendingByChatRef.current[chatId] === requestId) {
+      delete pendingByChatRef.current[chatId];
+    }
+    clearChatLoading(chatId);
+    if (loadingChatIdsRef.current.size === 0) {
+      sendLockRef.current = false;
+      setIsSending(false);
+      setToolProgress(null);
+    }
+  };
+
+  const syncVisibleHistory = (chatId: string, history: Message[]) => {
+    const viewingId = activeChatIdRef.current ?? activeChatId;
+    if (viewingId === chatId) {
+      setChatHistory(history);
+    }
   };
 
   const handleStopMessage = async () => {
@@ -450,7 +451,12 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           return;
         }
 
-        const assistMsg: Message = { role: "assistant", content: response };
+        const text = (response ?? "").trim();
+        if (!text) {
+          throw new Error("رد فارغ من الوكيل — أعد المحاولة.");
+        }
+
+        const assistMsg: Message = { role: "assistant", content: text };
         const finalHistory = [...newHistory, assistMsg];
         setChats((prev) => {
            const newC = prev.map((c) =>
@@ -461,9 +467,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
            saveChatsToStore(newC);
            return newC;
         });
-        if (activeChatId === currentChatId) {
-          setChatHistory(finalHistory);
-        }
+        syncVisibleHistory(currentChatId, finalHistory);
     } catch (e) {
         if (pendingByChatRef.current[currentChatId] !== requestId) return;
         console.error(e);
@@ -472,7 +476,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           role: "assistant",
           content: errText.includes("إيقاف")
             ? "⏹ تم إيقاف الرد. يمكنك إرسال رسالة جديدة."
-            : `❌ عذراً، حدث خطأ: ${e}`,
+            : `❌ عذراً، حدث خطأ: ${errText}`,
         };
         const finalHistory = [...newHistory, errMsg];
         setChats((prev) => {
@@ -484,19 +488,9 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
            saveChatsToStore(newC);
            return newC;
         });
-        if (activeChatId === currentChatId) {
-          setChatHistory(finalHistory);
-        }
+        syncVisibleHistory(currentChatId, finalHistory);
     } finally {
-        if (pendingByChatRef.current[currentChatId] === requestId) {
-          delete pendingByChatRef.current[currentChatId];
-          clearChatLoading(currentChatId);
-          sendLockRef.current = false;
-          setIsSending(false);
-          if (activeChatIdRef.current === currentChatId) {
-            setToolProgress(null);
-          }
-        }
+        releaseChatRequest(currentChatId, requestId);
     }
   };
 
@@ -613,70 +607,19 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
               </motion.div>
             </div>
 
-            {/* Command categories */}
-            <div className="w-full max-w-2xl grid grid-cols-3 gap-3 mb-4">
-              <CommandButton
-                icon={<BookOpen className="w-5 h-5" />}
-                label="استعلام"
-                isActive={activeCommandCategory === "learn"}
-                onClick={() => setActiveCommandCategory(activeCommandCategory === "learn" ? null : "learn")}
-              />
-              <CommandButton
-                icon={<Code className="w-5 h-5" />}
-                label="بحث متقدم"
-                isActive={activeCommandCategory === "code"}
-                onClick={() => setActiveCommandCategory(activeCommandCategory === "code" ? null : "code")}
-              />
-              <CommandButton
-                icon={<PenTool className="w-5 h-5" />}
-                label="كتابة"
-                isActive={activeCommandCategory === "write"}
-                onClick={() => setActiveCommandCategory(activeCommandCategory === "write" ? null : "write")}
-              />
-            </div>
-
-            {/* Command suggestions */}
-            <AnimatePresence>
-              {activeCommandCategory && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="w-full max-w-2xl mb-6 overflow-hidden"
+            <div className="w-full max-w-2xl flex flex-wrap justify-center gap-2 mb-6">
+              {quickPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => handleQuickPrompt(prompt)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5"
                 >
-                  <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-                    <div className="p-3 border-b border-border bg-muted/20">
-                      <h3 className="text-sm font-semibold text-foreground">
-                        {activeCommandCategory === "learn"
-                          ? "اقتراحات الاستعلام والتقارير"
-                          : activeCommandCategory === "code"
-                          ? "اقتراحات البحث وقواعد البيانات"
-                          : "اقتراحات الصياغة والمراسلات"}
-                      </h3>
-                    </div>
-                    <ul className="divide-y divide-border">
-                      {commandSuggestions[activeCommandCategory as keyof typeof commandSuggestions].map((suggestion, index) => (
-                        <motion.li
-                          key={index}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: index * 0.03 }}
-                          onClick={() => handleCommandSelect(suggestion)}
-                          className="p-3 hover:bg-muted/50 cursor-pointer transition-colors duration-75"
-                        >
-                          <div className="flex items-center gap-3">
-                            <Sparkles className="w-4 h-4 text-primary" />
-                            <span className="text-sm text-foreground">
-                              {suggestion}
-                            </span>
-                          </div>
-                        </motion.li>
-                      ))}
-                    </ul>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -706,19 +649,70 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                           <div className="text-[15px] whitespace-pre-wrap leading-relaxed">{content}</div>
                       ) : (
                           <div className="flex flex-col gap-3">
-                            <div className="prose prose-base dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:text-[15px] prose-li:text-[15px] prose-pre:bg-muted prose-pre:border prose-pre:border-border prose-pre:text-foreground">
+                            <div
+                              className="max-w-none text-[15px] leading-relaxed [&_p]:my-2 [&_p]:leading-relaxed [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_strong]:font-bold [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-[15px] [&_h1]:font-bold [&_h2]:font-bold [&_h3]:font-semibold [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[13px] [&_code]:font-mono [&_pre]:rounded-xl [&_pre]:border [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-[13px] [&_pre]:font-mono [&_table]:w-full [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2"
+                              style={{
+                                color: "var(--ai-bubble-fg)",
+                                ["--tw-prose-body" as string]: "var(--ai-bubble-fg)",
+                              }}
+                            >
                                <ReactMarkdown
                                   remarkPlugins={[remarkGfm]}
                                   components={{
+                                    p: ({ node, ...props }) => <p style={{ color: "var(--ai-bubble-fg)" }} {...props} />,
+                                    li: ({ node, ...props }) => <li style={{ color: "var(--ai-bubble-fg)" }} {...props} />,
+                                    strong: ({ node, ...props }) => <strong style={{ color: "var(--fg-1)" }} {...props} />,
+                                    code: ({ node, ...props }) => (
+                                      <code
+                                        style={{
+                                          background: "var(--bg-muted)",
+                                          color: "var(--fg-1)",
+                                        }}
+                                        {...props}
+                                      />
+                                    ),
+                                    pre: ({ node, ...props }) => (
+                                      <pre
+                                        style={{
+                                          background: "var(--bg-muted)",
+                                          borderColor: "var(--border-default)",
+                                          color: "var(--fg-1)",
+                                        }}
+                                        {...props}
+                                      />
+                                    ),
                                     table: ({ node, ...props }) => (
-                                      <div className="w-full overflow-x-auto my-5 rounded-xl border border-border/60 shadow-sm bg-card/50">
+                                      <div
+                                        className="w-full overflow-x-auto my-5 rounded-xl border shadow-sm"
+                                        style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
+                                      >
                                         <table className="w-full text-[15px] text-right border-collapse" {...props} />
                                       </div>
                                     ),
-                                    thead: ({ node, ...props }) => <thead className="bg-muted/70 text-foreground text-[13px] font-bold uppercase tracking-wide" {...props} />,
-                                    th: ({ node, ...props }) => <th className="px-4 py-3 font-bold border-b-2 border-border whitespace-nowrap text-right" {...props} />,
-                                    td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-border/40 last:border-0 align-middle leading-relaxed" {...props} />,
-                                    tr: ({ node, ...props }) => <tr className="hover:bg-muted/30 transition-colors" {...props} />,
+                                    thead: ({ node, ...props }) => (
+                                      <thead
+                                        className="text-[13px] font-bold uppercase tracking-wide"
+                                        style={{ background: "var(--bg-subtle)", color: "var(--fg-1)" }}
+                                        {...props}
+                                      />
+                                    ),
+                                    th: ({ node, ...props }) => (
+                                      <th
+                                        className="px-4 py-3 font-bold border-b-2 whitespace-nowrap text-right"
+                                        style={{ borderColor: "var(--border-default)", color: "var(--fg-1)" }}
+                                        {...props}
+                                      />
+                                    ),
+                                    td: ({ node, ...props }) => (
+                                      <td
+                                        className="px-4 py-3 border-b last:border-0 align-middle leading-relaxed"
+                                        style={{ borderColor: "var(--border-subtle)", color: "var(--ai-bubble-fg)" }}
+                                        {...props}
+                                      />
+                                    ),
+                                    tr: ({ node, ...props }) => (
+                                      <tr className="hover:opacity-90 transition-opacity" {...props} />
+                                    ),
                                     a: ({ href, children }) => {
                                       const handleClick = (e: React.MouseEvent) => {
                                         e.preventDefault();
@@ -742,7 +736,8 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                         <a
                                           href={href}
                                           onClick={handleClick}
-                                          className="text-primary underline cursor-pointer"
+                                          className="underline cursor-pointer font-semibold"
+                                          style={{ color: "var(--brand-accent)" }}
                                         >
                                           {children}
                                         </a>
@@ -776,11 +771,11 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
              {isActiveChatLoading && (
                  <div className="flex justify-end">
                     <div className="max-w-[85%] rounded-2xl p-4 rounded-bl-sm flex items-center gap-3 border" style={{ background: 'var(--ai-bubble-bg)', borderColor: 'var(--ai-bubble-border)', color: 'var(--ai-bubble-fg)' }}>
-                       <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                       <Loader2 className="w-5 h-5 animate-spin shrink-0" style={{ color: 'var(--brand-accent)' }} />
                        {toolProgress ? (
-                           <span className="text-sm font-medium text-primary animate-pulse">{toolProgress}</span>
+                           <span className="text-sm font-medium animate-pulse" style={{ color: 'var(--ai-bubble-fg)' }}>{toolProgress}</span>
                        ) : (
-                           <span className="text-sm text-muted-foreground animate-pulse">جاري التفكير...</span>
+                           <span className="text-sm animate-pulse" style={{ color: 'var(--ai-bubble-fg)' }}>جاري التفكير...</span>
                        )}
                     </div>
                  </div>
@@ -935,36 +930,5 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         </div>
       </div>
     </div>
-  );
-}
-
-interface CommandButtonProps {
-  icon: React.ReactNode;
-  label: string;
-  isActive: boolean;
-  onClick: () => void;
-}
-
-function CommandButton({ icon, label, isActive, onClick }: CommandButtonProps) {
-  return (
-    <motion.button
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition-all ${
-        isActive
-          ? "bg-primary/5 border-primary/30 shadow-sm"
-          : "bg-card border-border hover:border-primary/50"
-      }`}
-    >
-      <div className={`${isActive ? "text-primary" : "text-muted-foreground"}`}>
-        {icon}
-      </div>
-      <span
-        className={`text-sm font-medium ${
-          isActive ? "text-primary" : "text-foreground"
-        }`}
-      >
-        {label}
-      </span>
-    </motion.button>
   );
 }

@@ -35,6 +35,8 @@
       "icons/icon.ico"
     ],
     "resources": [
+      "../AGENT_Marketing2026.md",
+      "../AGENT_InfinityRetailDB.md",
       "../QUERY_PATTERNS.md",
       "../PRODUCT_SCHEMA.md",
       "../DATABASE_VIEWS.md"

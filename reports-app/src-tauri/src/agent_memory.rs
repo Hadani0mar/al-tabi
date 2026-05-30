@@ -2,6 +2,7 @@
 //! المشترك: أعمدة، جداول، علاقات، وتسميات schema فقط — لا بيانات تشغيلية متغيرة.
 
 use crate::agent_tools::app_data_dir;
+use crate::erp_profile::ErpKind;
 use crate::supabase_config::{SUPABASE_ANON_KEY, SUPABASE_URL};
 use reqwest::Client;
 use rusqlite::{params, Connection};
@@ -499,7 +500,29 @@ async fn upsert_shared_db_fact(
     Ok(true)
 }
 
-pub async fn recall_memory_prompt_block(user_query: &str, openai_key: &str) -> String {
+fn erp_fact_prefix(erp: ErpKind) -> &'static str {
+    match erp {
+        ErpKind::InfinityRetailDb => "[erp:infinity_retail_db] ",
+        ErpKind::Marketing2026 | ErpKind::Unknown => "[erp:marketing2026] ",
+    }
+}
+
+fn shared_fact_matches_erp(content: &str, erp: ErpKind) -> bool {
+    if content.contains("[erp:infinity_retail_db]") {
+        return erp == ErpKind::InfinityRetailDb;
+    }
+    if content.contains("[erp:marketing2026]") {
+        return erp != ErpKind::InfinityRetailDb;
+    }
+    // Legacy facts without tag — show for Marketing only to avoid dbo.ITEMS hints on Infinity
+    erp != ErpKind::InfinityRetailDb
+}
+
+pub async fn recall_memory_prompt_block(
+    user_query: &str,
+    openai_key: &str,
+    erp: ErpKind,
+) -> String {
     if openai_key.trim().is_empty() {
         return String::new();
     }
@@ -528,6 +551,7 @@ pub async fn recall_memory_prompt_block(user_query: &str, openai_key: &str) -> S
     let shared: Vec<(String, String)> = dedupe_similar_contents(
         shared_raw
             .into_iter()
+            .filter(|(_, content, _)| shared_fact_matches_erp(content, erp))
             .map(|(c, t, _)| (c, t))
             .collect(),
         SHARED_MATCH_K as usize,
@@ -567,6 +591,7 @@ async fn extract_facts_with_llm(
     assistant_text: &str,
     ctx: &TurnMemoryContext,
     groq_key: &str,
+    erp: ErpKind,
 ) -> Vec<ExtractedFact> {
     let client = http_client();
     let snippets = if ctx.snippets.is_empty() {
@@ -574,32 +599,34 @@ async fn extract_facts_with_llm(
     } else {
         ctx.snippets.join("\n")
     };
+    let erp_name = erp.display_name_ar();
     let prompt = format!(
-        r#"You extract ONLY stable SQL Server schema facts for Marketing2026 ERP.
+        r#"You extract ONLY stable SQL Server schema facts for {erp_name} ERP.
 Return ONLY a JSON array (no markdown). Max 2 items. Empty [] if none.
 
 Allowed shared facts (scope=shared):
-- Table/column names and meanings
+- Table/column names and meanings for {erp_name} ONLY
 - Which table holds which kind of data (master vs transactional)
-- JOIN keys between tables (e.g. SALE_ITEMS.S_ID -> SALE_INVOICE.S_ID)
+- JOIN keys between tables
 - Column that stores dates, batch, expiry, qty, price
 - Empty/unused tables verified from schema tools (not from missing business data)
 
 FORBIDDEN in shared (never save):
-- Company name, phone, address, user settings, SITTEINGS content
+- Company name, phone, address, user settings
 - Row counts, balances, amounts, "empty currently", "user asked"
-- How to update settings or contact admin
+- Marketing2026 table names when ERP is InfinityRetailDB and vice versa
 
 Local only (scope=local, kind=preference): explicit user reporting preferences (e.g. prefers 60-day window).
 
 Format: {{"scope":"shared"|"local","kind":"db_schema"|"db_join"|"db_column"|"preference","content":"..."}}
-content: one sentence, mention TABLE.COLUMN or dbo.TABLE, under 180 chars.
+content: one sentence, mention schema.table.column, under 180 chars.
 
 Schema tool output this turn:
 {snippets}
 
 User: {user}
 Assistant: {assistant}"#,
+        erp_name = erp_name,
         snippets = snippets.chars().take(2500).collect::<String>(),
         user = user_text.chars().take(800).collect::<String>(),
         assistant = assistant_text.chars().take(1200).collect::<String>(),
@@ -656,6 +683,7 @@ pub async fn persist_turn_memories(
     openai_key: &str,
     groq_key: &str,
     ctx: TurnMemoryContext,
+    erp: ErpKind,
 ) {
     if groq_key.trim().is_empty() || openai_key.trim().is_empty() {
         return;
@@ -668,7 +696,7 @@ pub async fn persist_turn_memories(
         return;
     }
 
-    let facts = extract_facts_with_llm(user_text, assistant_text, &ctx, groq_key).await;
+    let facts = extract_facts_with_llm(user_text, assistant_text, &ctx, groq_key, erp).await;
     if facts.is_empty() {
         return;
     }
@@ -680,8 +708,13 @@ pub async fn persist_turn_memories(
         }
         let scope = fact.scope.to_lowercase();
         let kind = fact.kind.to_lowercase();
+        let tagged_content = if scope == "shared" && !content.starts_with("[erp:") {
+            format!("{}{}", erp_fact_prefix(erp), content)
+        } else {
+            content.to_string()
+        };
 
-        let embedding = match create_embedding(content, openai_key).await {
+        let embedding = match create_embedding(&tagged_content, openai_key).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[agent_memory] store embedding: {}", e);
@@ -690,8 +723,8 @@ pub async fn persist_turn_memories(
         };
 
         if scope == "shared" {
-            if !is_valid_shared_schema_fact(content) {
-                eprintln!("[agent_memory] rejected shared fact: {}", content);
+            if !is_valid_shared_schema_fact(&tagged_content) {
+                eprintln!("[agent_memory] rejected shared fact: {}", tagged_content);
                 continue;
             }
             let category = match kind.as_str() {
@@ -700,14 +733,14 @@ pub async fn persist_turn_memories(
                 "db_schema" => "db_schema",
                 _ => "db_schema",
             };
-            match upsert_shared_db_fact(category, content, &embedding).await {
-                Ok(true) => eprintln!("[agent_memory] shared schema stored: {}", content),
-                Ok(false) => eprintln!("[agent_memory] shared duplicate skipped: {}", content),
+            match upsert_shared_db_fact(category, &tagged_content, &embedding).await {
+                Ok(true) => eprintln!("[agent_memory] shared schema stored: {}", tagged_content),
+                Ok(false) => eprintln!("[agent_memory] shared duplicate skipped: {}", tagged_content),
                 Err(e) => eprintln!("[agent_memory] shared store: {}", e),
             }
-        } else if scope == "local" && is_valid_local_preference(content) {
-            match store_local_fact("preference", content, &embedding) {
-                Ok(true) => eprintln!("[agent_memory] local preference stored: {}", content),
+        } else if scope == "local" && is_valid_local_preference(&tagged_content) {
+            match store_local_fact("preference", &tagged_content, &embedding) {
+                Ok(true) => eprintln!("[agent_memory] local preference stored: {}", tagged_content),
                 Ok(false) => {}
                 Err(e) => eprintln!("[agent_memory] local store: {}", e),
             }
@@ -721,9 +754,10 @@ pub fn spawn_persist_turn_memories(
     openai_key: String,
     groq_key: String,
     ctx: TurnMemoryContext,
+    erp: ErpKind,
 ) {
     tokio::spawn(async move {
-        persist_turn_memories(&user_text, &assistant_text, &openai_key, &groq_key, ctx).await;
+        persist_turn_memories(&user_text, &assistant_text, &openai_key, &groq_key, ctx, erp).await;
     });
 }
 

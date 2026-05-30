@@ -1,9 +1,6 @@
-/**
- * صفحة الجدولة (قسم التقارير) — تعرض التقارير المجدوَلة مع عداد تنازلي
- * وقسم الإشعارات — تعرض التقارير التي صدرت مع إمكانية فتح الملف أو قراءة النص
- */
-
 import { useState, useEffect, useCallback } from "react";
+import type { ConnectionInfo } from "@/App";
+import { GenericReportPage } from "@/components/ui/generic-report-page";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -19,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
   AlertCircle,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -354,10 +352,14 @@ function NotificationCard({
 }
 
 // ─── الصفحة الرئيسية ──────────────────────────────────────────────────────────
-export function SchedulerPage() {
+interface SchedulerPageProps {
+  connInfo?: ConnectionInfo | null;
+}
+
+export function SchedulerPage({ connInfo }: SchedulerPageProps = {}) {
   const [schedules, setSchedules] = useState<ScheduledReport[]>([]);
   const [notifications, setNotifications] = useState<ReportNotification[]>([]);
-  const [activeTab, setActiveTab] = useState<"schedules" | "notifications">("schedules");
+  const [activeTab, setActiveTab] = useState<"schedules" | "notifications" | "catalog">("schedules");
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -469,13 +471,27 @@ export function SchedulerPage() {
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          الإشعارات
+          النتائج
           {unreadCount > 0 && (
             <Badge variant="destructive" className="text-[10px] h-4 min-w-[16px] px-1">
               {unreadCount}
             </Badge>
           )}
         </button>
+        {connInfo && (
+          <button
+            onClick={() => setActiveTab("catalog")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors flex items-center gap-1.5",
+              activeTab === "catalog"
+                ? "bg-background border border-b-background border-border -mb-px text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Search className="w-3.5 h-3.5" />
+            بحث منتج
+          </button>
+        )}
         <div className="flex-1" />
         <button
           onClick={loadData}
@@ -488,13 +504,18 @@ export function SchedulerPage() {
 
       {/* المحتوى */}
       <div className="flex-1 overflow-y-auto p-4">
-        {loading ? (
+        {activeTab === "catalog" && connInfo ? (
+          <GenericReportPage
+            connInfo={connInfo}
+            reportName="Product Comprehensive Details"
+            reportNameAr="البحث عن تفاصيل المنتجات"
+          />
+        ) : loading ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm gap-2">
             <RefreshCw className="w-4 h-4 animate-spin" />
             جاري التحميل...
           </div>
         ) : activeTab === "schedules" ? (
-          // ─── التقارير المجدوَلة ───────────────────────────────────
           schedules.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
               <Clock className="w-12 h-12 opacity-20" />
@@ -518,7 +539,6 @@ export function SchedulerPage() {
             </div>
           )
         ) : (
-          // ─── الإشعارات ────────────────────────────────────────────
           <>
             {notifications.length > 0 && (
               <div className="flex justify-end mb-3">
@@ -536,7 +556,7 @@ export function SchedulerPage() {
             {notifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
                 <BellRing className="w-12 h-12 opacity-20" />
-                <p className="text-sm opacity-60">لا توجد إشعارات</p>
+                <p className="text-sm opacity-60">لا توجد نتائج بعد</p>
                 <p className="text-xs opacity-40 text-center">
                   ستظهر هنا التقارير عند صدورها تلقائياً
                 </p>

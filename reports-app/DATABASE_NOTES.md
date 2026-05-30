@@ -1,5 +1,8 @@
 # ملاحظات قاعدة البيانات — Marketing2026
 
+> **InfinityRetailDB:** [`INFINITY_DATABASE_NOTES.md`](./INFINITY_DATABASE_NOTES.md)  
+> **معمارية ERP:** [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md)
+
 ## بيانات الاتصال
 - **السيرفر:** localhost (MSSQLSERVER — خدمة محلية)
 - **قاعدة البيانات:** Marketing2026

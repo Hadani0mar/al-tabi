@@ -1,4 +1,4 @@
-import { useState, useRef, KeyboardEvent, useEffect, useCallback } from "react";
+import { useState, useRef, KeyboardEvent, useEffect, useCallback, useLayoutEffect, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -19,11 +19,57 @@ interface QueryResult {
   rows: string[][];
   row_count: number;
 }
+
+interface ProductMention {
+  name: string;
+  code: string;
+}
+
+function formatProductLabel(hit: ProductMention): string {
+  const name = hit.name.trim();
+  const code = hit.code.trim();
+  if (code && code !== name) return `${name} (${code})`;
+  return name || code;
+}
+
+function labelToSearchTerm(label: string): string {
+  const m = label.match(/\(([^)]+)\)\s*$/);
+  if (m?.[1]?.trim()) return m[1].trim();
+  return label.trim();
+}
 interface Props { 
   connInfo: ConnectionInfo;
   reportName: string;
   reportNameAr: string;
 }
+
+/** قالب Marketing2026 — BARCODE.PRICE1 = سعر البيع الفعلي */
+const PRODUCT_COMPREHENSIVE_SQL = `SELECT TOP 30
+  I.ITEM_MODEL AS [الكود],
+  LEFT(I.ITEM_NAME, 80) AS [اسم المنتج],
+  U.UNIT_DISC AS [وحدة البيع],
+  B.BARCODE AS [الباركود],
+  CAST(B.PRICE1 AS decimal(18,3)) AS [سعر البيع],
+  CAST(B.PRICE2 AS decimal(18,3)) AS [سعر 2],
+  CAST(B.PUBLIC_PRICE AS decimal(18,3)) AS [سعر الجمهور],
+  CAST(I.LAST_COST AS decimal(18,3)) AS [آخر تكلفة],
+  CAST((SELECT SUM(ISNULL(SUB.QTY,0)) FROM dbo.ITEMS_SUB SUB WHERE SUB.ITEM_ID = I.ITEM_ID) AS decimal(18,1)) AS [رصيد المخزون],
+  (SELECT TOP 1 C.CUST_NAME FROM dbo.BUY_ITEMS BI JOIN dbo.BUY_INVOICE INV ON BI.B_ID = INV.B_ID JOIN dbo.CUSTOMERS C ON INV.CUST_ID = C.CUST_ID WHERE BI.ITEM_ID = I.ITEM_ID ORDER BY INV.B_DATE DESC) AS [آخر مورد],
+  CAST(B.UPDATE_DATE AS date) AS [تاريخ تحديث السعر]
+FROM dbo.ITEMS I
+JOIN dbo.BARCODE B ON I.ITEM_ID = B.ITEM_ID
+LEFT JOIN dbo.UNITS U ON B.UNIT_ID = U.UNIT_ID
+WHERE I.ITEM_INVISIBLE = 0 AND {{SEARCH_CONDITION}}
+ORDER BY I.ITEM_NAME, B.UNIT_QTY`;
+
+const LOCAL_REPORT_SQL: Record<string, string> = {
+  "Product Comprehensive Details": PRODUCT_COMPREHENSIVE_SQL,
+};
+
+const ERP_DISPLAY: Record<string, string> = {
+  infinity_retail_db: "InfinityRetailDB",
+  marketing2026: "Marketing2026",
+};
 
 function buildConn(c: ConnectionInfo) {
   return {
@@ -38,10 +84,11 @@ function buildConn(c: ConnectionInfo) {
 
 export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<ProductMention[]>([]);
   const [sugLoading,  setSugLoading]  = useState(false);
   const [showDrop,    setShowDrop]    = useState(false);
   const [focusedIdx,  setFocusedIdx]  = useState(-1);
+  const [dropStyle,   setDropStyle]   = useState<CSSProperties>({});
   const inputRef  = useRef<HTMLInputElement>(null);
   const dropRef   = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,6 +97,13 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
   const [errorMsg, setErrorMsg] = useState("");
   const [result,   setResult]   = useState<QueryResult | null>(null);
   const [hasParams, setHasParams] = useState(true);
+  const [erpLabel, setErpLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<string>("get_erp_kind")
+      .then((kind) => setErpLabel(ERP_DISPLAY[kind] ?? null))
+      .catch(() => setErpLabel(null));
+  }, [connInfo.database]);
 
   useEffect(() => {
     // Check if the report requires parameters
@@ -69,20 +123,48 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
     return () => document.removeEventListener("mousedown", handler);
   }, [reportName]);
 
+  const updateDropPosition = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setDropStyle({
+      position: "fixed",
+      top: r.bottom + 8,
+      left: r.left,
+      width: r.width,
+      zIndex: 9999,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showDrop) return;
+    updateDropPosition();
+    window.addEventListener("scroll", updateDropPosition, true);
+    window.addEventListener("resize", updateDropPosition);
+    return () => {
+      window.removeEventListener("scroll", updateDropPosition, true);
+      window.removeEventListener("resize", updateDropPosition);
+    };
+  }, [showDrop, suggestions.length, sugLoading, updateDropPosition]);
+
   const searchProducts = useCallback(async (q: string) => {
-    if (q.trim().length < 2) { setSuggestions([]); setShowDrop(false); return; }
+    const trimmed = q.trim();
+    if (trimmed.length < 1) {
+      setSuggestions([]);
+      setShowDrop(false);
+      return;
+    }
+    setShowDrop(true);
     setSugLoading(true);
     try {
-      const names = await invoke<string[]>("search_products", {
-        conn:  buildConn(connInfo),
-        query: q,
-      });
-      setSuggestions(names);
-      setShowDrop(names.length > 0);
+      const hits = await invoke<ProductMention[]>("search_product_mentions", { query: trimmed });
+      setSuggestions(hits);
+      setShowDrop(hits.length > 0 || trimmed.length >= 1);
       setFocusedIdx(-1);
     } catch (e) {
-      console.error("search_products error:", e);
+      console.error("search_product_mentions error:", e);
       setSuggestions([]);
+      setShowDrop(false);
     } finally {
       setSugLoading(false);
     }
@@ -94,10 +176,10 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
     debounceRef.current = setTimeout(() => searchProducts(val), 280);
   };
 
-  const selectSuggestion = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setSearchTerm(trimmed);
+  const selectSuggestion = (hit: ProductMention) => {
+    const label = formatProductLabel(hit);
+    if (!label) return;
+    setSearchTerm(label);
     setSuggestions([]);
     setShowDrop(false);
     inputRef.current?.focus();
@@ -139,19 +221,25 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
     }
     setStatus("loading"); setResult(null); setErrorMsg("");
     try {
-      const { data, error } = await supabase
-        .from("reports")
-        .select("sql_query")
-        .eq("name", reportName)
-        .single();
+      const localSql = LOCAL_REPORT_SQL[reportName];
+      let sqlTemplate = localSql ?? "";
 
-      if (error) throw new Error(`Supabase: ${error.message}`);
-      if (!data?.sql_query) throw new Error("القالب غير موجود في Supabase");
+      if (!localSql) {
+        const { data, error } = await supabase
+          .from("reports")
+          .select("sql_query")
+          .eq("name", reportName)
+          .single();
+
+        if (error) throw new Error(`Supabase: ${error.message}`);
+        if (!data?.sql_query) throw new Error("القالب غير موجود في Supabase");
+        sqlTemplate = data.sql_query;
+      }
 
       const res = await invoke<QueryResult>("execute_search_report", {
         conn: buildConn(connInfo),
-        sqlTemplate: data.sql_query,
-        searchTerm: hasParams ? searchTerm.trim() : "",
+        sqlTemplate: sqlTemplate,
+        searchTerm: hasParams ? labelToSearchTerm(searchTerm.trim()) : "",
       });
 
       setResult(res);
@@ -191,7 +279,9 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
             {reportNameAr}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            قم بتنفيذ هذا التقرير لاستعراض البيانات
+            {erpLabel
+              ? `تسميات الأعمدة والحقول حسب نظام ${erpLabel}`
+              : "قم بتنفيذ هذا التقرير لاستعراض البيانات"}
           </p>
         </div>
         {result && (
@@ -220,7 +310,14 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
               value={searchTerm}
               onChange={e => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              onFocus={() => searchTerm.trim().length >= 2 && setShowDrop(suggestions.length > 0)}
+              onFocus={() => {
+                if (searchTerm.trim().length >= 1) {
+                  setShowDrop(true);
+                  if (suggestions.length === 0 && !sugLoading) {
+                    searchProducts(searchTerm);
+                  }
+                }
+              }}
               placeholder="أدخل كود المنتج أو جزء من الاسم هنا..."
               className="w-full h-12 pr-10 pl-4 rounded-xl border border-border bg-background outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-sm"
               dir="ltr"
@@ -228,33 +325,49 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
             />
           </div>
 
-          {/* Dropdown الاقتراحات */}
-          {showDrop && suggestions.length > 0 && (
+          {/* Dropdown — fixed لتجنّب قصّه داخل overflow في تبويب التقارير */}
+          {showDrop && (sugLoading || suggestions.length > 0) && (
             <div
               ref={dropRef}
-              className="absolute top-full right-0 left-0 mt-2 z-50 rounded-xl border border-border bg-popover shadow-xl overflow-hidden"
+              style={dropStyle}
+              className="rounded-xl border border-border bg-popover shadow-xl overflow-hidden"
             >
               <div className="max-h-56 overflow-y-auto">
-                {suggestions.map((s, i) => (
-                  <button
-                    key={s}
-                    onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
-                    className={cn(
-                      "w-full text-right px-4 py-2.5 text-sm flex items-center gap-2 transition-colors",
-                      i === focusedIdx
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-muted"
-                    )}
-                    dir="ltr"
-                  >
-                    <Tag className="w-3 h-3 flex-shrink-0" />
-                    <span className="flex-1 text-left">{s}</span>
-                  </button>
-                ))}
+                {sugLoading && suggestions.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    جاري البحث...
+                  </div>
+                ) : (
+                  suggestions.map((hit, i) => {
+                    const label = formatProductLabel(hit);
+                    return (
+                      <button
+                        key={`${hit.code}-${hit.name}-${i}`}
+                        onMouseDown={e => { e.preventDefault(); selectSuggestion(hit); }}
+                        className={cn(
+                          "w-full text-right px-4 py-2.5 text-sm flex items-center gap-2 transition-colors",
+                          i === focusedIdx
+                            ? "bg-primary text-primary-foreground"
+                            : "hover:bg-muted"
+                        )}
+                        dir="ltr"
+                      >
+                        <Tag className="w-3 h-3 shrink-0" />
+                        <span className="flex-1 text-left truncate">{label}</span>
+                        {hit.code ? (
+                          <span className="text-[11px] opacity-70 font-mono shrink-0">{hit.code}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                )}
               </div>
-              <div className="px-3 py-1.5 border-t border-border bg-muted/30 text-[10px] text-muted-foreground">
-                {suggestions.length} نتيجة — اختر من القائمة أو تنقّل بالأسهم ↑↓
-              </div>
+              {!sugLoading && suggestions.length > 0 && (
+                <div className="px-3 py-1.5 border-t border-border bg-muted/30 text-[10px] text-muted-foreground">
+                  {suggestions.length} نتيجة — اختر من القائمة أو تنقّل بالأسهم ↑↓
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -307,7 +420,7 @@ export function GenericReportPage({ connInfo, reportName, reportNameAr }: Props)
                       )}>
                         {row.map((cell, ci) => (
                           <td key={ci} className="px-4 py-3 whitespace-nowrap font-medium" dir={ci === 0 ? "ltr" : "rtl"}>
-                            {result.columns[ci].includes("سعر") ? (
+                            {result.columns[ci].includes("سعر") || result.columns[ci] === "السعر" ? (
                                <span className="font-bold text-emerald-600 dark:text-emerald-400 text-base">{cell}</span>
                             ) : result.columns[ci].includes("تاريخ") ? (
                                <span className="font-mono text-xs text-muted-foreground">{cell}</span>

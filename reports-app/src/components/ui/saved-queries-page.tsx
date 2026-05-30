@@ -103,21 +103,39 @@ export function SavedQueriesPage() {
   }
 
   return (
-    <div className="min-h-screen p-6 pb-32" dir="rtl">
+    <div className="min-h-screen p-6 pb-32" dir="rtl" style={{ background: "var(--bg-canvas)" }}>
       {/* العنوان */}
       <div className="flex items-center justify-between mb-6 pt-4">
         <div className="flex items-start gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-md shadow-orange-500/25">
-            <Bookmark className="w-6 h-6 text-white" />
+          <div
+            className="w-12 h-12 rounded-2xl flex items-center justify-center"
+            style={{
+              background: "var(--brand-primary)",
+              color: "var(--fg-on-brand)",
+              boxShadow: "var(--shadow-md)",
+            }}
+          >
+            <Bookmark className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold leading-tight">المحفوظات</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <h1
+              className="text-2xl font-bold leading-tight"
+              style={{ fontFamily: "var(--font-display)", color: "var(--fg-1)" }}
+            >
+              المحفوظات
+            </h1>
+            <p className="text-sm mt-0.5" style={{ color: "var(--fg-2)" }}>
               الاستعلامات التي طلبتَ من الوكيل حفظها — جاهزة للتشغيل الفوري دون الحاجة للذكاء الاصطناعي.
             </p>
           </div>
         </div>
-        <Button variant="outline" onClick={refresh} disabled={loading} className="gap-2 shrink-0">
+        <Button
+          variant="outline"
+          onClick={refresh}
+          disabled={loading}
+          className="gap-2 shrink-0"
+          style={{ borderColor: "var(--border-default)", color: "var(--fg-2)" }}
+        >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           تحديث
         </Button>
@@ -138,13 +156,13 @@ export function SavedQueriesPage() {
 
       {/* المحتوى */}
       {loading ? (
-        <div className="flex items-center justify-center py-20 text-muted-foreground">
-          <Loader2 className="w-6 h-6 animate-spin" />
+        <div className="flex items-center justify-center py-20" style={{ color: "var(--fg-3)" }}>
+          <Loader2 className="w-6 h-6 animate-spin" style={{ color: "var(--brand-primary)" }} />
         </div>
       ) : favorites.length === 0 ? (
         <EmptyState />
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
+        <div className="text-center py-16" style={{ color: "var(--fg-3)" }}>
           <FileX className="w-10 h-10 mx-auto mb-3 opacity-40" />
           <p>لا توجد نتائج مطابقة لـ "{search}".</p>
         </div>
@@ -159,19 +177,46 @@ export function SavedQueriesPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ delay: idx * 0.03, type: "spring", stiffness: 240, damping: 22 }}
-                className="group relative rounded-2xl border border-border bg-card p-4 hover:border-amber-500/30 hover:shadow-md hover:shadow-amber-500/5 transition-all overflow-hidden flex flex-col"
+                className="group relative rounded-2xl p-4 transition-all overflow-hidden flex flex-col border hover:shadow-md"
+                style={{
+                  background: "var(--bg-surface)",
+                  borderColor: "var(--border-default)",
+                  boxShadow: "var(--shadow-xs)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "color-mix(in srgb, var(--brand-primary) 40%, transparent)";
+                  e.currentTarget.style.boxShadow = "var(--shadow-md)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border-default)";
+                  e.currentTarget.style.boxShadow = "var(--shadow-xs)";
+                }}
               >
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-l from-amber-400 to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div
+                  className="absolute inset-x-0 top-0 h-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: "var(--brand-primary)" }}
+                />
 
                 <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400/15 to-orange-500/10 flex items-center justify-center flex-shrink-0 border border-amber-500/15">
-                    <Bookmark className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border"
+                    style={{
+                      background: "var(--brand-primary-soft)",
+                      borderColor: "color-mix(in srgb, var(--brand-primary) 20%, transparent)",
+                      color: "var(--brand-primary)",
+                    }}
+                  >
+                    <Bookmark className="w-5 h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-bold leading-tight line-clamp-2" title={fav.name}>
+                    <h3
+                      className="text-sm font-bold leading-tight line-clamp-2"
+                      style={{ color: "var(--fg-1)" }}
+                      title={fav.name}
+                    >
                       {fav.name}
                     </h3>
-                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-1">
+                    <div className="flex items-center gap-1 text-[11px] mt-1" style={{ color: "var(--fg-3)" }}>
                       <Clock className="w-3 h-3" />
                       <span>{formatRelativeAr(fav.created_at_unix)}</span>
                     </div>
@@ -179,14 +224,21 @@ export function SavedQueriesPage() {
                 </div>
 
                 {fav.description && (
-                  <p className="text-xs text-muted-foreground leading-relaxed mb-3 line-clamp-3">
+                  <p className="text-xs leading-relaxed mb-3 line-clamp-3" style={{ color: "var(--fg-2)" }}>
                     {fav.description}
                   </p>
                 )}
 
                 <div className="flex-1 mb-3">
-                  <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 p-3 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <Lock className="w-3.5 h-3.5 text-amber-600/70 dark:text-amber-400/70 flex-shrink-0" />
+                  <div
+                    className="rounded-lg border border-dashed p-3 flex items-center gap-2 text-[11px]"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      background: "color-mix(in srgb, var(--bg-subtle) 50%, transparent)",
+                      color: "var(--fg-3)",
+                    }}
+                  >
+                    <Lock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "var(--brand-primary)" }} />
                     <span>الاستعلام محميّ — لا يُعرض المحتوى للحفاظ على الخصوصية.</span>
                   </div>
                 </div>
@@ -194,7 +246,8 @@ export function SavedQueriesPage() {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    className="flex-1 gap-1.5 bg-gradient-to-l from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold shadow-sm h-9"
+                    className="flex-1 gap-1.5 font-bold shadow-sm h-9 border-0 hover:opacity-90"
+                    style={{ background: "var(--brand-primary)", color: "var(--fg-on-brand)" }}
                     onClick={() => runQuery(fav)}
                     disabled={runningId === fav.id}
                   >
@@ -208,7 +261,17 @@ export function SavedQueriesPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="gap-1 h-9 px-2.5 border-red-500/20 hover:bg-red-500/10 hover:border-red-500/40 text-red-600 dark:text-red-400"
+                    className="gap-1 h-9 px-2.5"
+                    style={{
+                      borderColor: "color-mix(in srgb, var(--danger) 25%, transparent)",
+                      color: "var(--danger)",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--danger-soft)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
                     onClick={() => setDeleteCandidate(fav)}
                     title="حذف"
                   >
@@ -227,25 +290,34 @@ export function SavedQueriesPage() {
           <Overlay onClose={() => setResultModal(null)}>
             <ModalCard onClose={() => setResultModal(null)} maxWidth="max-w-5xl">
               <div className="flex items-start gap-3 mb-4">
-                <div className={cn(
-                  "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
-                  resultModal.error
-                    ? "bg-red-500/15"
-                    : resultModal.result
-                      ? "bg-emerald-500/15"
-                      : "bg-amber-500/15",
-                )}>
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{
+                    background: resultModal.error
+                      ? "var(--danger-soft)"
+                      : resultModal.result
+                        ? "var(--success-soft)"
+                        : "var(--brand-accent-soft)",
+                    color: resultModal.error
+                      ? "var(--danger)"
+                      : resultModal.result
+                        ? "var(--success)"
+                        : "var(--brand-accent)",
+                  }}
+                >
                   {resultModal.error ? (
-                    <XCircle className="w-5 h-5 text-red-500" />
+                    <XCircle className="w-5 h-5" />
                   ) : resultModal.result ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    <CheckCircle2 className="w-5 h-5" />
                   ) : (
-                    <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                    <Loader2 className="w-5 h-5 animate-spin" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-bold leading-tight truncate">{resultModal.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <h3 className="text-lg font-bold leading-tight truncate" style={{ color: "var(--fg-1)" }}>
+                    {resultModal.name}
+                  </h3>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--fg-3)" }}>
                     {resultModal.error
                       ? "فشل تنفيذ الاستعلام"
                       : resultModal.result
@@ -256,19 +328,34 @@ export function SavedQueriesPage() {
               </div>
 
               {resultModal.error && (
-                <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap" dir="ltr">
+                <div
+                  className="rounded-xl border p-4 text-sm font-mono whitespace-pre-wrap"
+                  style={{
+                    borderColor: "color-mix(in srgb, var(--danger) 25%, transparent)",
+                    background: "var(--danger-soft)",
+                    color: "var(--danger-fg)",
+                  }}
+                  dir="ltr"
+                >
                   {resultModal.error}
                 </div>
               )}
 
               {!resultModal.result && !resultModal.error && (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
-                  <Loader2 className="w-6 h-6 animate-spin" />
+                <div className="flex items-center justify-center py-12" style={{ color: "var(--fg-3)" }}>
+                  <Loader2 className="w-6 h-6 animate-spin" style={{ color: "var(--brand-primary)" }} />
                 </div>
               )}
 
               {resultModal.result && resultModal.result.row_count === 0 && (
-                <div className="rounded-xl border border-border bg-muted/30 p-8 text-center text-muted-foreground">
+                <div
+                  className="rounded-xl border p-8 text-center"
+                  style={{
+                    borderColor: "var(--border-subtle)",
+                    background: "var(--bg-subtle)",
+                    color: "var(--fg-3)",
+                  }}
+                >
                   <Database className="w-10 h-10 mx-auto mb-2 opacity-40" />
                   <p>لم يُرجع الاستعلام أي صفوف.</p>
                 </div>

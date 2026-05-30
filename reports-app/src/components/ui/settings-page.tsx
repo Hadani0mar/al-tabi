@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -13,13 +14,14 @@ import {
   Loader2, Check, Download, RefreshCw,
   LogOut, UserCircle2, Database, Server, ShieldCheck, AlertTriangle, X,
   ChevronLeft, Bot, ArrowUpCircle, Palette, Building2, MapPin, Briefcase, Phone,
+  Share2, Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   applyTheme,
   loadActiveTheme,
   saveActiveTheme,
-  THEME_OPTIONS,
+  VISIBLE_THEME_OPTIONS,
   type ThemeId,
 } from "@/lib/themes";
 import type { ConnectionInfo } from "@/App";
@@ -39,13 +41,42 @@ interface BusinessProfile {
   mobile: string | null;
   fax: string | null;
   branch: string | null;
+  erp_kind?: string | null;
+  erp_label?: string | null;
+}
+
+interface PharmacyShareSettings {
+  sync_key: string;
+  sharing_enabled: boolean;
+  show_prices: boolean;
+  last_sync_at: string | null;
+  last_product_count: number;
+  last_business_name: string | null;
+  last_error: string | null;
+}
+
+function pharmacyDisplayName(profile: BusinessProfile | null) {
+  return profile?.company_name?.trim()
+    || profile?.activity_name?.trim()
+    || "—";
+}
+
+function pharmacyContactPhone(profile: BusinessProfile | null) {
+  return profile?.phone?.trim() || profile?.mobile?.trim() || "—";
+}
+
+function profileEmptyHint(erpKind?: string | null) {
+  if (erpKind === "infinity_retail_db") {
+    return "لا توجد بيانات فرع مسجّلة في MyCompany.Config_Branchs — أدخلها من برنامج Infinity Retail.";
+  }
+  return "لا توجد بيانات مسجّلة في إعدادات النظام (SITTEINGS) — أدخلها من برنامج المحاسبة الأصلي.";
 }
 
 function displayValue(value: string | null | undefined) {
   return value?.trim() ? value : "—";
 }
 
-type SettingsView = "menu" | "bot" | "updates" | "account" | "themes";
+type SettingsView = "menu" | "bot" | "updates" | "account" | "themes" | "ai" | "pharmacy";
 
 interface SettingsPageProps {
   connInfo?: ConnectionInfo | null;
@@ -60,11 +91,25 @@ const SECTIONS: {
   iconBg: string;
 }[] = [
   {
+    id: "pharmacy",
+    title: "مشاركة المنتجات",
+    description: "رفع المنتجات المتوفرة إلى موقع البحث عن الأدوية",
+    icon: <Share2 className="w-5 h-5" />,
+    iconBg: "bg-teal-500/15 text-teal-700",
+  },
+  {
     id: "bot",
     title: "بوت Telegram",
     description: "توكن البوت، معرف الدردشة، وتفعيل الاستعلامات",
     icon: <img src="/telegram.svg" alt="" className="w-5 h-5" />,
     iconBg: "bg-sky-500/15 text-sky-600",
+  },
+  {
+    id: "ai",
+    title: "المساعد الذكي",
+    description: "الوضع السريع أو المتقدم للاستعلامات",
+    icon: <Bot className="w-5 h-5" />,
+    iconBg: "bg-violet-500/15 text-violet-600",
   },
   {
     id: "updates",
@@ -122,7 +167,11 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   const [saved, setSaved] = useState(false);
   const [logoutDialog, setLogoutDialog] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const businessCacheRef = useRef<BusinessProfile | null>(null);
+  const businessCacheRef = useRef<{ key: string; profile: BusinessProfile } | null>(null);
+
+  const connectionKey = connInfo
+    ? `${connInfo.server}:${connInfo.port}/${connInfo.database}`
+    : "";
 
   const [appVersion, setAppVersion] = useState("");
   const [updateChecking, setUpdateChecking] = useState(false);
@@ -138,6 +187,19 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   const [businessLoading, setBusinessLoading] = useState(false);
   const [businessError, setBusinessError] = useState<string | null>(null);
+  const [aiAdvancedMode, setAiAdvancedMode] = useState(false);
+  const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
+
+  const [pharmacySyncKey, setPharmacySyncKey] = useState("");
+  const [pharmacySharing, setPharmacySharing] = useState(false);
+  const [pharmacyShowPrices, setPharmacyShowPrices] = useState(false);
+  const [pharmacySaving, setPharmacySaving] = useState(false);
+  const [pharmacySyncing, setPharmacySyncing] = useState(false);
+  const [pharmacySettings, setPharmacySettings] = useState<PharmacyShareSettings | null>(null);
+  const [pharmacyPreview, setPharmacyPreview] = useState<BusinessProfile | null>(null);
+  const [pharmacyPreviewLoading, setPharmacyPreviewLoading] = useState(false);
+  const [pharmacyStatus, setPharmacyStatus] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ percent: number; detail: string } | null>(null);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(console.error);
@@ -152,9 +214,20 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
           setEnableQueries(queriesEnabled);
         }
 
+        const advancedAi = await store.get<boolean>("ai_advanced_mode");
+        if (advancedAi !== null && advancedAi !== undefined) {
+          setAiAdvancedMode(advancedAi);
+        }
+
         const local = await invoke<TelegramSettingsLocal>("load_telegram_settings_local");
         setBotToken(local.bot_token ?? "");
         setChatId(local.chat_id ?? "");
+
+        const share = await invoke<PharmacyShareSettings>("get_pharmacy_share_settings");
+        setPharmacySettings(share);
+        setPharmacySyncKey(share.sync_key ?? "");
+        setPharmacySharing(share.sharing_enabled ?? false);
+        setPharmacyShowPrices(share.show_prices ?? false);
 
         const themeId = await loadActiveTheme();
         setActiveTheme(themeId);
@@ -168,8 +241,14 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   }, []);
 
   const loadBusinessProfile = useCallback(async (force = false) => {
-    if (!force && businessCacheRef.current) {
-      setBusinessProfile(businessCacheRef.current);
+    if (!connectionKey) {
+      setBusinessProfile(null);
+      setBusinessError("غير متصل بقاعدة البيانات.");
+      return;
+    }
+
+    if (!force && businessCacheRef.current?.key === connectionKey) {
+      setBusinessProfile(businessCacheRef.current.profile);
       setBusinessError(null);
       return;
     }
@@ -179,7 +258,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
 
     try {
       const profile = await invoke<BusinessProfile>("get_business_profile");
-      businessCacheRef.current = profile;
+      businessCacheRef.current = { key: connectionKey, profile };
       setBusinessProfile(profile);
     } catch (err) {
       console.error("Failed to load business profile:", err);
@@ -190,12 +269,114 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
     } finally {
       setBusinessLoading(false);
     }
-  }, []);
+  }, [connectionKey]);
 
   useEffect(() => {
-    if (view !== "account") return;
+    businessCacheRef.current = null;
+    setBusinessProfile(null);
+    setBusinessError(null);
+  }, [connectionKey]);
+
+  useEffect(() => {
+    if (view !== "account" || !connectionKey) return;
     loadBusinessProfile();
-  }, [view, loadBusinessProfile]);
+  }, [view, loadBusinessProfile, connectionKey]);
+
+  const loadPharmacyPreview = useCallback(async () => {
+    if (!connectionKey) {
+      setPharmacyPreview(null);
+      return;
+    }
+    setPharmacyPreviewLoading(true);
+    try {
+      const profile = await invoke<BusinessProfile>("preview_pharmacy_business_profile");
+      setPharmacyPreview(profile);
+    } catch (err) {
+      console.error("Failed to preview pharmacy profile:", err);
+      setPharmacyPreview(null);
+    } finally {
+      setPharmacyPreviewLoading(false);
+    }
+  }, [connectionKey]);
+
+  useEffect(() => {
+    if (view !== "pharmacy" || !connectionKey) return;
+    loadPharmacyPreview();
+  }, [view, connectionKey, loadPharmacyPreview]);
+
+  const handleSavePharmacyShare = async () => {
+    setPharmacySaving(true);
+    setPharmacyStatus(null);
+    try {
+      const updated = await invoke<PharmacyShareSettings>("save_pharmacy_share_settings", {
+        syncKey: pharmacySyncKey,
+        sharingEnabled: pharmacySharing,
+        showPrices: pharmacyShowPrices,
+      });
+      setPharmacySettings(updated);
+      setPharmacySyncKey(updated.sync_key);
+      setPharmacySharing(updated.sharing_enabled);
+      setPharmacyShowPrices(updated.show_prices);
+      if (updated.sharing_enabled) {
+        setPharmacyStatus(
+          `تمت المشاركة: ${updated.last_product_count} منتج — ${updated.last_business_name ?? ""}`.trim()
+        );
+      } else if (!updated.last_error) {
+        setPharmacyStatus("تم إيقاف المشاركة وحذف المنتجات من الموقع.");
+      }
+      if (updated.last_error) {
+        setPharmacyStatus(updated.last_error);
+      }
+    } catch (err) {
+      console.error(err);
+      setPharmacyStatus(String(err));
+    } finally {
+      setPharmacySaving(false);
+    }
+  };
+
+  const handleSyncPharmacyNow = async () => {
+    setPharmacySyncing(true);
+    setPharmacyStatus(null);
+    setSyncProgress({ percent: 0, detail: "جاري البدء..." });
+
+    const unlisten = await listen<{ percent: number; detail: string }>(
+      "pharmacy-sync-progress",
+      (e) => setSyncProgress(e.payload)
+    );
+
+    try {
+      const result = await invoke<{ product_count: number; business_name: string; message: string }>(
+        "sync_pharmacy_products_now"
+      );
+      setPharmacyStatus(result.message);
+      const updated = await invoke<PharmacyShareSettings>("get_pharmacy_share_settings");
+      setPharmacySettings(updated);
+    } catch (err) {
+      console.error(err);
+      setPharmacyStatus(String(err));
+    } finally {
+      unlisten();
+      setPharmacySyncing(false);
+      setTimeout(() => setSyncProgress(null), 2000);
+    }
+  };
+
+  const handleStopPharmacySharing = async () => {
+    setPharmacySaving(true);
+    setPharmacyStatus(null);
+    try {
+      const updated = await invoke<PharmacyShareSettings>("stop_pharmacy_sharing_cmd");
+      setPharmacySettings(updated);
+      setPharmacySharing(false);
+      setPharmacyStatus("تم إيقاف المشاركة وحذف المنتجات من الموقع.");
+    } catch (err) {
+      console.error(err);
+      setPharmacyStatus(String(err));
+    } finally {
+      setPharmacySaving(false);
+    }
+  };
 
   const handleCheckForUpdate = async () => {
     setUpdateChecking(true);
@@ -270,6 +451,22 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
       setActiveTheme(previous);
       applyTheme(previous);
       alert("تعذّر حفظ الثيم: " + err);
+    }
+  };
+
+  const handleAiAdvancedToggle = async (enabled: boolean) => {
+    setAiSettingsSaving(true);
+    setAiAdvancedMode(enabled);
+    try {
+      const store = await load("settings.json");
+      await store.set("ai_advanced_mode", enabled);
+      await store.save();
+    } catch (err) {
+      console.error("Failed to save AI mode:", err);
+      setAiAdvancedMode(!enabled);
+      alert("تعذّر حفظ إعداد الوكيل: " + err);
+    } finally {
+      setAiSettingsSaving(false);
     }
   };
 
@@ -445,6 +642,50 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
               </>
             )}
 
+            {view === "ai" && (
+              <>
+                <SectionHeader
+                  title="المساعد الذكي"
+                  onBack={() => setView("menu")}
+                />
+                <div className="space-y-5">
+                  <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4">
+                    <p className="text-sm font-semibold text-foreground mb-1">الوضع السريع (افتراضي)</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      ينفّذ أنماط استعلام جاهزة ومختبرة فقط — أسرع، أقل تكلفة، وأقل دوامة.
+                      مناسب لـ: المبيعات، الديون، المصروفات، النواقص، مقارنة الأسعار، طلبيات الشراء.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="aiAdvancedMode"
+                        checked={aiAdvancedMode}
+                        disabled={aiSettingsSaving}
+                        onCheckedChange={(c) => handleAiAdvancedToggle(c === true)}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="aiAdvancedMode" className="font-semibold cursor-pointer">
+                          الوضع المتقدم
+                        </Label>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          الافتراضي: منفّذ أنماط فقط (pattern_id + PDF/Excel). هذا الخيار يفعّل SQL
+                          حراً، RAG، وذاكرة schema — للمطوّرين فقط.
+                        </p>
+                      </div>
+                    </div>
+                    {aiSettingsSaving && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        جارٍ الحفظ...
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
             {view === "updates" && (
               <>
                 <SectionHeader
@@ -515,7 +756,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                   onBack={() => setView("menu")}
                 />
                 <nav className="rounded-xl border border-border bg-card overflow-hidden divide-y divide-border">
-                  {THEME_OPTIONS.map((theme) => (
+                  {VISIBLE_THEME_OPTIONS.map((theme) => (
                     <button
                       key={theme.id}
                       type="button"
@@ -546,6 +787,195 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                     </button>
                   ))}
                 </nav>
+              </>
+            )}
+
+            {view === "pharmacy" && (
+              <>
+                <SectionHeader
+                  title="مشاركة المنتجات"
+                  onBack={() => setView("menu")}
+                />
+                <div className="flex-1 space-y-5 overflow-y-auto min-h-0 pb-4">
+                  <div className="flex items-center gap-3 rounded-xl border border-teal-500/20 bg-teal-500/5 p-3">
+                    <Package className="w-5 h-5 text-teal-700 shrink-0" />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      تُرفع المنتجات المتوفرة في المخزون فقط (بدون كميات). عند الإيقاف تُحذف فوراً من الموقع.
+                      يُرسل اسم النشاط والعنوان والهاتف من إعدادات ERP تلقائياً.
+                    </p>
+                  </div>
+
+                  {!connectionKey && (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300">
+                      اتصل بقاعدة البيانات أولاً لتفعيل المشاركة.
+                    </div>
+                  )}
+
+                  <div className="rounded-2xl border border-border bg-gradient-to-br from-card to-muted/20 p-5">
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
+                        <Building2 className="w-5 h-5 text-amber-700" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-bold">بيانات النشاط على الموقع</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {pharmacyPreview?.erp_label
+                            ? `من ${pharmacyPreview.erp_label} — A_NAME / BranchName`
+                            : "تُقرأ من SITTEINGS أو Config_Branchs"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => loadPharmacyPreview()}
+                        disabled={pharmacyPreviewLoading || !connectionKey}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 disabled:opacity-50"
+                        aria-label="تحديث"
+                      >
+                        <RefreshCw className={cn("w-4 h-4", pharmacyPreviewLoading && "animate-spin")} />
+                      </button>
+                    </div>
+
+                    {pharmacyPreviewLoading ? (
+                      <div className="flex items-center gap-2 py-6 text-muted-foreground justify-center">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-sm">جارٍ القراءة من ERP...</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="sm:col-span-2 rounded-xl border border-border bg-background/50 p-3">
+                          <div className="text-[11px] text-muted-foreground mb-1">اسم النشاط</div>
+                          <p className="text-sm font-semibold">{pharmacyDisplayName(pharmacyPreview)}</p>
+                        </div>
+                        <div className="sm:col-span-2 rounded-xl border border-border bg-background/50 p-3">
+                          <div className="text-[11px] text-muted-foreground mb-1">العنوان</div>
+                          <p className="text-sm">{displayValue(pharmacyPreview?.address)}</p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-background/50 p-3">
+                          <div className="text-[11px] text-muted-foreground mb-1">المدينة</div>
+                          <p className="text-sm">{displayValue(pharmacyPreview?.city)}</p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-background/50 p-3">
+                          <div className="text-[11px] text-muted-foreground mb-1">الهاتف</div>
+                          <p className="text-sm font-mono" dir="ltr">{pharmacyContactPhone(pharmacyPreview)}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="pharmacySyncKey">مفتاح المزامنة (sync_key)</Label>
+                    <Input
+                      id="pharmacySyncKey"
+                      placeholder="من لوحة Supabase — 8 أحرف على الأقل"
+                      value={pharmacySyncKey}
+                      onChange={(e) => setPharmacySyncKey(e.target.value)}
+                      dir="ltr"
+                      className="font-mono"
+                      disabled={!connectionKey}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 rounded-xl border border-border p-4">
+                    <Checkbox
+                      id="pharmacySharing"
+                      checked={pharmacySharing}
+                      onCheckedChange={(v) => setPharmacySharing(v === true)}
+                      disabled={!connectionKey}
+                    />
+                    <Label htmlFor="pharmacySharing" className="cursor-pointer flex-1">
+                      <span className="font-medium">تفعيل مشاركة المنتجات</span>
+                      <p className="text-xs text-muted-foreground mt-0.5 font-normal">
+                        عند الإيقاف تُحذف جميع المنتجات من الموقع فوراً
+                      </p>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center gap-3 rounded-xl border border-border p-4">
+                    <Checkbox
+                      id="pharmacyShowPrices"
+                      checked={pharmacyShowPrices}
+                      onCheckedChange={(v) => setPharmacyShowPrices(v === true)}
+                      disabled={!connectionKey}
+                    />
+                    <Label htmlFor="pharmacyShowPrices" className="cursor-pointer flex-1">
+                      <span className="font-medium">مشاركة الأسعار</span>
+                      <p className="text-xs text-muted-foreground mt-0.5 font-normal">
+                        إن أُوقفت تُخفى الأسعار من الموقع مع بقاء التوفر
+                      </p>
+                    </Label>
+                  </div>
+
+                  {pharmacySettings?.last_sync_at && (
+                    <div className="text-xs text-muted-foreground px-1">
+                      آخر مزامنة: {new Date(pharmacySettings.last_sync_at).toLocaleString("ar-LY")}
+                      {pharmacySettings.last_product_count > 0 && (
+                        <> — {pharmacySettings.last_product_count} منتج</>
+                      )}
+                    </div>
+                  )}
+
+                  {syncProgress && (
+                    <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{syncProgress.detail}</span>
+                        <span className="font-mono font-medium tabular-nums">{syncProgress.percent}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                          style={{ width: `${syncProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {pharmacyStatus && !syncProgress && (
+                    <div className={cn(
+                      "rounded-xl border p-3 text-sm",
+                      pharmacyStatus.includes("فشل") || pharmacyStatus.includes("خطأ") || pharmacyStatus.includes("Supabase")
+                        ? "border-red-500/20 bg-red-500/5 text-red-600 dark:text-red-400"
+                        : "border-emerald-500/20 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                    )}>
+                      {pharmacyStatus}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={handleSavePharmacyShare}
+                      disabled={pharmacySaving || !connectionKey}
+                      className="gap-2"
+                    >
+                      {pharmacySaving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Check className="w-4 h-4" />
+                      )}
+                      حفظ وتطبيق
+                    </Button>
+                    {pharmacySharing && (
+                      <Button
+                        variant="outline"
+                        onClick={handleSyncPharmacyNow}
+                        disabled={pharmacySyncing || !connectionKey}
+                        className="gap-2"
+                      >
+                        <RefreshCw className={cn("w-4 h-4", pharmacySyncing && "animate-spin")} />
+                        مزامنة الآن
+                      </Button>
+                    )}
+                    {(pharmacySharing || pharmacySettings?.sharing_enabled) && (
+                      <Button
+                        variant="outline"
+                        onClick={handleStopPharmacySharing}
+                        disabled={pharmacySaving}
+                        className="gap-2 border-red-500/30 text-red-600 hover:bg-red-500/10"
+                      >
+                        إيقاف وحذف
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </>
             )}
 
@@ -622,7 +1052,9 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                       <div className="flex-1 min-w-0">
                         <h3 className="text-base font-bold">بيانات النشاط التجاري</h3>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          معلومات المنشأة المسجّلة في النظام
+                          {businessProfile?.erp_label
+                            ? `من نظام ${businessProfile.erp_label}`
+                            : "معلومات المنشأة المسجّلة في النظام"}
                         </p>
                       </div>
                       <button
@@ -657,7 +1089,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         !businessProfile?.activity_name &&
                         !businessProfile?.activity_code && (
                         <p className="text-xs text-muted-foreground mb-3 px-1">
-                          لا توجد بيانات مسجّلة في إعدادات النظام (SITTEINGS) — أدخلها من برنامج المحاسبة الأصلي.
+                          {profileEmptyHint(businessProfile?.erp_kind)}
                         </p>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -672,9 +1104,9 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         <div className="rounded-xl border border-border bg-background/50 p-3">
                           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
                             <Briefcase className="w-3 h-3" />
-                            كود النشاط
+                            {businessProfile?.erp_kind === "infinity_retail_db" ? "الفرع النشط" : "نوع النشاط"}
                           </div>
-                          <p className="text-sm font-mono font-semibold" dir="ltr">
+                          <p className="text-sm font-semibold">
                             {displayValue(businessProfile?.activity_code)}
                           </p>
                         </div>
@@ -682,7 +1114,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         <div className="rounded-xl border border-border bg-background/50 p-3">
                           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
                             <Briefcase className="w-3 h-3" />
-                            اسم النشاط التجاري
+                            {businessProfile?.erp_kind === "infinity_retail_db" ? "اسم الفرع" : "الاسم التجاري المسجّل"}
                           </div>
                           <p className="text-sm font-semibold">{displayValue(businessProfile?.activity_name)}</p>
                         </div>
@@ -706,7 +1138,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         <div className="rounded-xl border border-border bg-background/50 p-3">
                           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
                             <Building2 className="w-3 h-3" />
-                            الفرع
+                            {businessProfile?.erp_kind === "infinity_retail_db" ? "رقم الفرع" : "رمز الفرع"}
                           </div>
                           <p className="text-sm font-mono font-semibold" dir="ltr">
                             {displayValue(businessProfile?.branch)}
@@ -724,7 +1156,7 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         <div className="rounded-xl border border-border bg-background/50 p-3">
                           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
                             <Phone className="w-3 h-3" />
-                            الجوال
+                            {businessProfile?.erp_kind === "infinity_retail_db" ? "البريد الإلكتروني" : "الجوال"}
                           </div>
                           <p className="text-sm font-mono" dir="ltr">{displayValue(businessProfile?.mobile)}</p>
                         </div>

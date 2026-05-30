@@ -1,4 +1,9 @@
 # PRODUCT_SCHEMA — مرجع أعمدة المنتجات (Marketing2026)
+
+> **InfinityRetailDB:** [`INFINITY_PRODUCT_SCHEMA.md`](./INFINITY_PRODUCT_SCHEMA.md)  
+> **معمارية ERP:** [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md)  
+> ⚠️ أداة `get_product_schema()` تُرجع **Marketing فقط** — على Infinity استخدم `search_query_patterns`.
+
 # مستخرج من Full_Marketing_Database_DDL.sql — للوكيل الذكي
 #
 # استدعِ الأداة: get_product_schema()

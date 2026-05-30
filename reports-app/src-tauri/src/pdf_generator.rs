@@ -418,3 +418,355 @@ fn fill_rect(layer: &PdfLayerReference, x1: f64, y1: f64, x2: f64, y2: f64, rgb:
         is_closed: true, has_fill: true, has_stroke: false, is_clipping_path: false,
     });
 }
+
+// ─── إيصال POS — 80mm (ورق حراري) ───────────────────────────────
+const RCPT_W: f64 = 80.0;
+const RCPT_MX: f64 = 4.0;
+const RCPT_CONTENT_W: f64 = RCPT_W - 2.0 * RCPT_MX;
+
+#[derive(Debug, Clone)]
+pub struct PosReceiptLine {
+    pub name: String,
+    pub unit: String,
+    pub qty: f64,
+    pub price: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PosReceiptMeta {
+    pub company_name: String,
+    pub address: String,
+    pub phone: String,
+    pub invoice_no: String,
+    pub invoice_time: String,
+    pub customer_name: String,
+    pub is_draft: bool,
+}
+
+fn draw_hline(layer: &PdfLayerReference, y: f64, dashed: bool) {
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
+    layer.set_outline_thickness(if dashed { 0.2 } else { 0.35 });
+    layer.add_shape(Line {
+        points: vec![
+            (Point::new(Mm(RCPT_MX), Mm(y)), false),
+            (Point::new(Mm(RCPT_W - RCPT_MX), Mm(y)), false),
+        ],
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
+    });
+}
+
+fn draw_rcpt_text(
+    layer: &PdfLayerReference,
+    font: &IndirectFontRef,
+    text: &str,
+    fs: f64,
+    y: f64,
+    align: u8, // 0=right 1=center 2=left
+) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let prepared = prepare_text(text);
+    let fitted = fit_text(&prepared, RCPT_CONTENT_W, fs);
+    let est_w = fitted.chars().count() as f64 * fs * 0.19;
+    let x = match align {
+        1 => (RCPT_W / 2.0 - est_w / 2.0).max(RCPT_MX),
+        2 => RCPT_MX,
+        _ => (RCPT_W - RCPT_MX - est_w).max(RCPT_MX),
+    };
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.05, 0.05, 0.05, None)));
+    layer.use_text(&fitted, fs, Mm(x), Mm(y), font);
+}
+
+// أعمدة الجدول (يمين ← يسار): البيان | الوحدة | الكمية | الإجمالي
+const COL_TOTAL_W: f64 = 13.0;
+const COL_QTY_W: f64 = 10.0;
+const COL_UNIT_W: f64 = 11.0;
+const RCPT_ROW_H: f64 = 6.5;
+
+struct RcptCols {
+    total_l: f64,
+    qty_l: f64,
+    unit_l: f64,
+    name_l: f64,
+    right: f64,
+}
+
+fn rcpt_col_bounds() -> RcptCols {
+    let right = RCPT_W - RCPT_MX;
+    let total_l = RCPT_MX;
+    let qty_l = total_l + COL_TOTAL_W;
+    let unit_l = qty_l + COL_QTY_W;
+    let name_l = unit_l + COL_UNIT_W;
+    RcptCols {
+        total_l,
+        qty_l,
+        unit_l,
+        name_l,
+        right,
+    }
+}
+
+fn draw_rcpt_cell(
+    layer: &PdfLayerReference,
+    font: &IndirectFontRef,
+    text: &str,
+    fs: f64,
+    x_left: f64,
+    x_right: f64,
+    y: f64,
+    align: u8, // 0=right 1=center 2=left
+) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let pad = 0.8;
+    let cell_w = (x_right - x_left - 2.0 * pad).max(1.0);
+    let prepared = prepare_text(text);
+    let fitted = fit_text(&prepared, cell_w, fs);
+    let est_w = fitted.chars().count() as f64 * fs * 0.19;
+    let x = match align {
+        1 => x_left + pad + (cell_w - est_w) / 2.0,
+        2 => x_left + pad,
+        _ => x_right - pad - est_w,
+    };
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.05, 0.05, 0.05, None)));
+    layer.use_text(&fitted, fs, Mm(x.max(x_left + pad)), Mm(y), font);
+}
+
+fn draw_rcpt_table_row(
+    layer: &PdfLayerReference,
+    font: &IndirectFontRef,
+    name: &str,
+    unit: &str,
+    qty: &str,
+    total: &str,
+    y_top: f64,
+    fs: f64,
+    header: bool,
+) {
+    let y_bot = y_top - RCPT_ROW_H;
+    let cols = rcpt_col_bounds();
+    let text_y = y_bot + 2.0;
+
+    if header {
+        fill_rect(layer, RCPT_MX, y_bot, cols.right, y_top, [0.92, 0.92, 0.92]);
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.1, 0.1, 0.1, None)));
+    }
+
+    draw_rcpt_cell(layer, font, name, fs, cols.name_l, cols.right, text_y, 0);
+    draw_rcpt_cell(layer, font, unit, fs, cols.unit_l, cols.name_l, text_y, 1);
+    draw_rcpt_cell(layer, font, qty, fs, cols.qty_l, cols.unit_l, text_y, 1);
+    draw_rcpt_cell(layer, font, total, fs, cols.total_l, cols.qty_l, text_y, 1);
+
+    draw_vline(layer, cols.name_l, y_bot, y_top, [0.55, 0.55, 0.55]);
+    draw_vline(layer, cols.unit_l, y_bot, y_top, [0.55, 0.55, 0.55]);
+    draw_vline(layer, cols.qty_l, y_bot, y_top, [0.55, 0.55, 0.55]);
+    draw_vline(layer, cols.total_l, y_bot, y_top, [0.55, 0.55, 0.55]);
+
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.55, 0.55, 0.55, None)));
+    layer.set_outline_thickness(0.2);
+    layer.add_shape(Line {
+        points: vec![
+            (Point::new(Mm(RCPT_MX), Mm(y_bot)), false),
+            (Point::new(Mm(cols.right), Mm(y_bot)), false),
+        ],
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
+    });
+}
+
+pub fn generate_pos_receipt_pdf(
+    meta: &PosReceiptMeta,
+    lines: &[PosReceiptLine],
+) -> Result<Vec<u8>, String> {
+    if lines.is_empty() {
+        return Err("لا توجد بنود للطباعة.".to_string());
+    }
+
+    let meta_h = 52.0 + if meta.address.is_empty() { 0.0 } else { 4.0 }
+        + if meta.phone.is_empty() { 0.0 } else { 4.5 };
+    let table_h = 6.0 + lines.len() as f64 * RCPT_ROW_H + RCPT_ROW_H + 2.0;
+    let footer_h = 12.0;
+    let page_h = meta_h + table_h + footer_h + 8.0;
+
+    let title = if meta.is_draft {
+        "مسودة فاتورة"
+    } else {
+        "إثبات بيع"
+    };
+    let (doc, page, layer_id) = PdfDocument::new(title, Mm(RCPT_W), Mm(page_h), "Layer 1");
+    let font = load_arabic_font(&doc)?;
+    let layer = doc.get_page(page).get_layer(layer_id);
+
+    fill_rect(&layer, 0.0, 0.0, RCPT_W, page_h, [1.0, 1.0, 1.0]);
+
+    let mut y = page_h - RCPT_MX - 2.0;
+
+    // ── ترويسة النشاط ──
+    draw_rcpt_text(&layer, &font, &meta.company_name, 9.5, y, 1);
+    y -= 5.0;
+    if !meta.address.is_empty() {
+        draw_rcpt_text(&layer, &font, &meta.address, 7.0, y, 1);
+        y -= 4.0;
+    }
+    if !meta.phone.is_empty() {
+        draw_rcpt_text(&layer, &font, &meta.phone, 7.0, y, 1);
+        y -= 4.5;
+    }
+
+    draw_hline(&layer, y, false);
+    y -= 4.5;
+
+    draw_rcpt_text(&layer, &font, title, 8.5, y, 1);
+    y -= 5.0;
+
+    draw_rcpt_text(
+        &layer,
+        &font,
+        &format!("رقم: {}", meta.invoice_no),
+        7.5,
+        y,
+        0,
+    );
+    y -= 4.0;
+    draw_rcpt_text(
+        &layer,
+        &font,
+        &format!("التاريخ: {}", meta.invoice_time),
+        7.0,
+        y,
+        0,
+    );
+    y -= 4.0;
+    draw_rcpt_text(
+        &layer,
+        &font,
+        &format!("العميل: {}", meta.customer_name),
+        7.0,
+        y,
+        0,
+    );
+    y -= 4.0;
+
+    draw_hline(&layer, y, true);
+    y -= 3.0;
+
+    // ── جدول البنود ──
+    let cols = rcpt_col_bounds();
+
+    // إطار الجدول العلوي
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
+    layer.set_outline_thickness(0.35);
+    layer.add_shape(Line {
+        points: vec![
+            (Point::new(Mm(RCPT_MX), Mm(y)), false),
+            (Point::new(Mm(cols.right), Mm(y)), false),
+        ],
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
+    });
+
+    draw_rcpt_table_row(
+        &layer,
+        &font,
+        "البيان",
+        "الوحدة",
+        "الكمية",
+        "الإجمالي",
+        y,
+        6.8,
+        true,
+    );
+    y -= RCPT_ROW_H;
+
+    let mut grand_total = 0.0f64;
+    for line in lines {
+        let line_total = line.qty * line.price;
+        grand_total += line_total;
+        let unit = if line.unit.trim().is_empty() {
+            "—".to_string()
+        } else {
+            line.unit.trim().to_string()
+        };
+        draw_rcpt_table_row(
+            &layer,
+            &font,
+            &line.name,
+            &unit,
+            &format_qty(line.qty),
+            &format_money(line_total),
+            y,
+            6.5,
+            false,
+        );
+        y -= RCPT_ROW_H;
+    }
+
+    // صف إجمالي الفاتورة
+    fill_rect(&layer, RCPT_MX, y - RCPT_ROW_H, cols.right, y, [0.95, 0.95, 0.95]);
+    let total_text_y = y - RCPT_ROW_H + 2.0;
+    draw_rcpt_cell(
+        &layer,
+        &font,
+        "إجمالي الفاتورة",
+        7.2,
+        cols.unit_l,
+        cols.right,
+        total_text_y,
+        0,
+    );
+    draw_rcpt_cell(
+        &layer,
+        &font,
+        &format_money(grand_total),
+        7.5,
+        cols.total_l,
+        cols.qty_l,
+        total_text_y,
+        1,
+    );
+    draw_vline(&layer, cols.qty_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
+    draw_vline(&layer, cols.unit_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
+    draw_vline(&layer, cols.name_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
+    draw_vline(&layer, cols.total_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
+    layer.set_outline_thickness(0.35);
+    layer.add_shape(Line {
+        points: vec![
+            (Point::new(Mm(RCPT_MX), Mm(y - RCPT_ROW_H)), false),
+            (Point::new(Mm(cols.right), Mm(y - RCPT_ROW_H)), false),
+        ],
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
+    });
+    y -= RCPT_ROW_H + 4.0;
+
+    draw_rcpt_text(&layer, &font, "شكراً لتعاملكم", 7.5, y, 1);
+
+    let mut output = Vec::new();
+    doc.save(&mut BufWriter::new(Cursor::new(&mut output)))
+        .map_err(|e| format!("فشل حفظ PDF: {}", e))?;
+    Ok(output)
+}
+
+fn format_money(n: f64) -> String {
+    format!("{:.2}", n)
+}
+
+fn format_qty(n: f64) -> String {
+    if (n - n.round()).abs() < 0.001 {
+        format!("{}", n.round() as i64)
+    } else {
+        format!("{:.2}", n)
+    }
+}

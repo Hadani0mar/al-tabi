@@ -1,4 +1,8 @@
 # DATABASE_VIEWS — Views وقواعد الربط (Marketing2026)
+
+> **InfinityRetailDB:** [`INFINITY_DATABASE_VIEWS.md`](./INFINITY_DATABASE_VIEWS.md)  
+> ⚠️ أداة `get_database_views()` تُرجع **Marketing فقط**.
+
 # للوكيل: get_database_views() | search_query_patterns("مبيعات يومية موظف")
 # مستخرج من DDL + INFORMATION_SCHEMA + اختبار sqlcmd
 

@@ -20,7 +20,7 @@ export function AppShellHeader({ businessName, connected = true }: AppShellHeade
           className="text-[13.5px] font-semibold"
           style={{ fontFamily: "var(--font-display)", color: "var(--fg-1)" }}
         >
-          التابي
+          نظام المتمكن
         </span>
         {businessName ? (
           <span className="text-xs" style={{ color: "var(--fg-3)" }}>

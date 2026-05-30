@@ -257,13 +257,13 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
           <img src="/assets/logo-mark.svg" alt="" width={44} height={44} className="rounded-[10px]" />
           <div>
             <div className="text-[22px] font-bold leading-tight" style={{ fontFamily: "var(--font-display)" }}>
-              التابي
+              نظام المتمكن
             </div>
             <div
               className="mt-0.5 text-[11px] font-medium opacity-70"
               style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}
             >
-              AL-TABI · REPORTS
+              NIZAM AL-MUTAMAKKUN
             </div>
           </div>
         </div>
@@ -303,7 +303,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
           {/* موبايل شعار */}
           <div className="lg:hidden flex items-center justify-center gap-2 text-lg font-bold mb-10">
             <img src="/assets/logo-mark.svg" alt="" width={32} height={32} className="rounded-lg" />
-            <span style={{ fontFamily: "var(--font-display)" }}>التابي</span>
+            <span style={{ fontFamily: "var(--font-display)" }}>نظام المتمكن</span>
           </div>
 
           {/* ── العنوان ── */}

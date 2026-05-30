@@ -51,7 +51,7 @@ jobs:
         with:
           projectPath: reports-app
           tagName: ${{ github.ref_name }}
-          releaseName: "al-tabi ${{ github.ref_name }}"
+          releaseName: "نظام المتمكن ${{ github.ref_name }}"
           releaseBody: "راجع CHANGELOG لتفاصيل هذا الإصدار."
           releaseDraft: false
           prerelease: false

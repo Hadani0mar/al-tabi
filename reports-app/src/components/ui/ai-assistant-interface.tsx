@@ -626,12 +626,6 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         {/* Chat History */}
          {chatHistory.length > 0 && (
           <div className="flex-1 overflow-y-auto w-full px-4 py-6 space-y-6 scrollbar-hide">
-             {(() => {
-                // أوجد فهرس آخر رسالة تحتوي على ملف — الزر يُعرض فقط عليها
-                const lastFileIdx = chatHistory.reduce((last, msg, i) =>
-                    /\[FILE_PATH:.*?\]/.test(msg.content) ? i : last, -1);
-                return null;
-             })()}
              {chatHistory.map((msg, i) => {
                 let content = msg.content;
                 let filePath = null;
@@ -640,7 +634,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                     filePath = fileMatch[1].trim();
                     content = content.replace(/\[FILE_PATH:.*?\]/g, "");
                 }
-                const lastFileIdx = chatHistory.reduce((last, m, j) =>
+                const lastFileIdx = chatHistory.reduce((last: number, m, j) =>
                     /\[FILE_PATH:.*?\]/.test(m.content) ? j : last, -1);
                 const isLastFileMsg = filePath !== null && i === lastFileIdx;
                 

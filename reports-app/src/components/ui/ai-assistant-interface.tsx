@@ -605,13 +605,32 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             <Menu className="w-5 h-5" />
             <span className="text-sm font-medium">سجل المحادثات</span>
           </button>
-          {activeChatId && (
-            <button onClick={handleNewChat} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
-              <Plus className="w-5 h-5" />
-              <span className="text-sm font-medium hidden sm:inline">محادثة جديدة</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleQuickRefreshAgent}
+              disabled={refreshingAgent}
+              title="تحديث تعليمات الوكيل من السحابة"
+              className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-5 h-5 ${refreshingAgent ? "animate-spin" : ""}`} />
+              <span className="text-sm font-medium hidden sm:inline">تحديث الوكيل</span>
             </button>
-          )}
+            {activeChatId && (
+              <button onClick={handleNewChat} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
+                <Plus className="w-5 h-5" />
+                <span className="text-sm font-medium hidden sm:inline">محادثة جديدة</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {refreshMessage && (
+          <div className="w-full mx-auto mb-3 px-2">
+            <div className="rounded-xl border px-4 py-2.5 text-sm text-center" style={{ borderColor: "var(--ai-bubble-border)", background: "var(--ai-bubble-bg)", color: "var(--ai-bubble-fg)" }}>
+              {refreshMessage}
+            </div>
+          </div>
+        )}
 
         <div className="w-full mx-auto flex flex-col h-[calc(100vh-12rem)] min-h-0 overflow-visible">
         

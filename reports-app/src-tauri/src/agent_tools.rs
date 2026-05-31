@@ -766,6 +766,49 @@ pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// أنماط مخزون Infinity: batch بجداول مؤقتة (#temp) — CREATE/DROP/INSERT INTO #… مسموح
+pub fn validate_pattern_batch_sql(sql: &str) -> Result<(), String> {
+    let upper = sql.to_uppercase();
+    if upper.trim().is_empty() {
+        return Err("الاستعلام فارغ.".to_string());
+    }
+    if !upper.contains("SELECT ") {
+        return Err("يجب أن يحتوي النمط على SELECT نهائي على الأقل.".to_string());
+    }
+    const HARD_BLOCK: &[&str] = &[
+        "INSERT INTO INVENTORY.", "INSERT INTO SALES.", "INSERT INTO PURCHASE.",
+        "UPDATE ", "DELETE FROM ", "DROP TABLE INVENTORY.", "DROP TABLE SALES.",
+        "DROP TABLE PURCHASE.", "EXEC ", "EXECUTE ", "TRUNCATE ", "ALTER ",
+        "CREATE TABLE INVENTORY.", "CREATE TABLE SALES.", "CREATE TABLE PURCHASE.",
+    ];
+    for kw in HARD_BLOCK {
+        if upper.contains(kw) {
+            return Err(format!("محظور في أنماط القراءة: {}", kw.trim()));
+        }
+    }
+    if upper.contains("CREATE TABLE ") && !upper.contains("CREATE TABLE #") {
+        return Err("CREATE TABLE مسموح للجداول المؤقتة (#…) فقط.".to_string());
+    }
+    if upper.contains("DROP TABLE ") && !upper.contains("DROP TABLE #") && !upper.contains("TEMPDB..#")
+    {
+        return Err("DROP TABLE مسموح للجداول المؤقتة (#…) فقط.".to_string());
+    }
+    Ok(())
+}
+
+pub fn is_pattern_batch_sql(sql: &str) -> bool {
+    let u = sql.to_uppercase();
+    u.contains("CREATE TABLE #") || u.contains("TEMPDB..#") || u.contains("IF OBJECT_ID('TEMPDB")
+}
+
+pub fn validate_sql_for_execution(sql: &str) -> Result<(), String> {
+    if is_pattern_batch_sql(sql) {
+        validate_pattern_batch_sql(sql)
+    } else {
+        validate_read_only_sql(sql)
+    }
+}
+
 /// يُفعّل QUOTED_IDENTIFIER لدعم أسماء أعمدة عربية بين \"...\"
 pub fn prepare_sql_batch(sql: &str) -> String {
     format!(
@@ -1443,12 +1486,23 @@ fn extract_all_sql_from_pattern_section(section: &str) -> Vec<String> {
     blocks
 }
 
-fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: u32) -> String {
+fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: Option<u32>) -> String {
     let mut out = sql.to_string();
     out = out.replace("DATEADD(day,-60,", &format!("DATEADD(day,-{},", days_recent));
     out = out.replace("DATEADD(day, -60,", &format!("DATEADD(day, -{},", days_recent));
-    out = out.replace("*30 -", &format!("*{} -", coverage_days));
-    out = out.replace("* 30 -", &format!("* {} -", coverage_days));
+    let cov_legacy = coverage_days.unwrap_or(30);
+    out = out.replace("*30 -", &format!("*{} -", cov_legacy));
+    out = out.replace("* 30 -", &format!("* {} -", cov_legacy));
+    out = out.replace(
+        "@window_days INT = 60",
+        &format!("@window_days INT = {}", days_recent),
+    );
+    if let Some(cov) = coverage_days {
+        out = out.replace(
+            "@target_coverage_days INT = 35",
+            &format!("@target_coverage_days INT = {}", cov),
+        );
+    }
     out
 }
 
@@ -2093,12 +2147,29 @@ pub async fn handle_run_query_pattern(
         });
     }
 
-    let section_body = section
+    let section_body_raw = section
         .split("\n\n---\n\n")
         .next()
         .unwrap_or(&section);
 
-    let sql_blocks = extract_all_sql_from_pattern_section(section_body);
+    let slug_from_header = section_body_raw
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("## PATTERN:"))
+        .map(str::trim)
+        .unwrap_or("");
+    let pattern_slug = catalog_entry
+        .as_ref()
+        .and_then(|e| e.section_slug(erp))
+        .unwrap_or(slug_from_header);
+
+    let section_body = crate::infinity_inventory_sql::augment_pattern_section(
+        section_body_raw,
+        pattern_slug,
+        erp,
+    );
+
+    let sql_blocks = extract_all_sql_from_pattern_section(&section_body);
     if sql_blocks.is_empty() {
         return json!({
             "error": "وُجد النمط لكن لم تُستخرج كتلة SQL. استخدم search_query_patterns ثم انسخ SQL يدوياً.",
@@ -2107,7 +2178,7 @@ pub async fn handle_run_query_pattern(
     }
 
     let dr = days_recent.filter(|d| *d > 0).unwrap_or(60);
-    let cov = coverage_days.filter(|d| *d > 0).unwrap_or(30);
+    let cov_opt = coverage_days.filter(|d| *d > 0);
 
     let conn_opt = app_state.conn.lock().await.clone();
     if conn_opt.is_none() {
@@ -2122,7 +2193,7 @@ pub async fn handle_run_query_pattern(
     let mut last_rows: Vec<Vec<String>> = Vec::new();
 
     for (idx, block) in sql_blocks.iter().enumerate() {
-        let mut sql = apply_pattern_sql_params(block, dr, cov);
+        let mut sql = apply_pattern_sql_params(block, dr, cov_opt);
         if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
             sql = apply_product_filter(&sql, pf);
         } else if sql.contains("%EMPLOYEE%") {
@@ -2134,7 +2205,7 @@ pub async fn handle_run_query_pattern(
         } else if sql.contains("%CUSTOMER%") {
             sql = apply_customer_filter(&sql, keywords);
         }
-        if let Err(e) = validate_read_only_sql(&sql) {
+        if let Err(e) = validate_sql_for_execution(&sql) {
             return json!({ "error": e, "sql_attempted": sql, "part_index": idx + 1 });
         }
         let exec_sql = prepare_sql_batch(&sql);
@@ -2539,6 +2610,19 @@ INNER JOIN dbo.ITEMS I ON M.ITEM_ID = I.ITEM_ID;
         let n = normalize_sql_for_readonly(sql);
         assert!(n.to_uppercase().starts_with("WITH"));
         assert!(!n.to_uppercase().contains("DECLARE"));
+    }
+
+    #[test]
+    fn allows_infinity_batch_temp_tables() {
+        let sql = r"
+SET NOCOUNT ON;
+IF OBJECT_ID('tempdb..#X') IS NOT NULL DROP TABLE #X;
+CREATE TABLE #X (ProductID INT PRIMARY KEY);
+INSERT INTO #X SELECT 1;
+SELECT ProductID FROM #X;
+";
+        assert!(is_pattern_batch_sql(sql));
+        assert!(validate_pattern_batch_sql(sql).is_ok());
     }
 }
 

@@ -17,6 +17,11 @@
 # - IsInActive=0 للمنتجات النشطة | تجنّب PostgreSQL syntax (LIMIT, ILIKE, NOW()).
 # - DDL مرجعي: InfinityRetailDB_DDL.sql
 #
+# ## مزامنة سحابية (Supabase OTA)
+# الأنماط وملف AGENT_InfinityRetailDB يُحمَّلان من Supabase عند التشغيل (كل ~15 دقيقة).
+# التطبيق ي fallback للنسخة المضمّنة إن انقطع الإنترنت.
+# النشر: `python reports-app/scripts/publish_agent_to_supabase.py` (service_role)
+#
 # كيفية الاستخدام (للوكيل الذكي):
 #
 # 1) search_query_patterns(keywords) — يُعيد نص النمط (حتى قسمين).
@@ -66,6 +71,19 @@
 # 5. validate_sql(sql) — قبل execute_raw_sql
 # 6. export_last_result(pdf|excel) — عند طلب تصدير
 # 7. save_favorite_query — فوراً عند «احفظ/خزّن» (لا تقل «تم الحفظ» بدون استدعاء الأداة)
+#
+# ## أنماط مخزون متقدمة (Infinity — sql-split) — نفّذ كل واحد على حدة
+# | pattern_id | متى تستخدمه |
+# |---|---|
+# | smart_purchase | طلبية شراء، كمية مقترحة، صافي المطلوب |
+# | slow_moving_adv | راكدة، بضاعة راكدة، تكلفة الراكد |
+# | expiry_risk_fefo | خطر الصلاحية، FEFO، كمية/قيمة الخطر |
+# | sales_trend_30 | اتجاه مبيعات 30/30، صاعد/هابط |
+# | trial_products | قيد التجربة، أصناف جديدة |
+# | phantom_products | أصناف وهمية، بدون بيع طويل |
+# | product_movement_class | تصنيف حركة: منشط/ميت/ضعيف |
+# **لا تدمجها** — اطلب `run_query_pattern(pattern_id=...)` للوظيفة المطلوبة فقط.
+# للتقرير الشامل استخدم schedule_report مع sql1.sql — لا execute_raw_sql.
 #
 # ## <thinking>  (تحليل داخلي — لا تُعرضه للمستخدم إلا إن طلب «اشرح خطواتك»)
 # 1. ما المطلوب بدقة؟ (تقرير، رقم، مقارنة موردين، توصية شراء...)
@@ -190,62 +208,16 @@ ORDER BY ISNULL(s.TotalQty, 0) ASC, p.ProductName;
 
 ---
 
-## PATTERN: طلبية-شراء-ذكية
-TRIGGERS: طلبية شراء, ماذا أشتري, شراء ذكي, suggested purchase, smart purchase
-TABLES: Inventory.Data_Products, SALES.Data_SalesInvoiceItems, SALES.Data_SalesInvoices
-NOTES: نافذة 60 يوم، تغطية 30 يوم. QYT في بنود البيع. استبدل 60/30 في SQL عند الحاجة.
+## PATTERN: طلبية-شراء-متقدمة
+BATCH: yes
+TRIGGERS: طلبية شراء, ماذا أشتري, شراء ذكي, صافي المطلوب, كمية مقترحة, suggested purchase, smart purchase
+TABLES: Inventory.Data_Products, Inventory.Data_ProductInventories, SALES.*, Purchase.*
+NOTES: Infinity فقط — من sql1.sql. معدل السحب واعٍ بأيام التوفّر. days_recent→@window_days (افتراض 60). coverage_days→@target_coverage_days (افتراض 35). يُرجع أصناف NetRequired>0 مع مورد مرن وتكلفة.
 ---
 
 ```sql
-;WITH
-AsOf AS (
-  SELECT CAST(MAX(SalesInvoiceDate) AS date) AS d
-  FROM SALES.Data_SalesInvoices
-),
-Stock AS (
-  SELECT ProductID_FK, SUM(StockOnHand) AS StockQty
-  FROM Inventory.Data_ProductInventories
-  GROUP BY ProductID_FK
-),
-SalesRecent AS (
-  SELECT si.ProductID_FK,
-         SUM(si.QYT) AS SoldQty,
-         COUNT(DISTINCT CAST(inv.SalesInvoiceDate AS date)) AS ActiveSaleDays
-  FROM SALES.Data_SalesInvoiceItems si
-  INNER JOIN SALES.Data_SalesInvoices inv ON inv.SalesInvoiceID_PK = si.SalesInvoiceID_FK
-  WHERE CAST(inv.SalesInvoiceDate AS date)
-        BETWEEN DATEADD(day, -60, (SELECT d FROM AsOf)) AND (SELECT d FROM AsOf)
-  GROUP BY si.ProductID_FK
-)
-SELECT TOP 50
-  p.ProductCode AS [كود],
-  LEFT(p.ProductName, 60) AS [اسم_المنتج],
-  CAST(ISNULL(st.StockQty, 0) AS decimal(18,2)) AS [المخزون],
-  CAST(ISNULL(sr.SoldQty, 0) AS decimal(18,2)) AS [مبيعات_60_يوم],
-  CAST(
-    CASE WHEN ISNULL(sr.ActiveSaleDays, 0) = 0 THEN 0
-         ELSE ISNULL(sr.SoldQty, 0) / CAST(sr.ActiveSaleDays AS float)
-    END AS decimal(18,3)
-  ) AS [معدل_يومي],
-  CAST(
-    CASE WHEN ISNULL(sr.ActiveSaleDays, 0) = 0 OR ISNULL(sr.SoldQty, 0) = 0 THEN NULL
-         ELSE ISNULL(st.StockQty, 0) / NULLIF(ISNULL(sr.SoldQty, 0) / CAST(sr.ActiveSaleDays AS float), 0)
-    END AS decimal(18,1)
-  ) AS [أيام_تغطية],
-  CAST(
-    CASE WHEN ISNULL(sr.ActiveSaleDays, 0) = 0 THEN 0
-         ELSE CASE WHEN (ISNULL(sr.SoldQty, 0) / CAST(sr.ActiveSaleDays AS float)) * 30 - ISNULL(st.StockQty, 0) > 0
-              THEN (ISNULL(sr.SoldQty, 0) / CAST(sr.ActiveSaleDays AS float)) * 30 - ISNULL(st.StockQty, 0)
-              ELSE 0 END
-    END AS decimal(18,2)
-  ) AS [كمية_مقترحة]
-FROM Inventory.Data_Products p
-LEFT JOIN Stock st ON st.ProductID_FK = p.ProductID_PK
-LEFT JOIN SalesRecent sr ON sr.ProductID_FK = p.ProductID_PK
-WHERE p.IsInActive = 0
-ORDER BY
-  CASE WHEN ISNULL(st.StockQty, 0) <= 0 AND ISNULL(sr.SoldQty, 0) > 0 THEN 0 ELSE 1 END,
-  [أيام_تغطية];
+-- يُحمَّل من sql-split/01-purchase-order.sql
+SELECT 1;
 ```
 
 ---
@@ -1434,6 +1406,84 @@ FROM NetSales s
 INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = s.ProductID
 WHERE p.IsInActive = 0 AND s.NetQty > 0
 ORDER BY s.NetQty DESC;
+```
+
+---
+
+## PATTERN: أصناف-راكدة-متقدمة
+BATCH: yes
+TRIGGERS: راكدة, راكد, بضاعة راكدة, slow moving, dead stock, تكلفة الراكد
+TABLES: Inventory.*, SALES.*
+NOTES: Infinity — الزائد عن هدف التغطية × التكلفة. pattern_id=slow_moving_adv. SQL من sql-split/02-slow-moving.sql
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: خطر-الصلاحية-FEFO
+BATCH: yes
+TRIGGERS: خطر الصلاحية, كمية الخطر, FEFO, expiry risk, قيمة الخطر
+TABLES: Inventory.Data_ProductInventories
+NOTES: Infinity — كمية قد تنتهي قبل بيعها. pattern_id=expiry_risk_fefo. للقائمة البسيطة استخدم تقرير-الصلاحية.
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: اتجاه-مبيعات-30-30
+BATCH: yes
+TRIGGERS: اتجاه المبيعات, 30/30, تغيّر المبيعات, صاعد, هابط, sales trend
+TABLES: SALES.*, Inventory.*
+NOTES: Infinity — مقارنة آخر 30 يوم vs السابق (واعٍ بالتوفّر). pattern_id=sales_trend_30
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: أصناف-قيد-التجربة
+BATCH: yes
+TRIGGERS: قيد التجربة, أصناف تجريبية, trial products, صنف جديد
+TABLES: Inventory.*, Purchase.*, SALES.*
+NOTES: Infinity — أصناف جديدة تحت المراقبة. pattern_id=trial_products
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: أصناف-وهمية
+BATCH: yes
+TRIGGERS: وهمي, وهمية, صنف وهمي, phantom, بدون بيع, متابعة وهمي
+TABLES: Inventory.Data_Products, Purchase.*, SALES.*
+NOTES: Infinity — بدون بيع 90/180/270 يوم. pattern_id=phantom_products. استعلام خفيف.
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: تصنيف-حركة-الصنف
+BATCH: yes
+TRIGGERS: حركة الصنف, منشط, ضعيف الحركة, صنف ميت, تصنيف الحركة
+TABLES: Inventory.*, SALES.*
+NOTES: Infinity — منشط جداً/نشط/ميت/قيد التجربة. pattern_id=product_movement_class. لتاريخ حركة منتج واحد استخدم حركة-صنف-تفصيلية + product_filter.
+---
+
+```sql
+SELECT 1;
 ```
 
 ---

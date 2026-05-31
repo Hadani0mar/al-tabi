@@ -45,6 +45,15 @@ interface BusinessProfile {
   erp_label?: string | null;
 }
 
+interface AgentCloudSyncStatus {
+  last_check_unix: number;
+  last_success_unix: number;
+  bundles_updated: number;
+  patterns_updated: number;
+  source: string;
+  error?: string | null;
+}
+
 interface PharmacyShareSettings {
   sync_key: string;
   sharing_enabled: boolean;
@@ -189,6 +198,9 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   const [businessError, setBusinessError] = useState<string | null>(null);
   const [aiAdvancedMode, setAiAdvancedMode] = useState(false);
   const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
+  const [agentCloudSyncing, setAgentCloudSyncing] = useState(false);
+  const [agentCloudStatus, setAgentCloudStatus] = useState<AgentCloudSyncStatus | null>(null);
+  const [agentCloudMessage, setAgentCloudMessage] = useState<string | null>(null);
 
   const [pharmacySyncKey, setPharmacySyncKey] = useState("");
   const [pharmacySharing, setPharmacySharing] = useState(false);
@@ -232,6 +244,9 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
         const themeId = await loadActiveTheme();
         setActiveTheme(themeId);
         applyTheme(themeId);
+
+        const cloudStatus = await invoke<AgentCloudSyncStatus>("get_agent_cloud_sync_status");
+        setAgentCloudStatus(cloudStatus);
       } catch (err) {
         console.error("Failed to load settings:", err);
       }
@@ -239,6 +254,47 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
 
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    const unlisten = listen<{ bundles_updated: number; patterns_updated: number; source: string }>(
+      "agent-cloud-sync",
+      (event) => {
+        const { bundles_updated, patterns_updated, source } = event.payload;
+        setAgentCloudMessage(
+          `تم تحديث ${bundles_updated} ملف و${patterns_updated} نمط من ${source}.`
+        );
+        invoke<AgentCloudSyncStatus>("get_agent_cloud_sync_status")
+          .then(setAgentCloudStatus)
+          .catch(console.error);
+      }
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const handleRefreshAgentCloud = async () => {
+    setAgentCloudSyncing(true);
+    setAgentCloudMessage(null);
+    try {
+      const status = await invoke<AgentCloudSyncStatus>("refresh_agent_cloud_content", {
+        force: true,
+      });
+      setAgentCloudStatus(status);
+      const total = status.bundles_updated + status.patterns_updated;
+      if (status.error) {
+        setAgentCloudMessage(`تعذّر التحديث — يُستخدم المحلي: ${status.error}`);
+      } else if (total > 0) {
+        setAgentCloudMessage(`تم تنزيل ${status.bundles_updated} ملف و${status.patterns_updated} نمط.`);
+      } else {
+        setAgentCloudMessage("الأنماط محدّثة — لا يوجد جديد على السحابة.");
+      }
+    } catch (err) {
+      setAgentCloudMessage(String(err));
+    } finally {
+      setAgentCloudSyncing(false);
+    }
+  };
 
   const loadBusinessProfile = useCallback(async (force = false) => {
     if (!connectionKey) {
@@ -680,6 +736,41 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                         <Loader2 className="w-3 h-3 animate-spin" />
                         جارٍ الحفظ...
                       </p>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">أنماط الوكيل السحابية</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                        تُحدَّث تلقائياً كل ~15 دقيقة من Supabase — بدون إصدار جديد للتطبيق.
+                        التحديث الكامل للتطبيق يبقى للتغييرات الكبيرة فقط.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRefreshAgentCloud}
+                      disabled={agentCloudSyncing}
+                    >
+                      {agentCloudSyncing ? (
+                        <Loader2 className="w-4 h-4 animate-spin ml-2" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 ml-2" />
+                      )}
+                      تحديث الأنماط الآن
+                    </Button>
+                    {agentCloudStatus?.last_success_unix ? (
+                      <p className="text-xs text-muted-foreground">
+                        آخر مزامنة ناجحة:{" "}
+                        {new Date(agentCloudStatus.last_success_unix * 1000).toLocaleString("ar-LY")}
+                        {agentCloudStatus.source ? ` (${agentCloudStatus.source})` : ""}
+                      </p>
+                    ) : null}
+                    {agentCloudMessage && (
+                      <div className="rounded-lg border border-border bg-muted/40 p-2 text-xs">
+                        {agentCloudMessage}
+                      </div>
                     )}
                   </div>
                 </div>

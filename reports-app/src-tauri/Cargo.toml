@@ -1,6 +1,6 @@
 [package]
 name = "reports-app"
-version = "0.1.5"
+version = "0.1.6"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -39,4 +39,5 @@ printpdf = "0.5"
 unicode-bidi = "0.3"
 rust_xlsxwriter = "0.95.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
 

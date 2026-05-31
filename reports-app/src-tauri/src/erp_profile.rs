@@ -186,6 +186,9 @@ fn load_infinity_agent_content() -> String {
 }
 
 pub fn load_agent_patterns(erp: ErpKind) -> String {
+    if let Some(remote) = crate::agent_content_sync::load_cached_agent_md(erp) {
+        return remote;
+    }
     match erp {
         ErpKind::InfinityRetailDb => load_infinity_agent_content(),
         ErpKind::Marketing2026 | ErpKind::Unknown => load_marketing_agent_content(),

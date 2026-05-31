@@ -41,7 +41,10 @@ pub fn extract_pattern_section_by_slug(
     for section in content.split("\n## PATTERN:").skip(1) {
         let header = section.lines().next()?.trim();
         if header == target {
-            return Some(format!("## PATTERN:{section}"));
+            let raw = format!("## PATTERN:{section}");
+            return Some(crate::infinity_inventory_sql::augment_pattern_section(
+                &raw, target, erp,
+            ));
         }
     }
     None
@@ -1187,6 +1190,10 @@ pub async fn handle_with_groq(
 ) {
     // Greeting gate: skip RAG and LLM for simple social messages
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
+
+    // مزامنة أنماط/برومبت من Supabase (OTA — بدون تحديث التطبيق)
+    let _cloud_sync = crate::agent_content_sync::refresh_from_supabase(false).await;
+
     if let Some(reply) = try_handle_greeting(user_text, erp) {
         let _ = send_html(client, token, chat_id, reply).await;
         return;
@@ -2478,6 +2485,15 @@ pub async fn handle_with_groq_local(
     }
 
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
+
+    // مزامنة أنماط/برومبت من Supabase (كل ~15 دقيقة — بدون تحديث التطبيق)
+    let _cloud_sync = crate::agent_content_sync::refresh_from_supabase(false).await;
+    if _cloud_sync.bundles_updated + _cloud_sync.patterns_updated > 0 {
+        println!(
+            "[agent_sync] updated bundles={} patterns={}",
+            _cloud_sync.bundles_updated, _cloud_sync.patterns_updated
+        );
+    }
 
     if let Some(reply) = try_handle_greeting(user_text, erp) {
         return Ok(reply);

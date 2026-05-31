@@ -82,6 +82,23 @@ pub const CATALOG: &[PatternEntry] = &[
         ],
     },
     PatternEntry {
+        id: "employee_of_month",
+        name_ar: "موظف الشهر (أفضل مبيعات)",
+        section_marketing: "موظف-الشهر",
+        section_infinity: "",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "موظف الشهر",
+            "أفضل موظف",
+            "أفضل مبيعات الشهر",
+            "الموظف الأكثر مبيعاً",
+            "employee of the month",
+            "أفضل بائع",
+        ],
+    },
+    PatternEntry {
         id: "sales_daily_employee",
         name_ar: "مبيعات يومية لكل موظف",
         section_marketing: "مبيعات-يومية-لكل-موظف",

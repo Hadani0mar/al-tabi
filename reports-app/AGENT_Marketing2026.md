@@ -1350,6 +1350,39 @@ ORDER BY [إجمالي_المبيعات] DESC;
 
 ---
 
+## PATTERN: موظف-الشهر
+TRIGGERS: موظف الشهر, أفضل موظف, أفضل مبيعات الشهر, أعلى موظف مبيعاً, الموظف الأكثر مبيعاً, best employee, employee of the month, top seller employee, ترتيب الموظفين الشهري, أفضل بائع
+TABLES: SALE_INVOICE, SALE_ITEMS, USERS
+NOTES:
+  - يُرجع **ترتيب الموظفين لمبيعات الشهر الحالي** — الصف الأول هو «موظف الشهر» صاحب أعلى مبيعات.
+  - الشهر = شهر آخر تاريخ مبيعات MAX(S_DATE) (يضمن وجود بيانات دائماً).
+  - الإيراد = SUM(SI.QTY * SI.PRICE). الموظف = SALE_INVOICE.USERS_ID → USERS.FULL_NAME.
+  - استبعاد الفواتير الملغاة: S_STATUES <> 2. الترتيب: الأعلى مبيعاً أولاً.
+---
+
+```sql
+;WITH AsOf AS (
+  SELECT CAST(MAX(S_DATE) AS date) AS d FROM dbo.SALE_INVOICE
+)
+SELECT TOP 20
+  ROW_NUMBER() OVER (ORDER BY SUM(SI.QTY * SI.PRICE) DESC) AS [الترتيب],
+  ISNULL(U.FULL_NAME, N'غير محدد') AS [الموظف],
+  COUNT(DISTINCT INV.S_ID) AS [عدد_الفواتير],
+  CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إجمالي_المبيعات],
+  YEAR((SELECT d FROM AsOf)) AS [السنة],
+  MONTH((SELECT d FROM AsOf)) AS [الشهر]
+FROM dbo.SALE_INVOICE INV
+INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
+WHERE YEAR(INV.S_DATE) = YEAR((SELECT d FROM AsOf))
+  AND MONTH(INV.S_DATE) = MONTH((SELECT d FROM AsOf))
+  AND ISNULL(INV.S_STATUES, 0) <> 2
+GROUP BY U.USERS_ID, U.FULL_NAME
+ORDER BY [إجمالي_المبيعات] DESC;
+```
+
+---
+
 ## PATTERN: آخر-منتجات-بيعت-اليوم
 TRIGGERS: آخر منتجات بيعت اليوم, منتجات بيعت اليوم, الأصناف المباعة اليوم, آخر الأصناف المباعة, ماذا بيع اليوم, آخر مبيعات اليوم, last products sold today, products sold today, what sold today, recent sales today, آخر بنود مبيعات اليوم
 TABLES: SALE_ITEMS, SALE_INVOICE, ITEMS

@@ -1967,9 +1967,19 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                             },
                                         )
                                         .await;
+                                        let r_str = result.to_string();
+                                        if r_str.contains("\"error\"") {
+                                            crate::agent_error_log::log_error_background(
+                                                erp.kind_id(),
+                                                "execute_raw_sql",
+                                                r_str.chars().take(600).collect::<String>(),
+                                                Some(sql_query.chars().take(800).collect::<String>()),
+                                                None,
+                                            );
+                                        }
                                         recent_sql.push(sql_norm);
                                         if recent_sql.len() > 3 { recent_sql.remove(0); }
-                                        result.to_string()
+                                        r_str
                                     };
 
                                     let tool_resp_msg = json!({
@@ -3593,8 +3603,15 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                             kw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
                                         };
                                         if pattern_call_count >= MAX_PATTERN_PER_TURN {
+                                            crate::agent_error_log::log_error_background(
+                                                erp.kind_id(),
+                                                "run_query_pattern",
+                                                format!("تجاوز الحد: {} محاولات — keywords={}", MAX_PATTERN_PER_TURN, kw),
+                                                None,
+                                                None,
+                                            );
                                             json!({
-                                                "error": format!("تجاوزت {} محاولات لـ run_query_pattern. لخّص آخر نتيجة — لا تقل إن الأنماط «معطّلة».", MAX_PATTERN_PER_TURN)
+                                                "error": format!("وصلت لـ {} محاولات. قدّم للمستخدم ملخصاً بما وجدته حتى الآن — لا تذكر أي قيود تقنية.", MAX_PATTERN_PER_TURN)
                                             })
                                             .to_string()
                                         } else if pattern_keywords_seen.iter().any(|k| k == &dedupe_key) {
@@ -3616,11 +3633,26 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                                 .await
                                             {
                                                 let s = func_response_data.to_string();
-                                                if !s.contains("\"error\"") {
+                                                if s.contains("\"error\"") {
+                                                    crate::agent_error_log::log_error_background(
+                                                        erp.kind_id(),
+                                                        "run_query_pattern",
+                                                        s.chars().take(500).collect::<String>(),
+                                                        None,
+                                                        Some(serde_json::json!({ "keywords": kw, "pattern_id": pid })),
+                                                    );
+                                                } else {
                                                     pattern_executed = true;
                                                 }
                                                 s
                                             } else {
+                                                crate::agent_error_log::log_error_background(
+                                                    erp.kind_id(),
+                                                    "run_query_pattern",
+                                                    "dispatch_extended_tool returned None",
+                                                    None,
+                                                    Some(serde_json::json!({ "keywords": kw })),
+                                                );
                                                 "{\"error\": \"فشل تنفيذ النمط.\"}".to_string()
                                             }
                                         }

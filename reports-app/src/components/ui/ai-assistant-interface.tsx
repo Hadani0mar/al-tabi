@@ -626,6 +626,12 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         {/* Chat History */}
          {chatHistory.length > 0 && (
           <div className="flex-1 overflow-y-auto w-full px-4 py-6 space-y-6 scrollbar-hide">
+             {(() => {
+                // أوجد فهرس آخر رسالة تحتوي على ملف — الزر يُعرض فقط عليها
+                const lastFileIdx = chatHistory.reduce((last, msg, i) =>
+                    /\[FILE_PATH:.*?\]/.test(msg.content) ? i : last, -1);
+                return null;
+             })()}
              {chatHistory.map((msg, i) => {
                 let content = msg.content;
                 let filePath = null;
@@ -634,6 +640,9 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                     filePath = fileMatch[1].trim();
                     content = content.replace(/\[FILE_PATH:.*?\]/g, "");
                 }
+                const lastFileIdx = chatHistory.reduce((last, m, j) =>
+                    /\[FILE_PATH:.*?\]/.test(m.content) ? j : last, -1);
+                const isLastFileMsg = filePath !== null && i === lastFileIdx;
                 
                 return (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
@@ -748,7 +757,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                   {content}
                                </ReactMarkdown>
                             </div>
-                            {filePath && (
+                            {isLastFileMsg && filePath && (
                                 <button
                                     onClick={() => invoke("open_local_file", { path: filePath }).catch(err => alert("فشل فتح الملف: " + err))}
                                     className="self-start flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-semibold mt-2 shadow-sm border"

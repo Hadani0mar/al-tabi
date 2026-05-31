@@ -31,6 +31,7 @@ pub mod erp_profile;
 pub mod erp_adapters;
 pub mod pattern_catalog;
 pub mod pharmacy_share;
+pub mod agent_error_log;
 
 pub struct AppState {
     pub conn: Arc<Mutex<Option<SqlConnection>>>,

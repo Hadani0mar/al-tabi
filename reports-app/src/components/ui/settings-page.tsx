@@ -739,40 +739,78 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                     )}
                   </div>
 
-                  <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">أنماط الوكيل السحابية</p>
-                      <p className="text-xs text-muted-foreground leading-relaxed mt-1">
-                        تُحدَّث تلقائياً كل ~15 دقيقة من Supabase — بدون إصدار جديد للتطبيق.
-                        التحديث الكامل للتطبيق يبقى للتغييرات الكبيرة فقط.
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleRefreshAgentCloud}
-                      disabled={agentCloudSyncing}
-                    >
-                      {agentCloudSyncing ? (
-                        <Loader2 className="w-4 h-4 animate-spin ml-2" />
-                      ) : (
-                        <RefreshCw className="w-4 h-4 ml-2" />
-                      )}
-                      تحديث الأنماط الآن
-                    </Button>
-                    {agentCloudStatus?.last_success_unix ? (
-                      <p className="text-xs text-muted-foreground">
-                        آخر مزامنة ناجحة:{" "}
-                        {new Date(agentCloudStatus.last_success_unix * 1000).toLocaleString("ar-LY")}
-                        {agentCloudStatus.source ? ` (${agentCloudStatus.source})` : ""}
-                      </p>
-                    ) : null}
-                    {agentCloudMessage && (
-                      <div className="rounded-lg border border-border bg-muted/40 p-2 text-xs">
-                        {agentCloudMessage}
+                  <div className="relative rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-500/[0.04] to-indigo-500/[0.04] p-5 space-y-4 overflow-hidden shadow-[0_4px_30px_rgba(0,0,0,0.03)] backdrop-blur-md">
+                    <div className="absolute -right-10 -top-10 w-32 h-32 bg-violet-500/10 rounded-full blur-2xl pointer-events-none" />
+                    <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                    
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-violet-500/15 text-violet-600 flex items-center justify-center shadow-inner">
+                        <Bot className="w-5 h-5 animate-pulse" />
                       </div>
+                      <div>
+                        <p className="text-[15px] font-bold text-foreground">تحديثات الوكيل الذكي السحابية (OTA Sync)</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
+                          تتم المزامنة الفورية وتحديث كافة استعلامات وتعاليم الوكيل الذكي مباشرة من قاعدة البيانات.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        onClick={handleRefreshAgentCloud}
+                        disabled={agentCloudSyncing}
+                        className={cn(
+                          "w-full py-6 text-sm font-semibold rounded-xl transition-all duration-300 flex items-center justify-center gap-2.5",
+                          "bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white border-0",
+                          "shadow-[0_4px_20px_rgba(124,58,237,0.25)] hover:shadow-[0_4px_25px_rgba(124,58,237,0.4)]",
+                          "active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
+                        )}
+                      >
+                        {agentCloudSyncing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin ml-2" />
+                            جاري فحص وتحديث الوكيل الذكي...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-4 h-4 ml-2 transition-transform hover:rotate-180 duration-500" />
+                            تحديث الوكيل الذكي الآن
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {agentCloudStatus?.last_success_unix ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                          آخر مزامنة ناجحة:
+                        </span>
+                        <span className="font-semibold text-foreground bg-muted px-2 py-0.5 rounded-full" dir="ltr">
+                          {new Date(agentCloudStatus.last_success_unix * 1000).toLocaleString("ar-LY")}
+                          {agentCloudStatus.source ? ` (${agentCloudStatus.source})` : ""}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {agentCloudMessage && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={cn(
+                          "rounded-xl border p-3 text-xs leading-relaxed transition-all",
+                          agentCloudMessage.includes("تعذّر") 
+                            ? "border-red-500/10 bg-red-500/[0.02] text-red-600"
+                            : agentCloudMessage.includes("الأنماط محدّثة")
+                            ? "border-amber-500/10 bg-amber-500/[0.02] text-amber-600"
+                            : "border-green-500/10 bg-green-500/[0.02] text-green-600"
+                        )}
+                      >
+                        {agentCloudMessage}
+                      </motion.div>
                     )}
                   </div>
+
                 </div>
               </>
             )}

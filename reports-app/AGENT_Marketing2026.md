@@ -1322,43 +1322,30 @@ ORDER BY SortOrder, [إيرادات] DESC;
 TRIGGERS: مبيعات اليوم, مبيعات اليوم للموظفين, مبيعات الموظفين اليوم, إيرادات اليوم لكل موظف, مبيعات اليوم الحالي, today sales by employee, today employee sales, مبيعات هذا اليوم, كم باع كل موظف اليوم
 TABLES: SALE_INVOICE, SALE_ITEMS, USERS
 NOTES:
-  - **اليوم التقويمي الحالي** = CAST(GETDATE() AS date) — وليس MAX(S_DATE). إن أراد المستخدم «آخر يوم فيه مبيعات» استخدم نمط «مبيعات آخر يوم موظف».
+  - قائمة بسيطة: **كل موظف في صف** باسمه وعدد فواتيره وإجمالي مبيعاته وتاريخ اليوم. لا صف إجمالي.
+  - **اليوم التقويمي الحالي** = CAST(GETDATE() AS date). إن أراد المستخدم «آخر يوم فيه مبيعات» استخدم نمط «مبيعات آخر يوم موظف».
   - الإيراد = SUM(SI.QTY * SI.PRICE). SALE_ITEMS لا يحتوي S_DATE — الربط عبر S_ID إلى SALE_INVOICE.
   - الموظف = SALE_INVOICE.USERS_ID → USERS.FULL_NAME.
-  - استبعاد الفواتير الملغاة: S_STATUES <> 2.
-  - صف «═══ الإجمالي ═══» في النهاية = مجموع كل الموظفين.
-  - إن كانت النتيجة فارغة فلا مبيعات اليوم بعد — اقترح على المستخدم نمط «مبيعات آخر يوم موظف».
+  - استبعاد الفواتير الملغاة: S_STATUES <> 2. الترتيب: الأعلى مبيعاً أولاً.
+  - إن كانت النتيجة فارغة فلا مبيعات اليوم بعد — اقترح نمط «مبيعات آخر يوم موظف».
 ---
 
 ```sql
 ;WITH AsOf AS (
   SELECT CAST(GETDATE() AS date) AS d
-),
-EmpSales AS (
-    SELECT ISNULL(U.FULL_NAME, N'غير محدد') AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد_الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات], 0 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
-    WHERE CAST(INV.S_DATE AS date) = (SELECT d FROM AsOf)
-      AND ISNULL(INV.S_STATUES, 0) <> 2
-    GROUP BY U.USERS_ID, U.FULL_NAME
-),
-Grand AS (
-    SELECT N'═══ الإجمالي ═══' AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد_الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات], 1 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    WHERE CAST(INV.S_DATE AS date) = (SELECT d FROM AsOf)
-      AND ISNULL(INV.S_STATUES, 0) <> 2
 )
 SELECT
-  (SELECT d FROM AsOf) AS [تاريخ_اليوم],
-  [الموظف], [عدد_الفواتير], [إيرادات]
-FROM (SELECT * FROM EmpSales UNION ALL SELECT * FROM Grand) X
-ORDER BY SortOrder, [إيرادات] DESC;
+  ISNULL(U.FULL_NAME, N'غير محدد') AS [الموظف],
+  COUNT(DISTINCT INV.S_ID) AS [عدد_الفواتير],
+  CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إجمالي_المبيعات],
+  CAST(MAX(INV.S_DATE) AS date) AS [التاريخ]
+FROM dbo.SALE_INVOICE INV
+INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
+WHERE CAST(INV.S_DATE AS date) = (SELECT d FROM AsOf)
+  AND ISNULL(INV.S_STATUES, 0) <> 2
+GROUP BY U.USERS_ID, U.FULL_NAME
+ORDER BY [إجمالي_المبيعات] DESC;
 ```
 
 ---

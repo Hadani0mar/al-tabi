@@ -3568,7 +3568,7 @@ dependencies = [
 
 [[package]]
 name = "reports-app"
-version = "0.1.7"
+version = "0.1.12"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

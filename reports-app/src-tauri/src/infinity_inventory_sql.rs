@@ -12,6 +12,10 @@ fn embedded_sql(slug: &str) -> Option<&'static str> {
         "أصناف-قيد-التجربة" => Some(include_str!("../../sql-split/05-trial-products.sql")),
         "أصناف-وهمية" => Some(include_str!("../../sql-split/06-phantom-products.sql")),
         "تصنيف-حركة-الصنف" => Some(include_str!("../../sql-split/07-product-movement.sql")),
+        "فحص-الأصناف-والوحدات" => Some(include_str!("../../sql-split/08-check-items-uom.sql")),
+        "حساب-توفر-المخزون" => Some(include_str!("../../sql-split/09-check-availability.sql")),
+        "المبيعات-وصافي-المطلوب" => Some(include_str!("../../sql-split/10-net-required.sql")),
+        "فواتير-المشتريات-والصلاحية" => Some(include_str!("../../sql-split/11-purchase-invoices-expiry.sql")),
         _ => None,
     }
 }

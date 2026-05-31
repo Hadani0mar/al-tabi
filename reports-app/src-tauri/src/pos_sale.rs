@@ -301,7 +301,8 @@ pub async fn search_pos_products(
     search_pos_products_impl(conn, query, erp).await
 }
 
-/// طباعة إثبات بيع محلي — لا يكتب أي شيء في ERP
+/// طباعة إثبات بيع محلي — لا يكتب أي شيء في ERP.
+/// يولّد PDF الإيصال ويُرجع مساره؛ الواجهة تفتحه فتظهر نافذة طباعة Windows.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn print_pos_receipt(
     cust_name: String,

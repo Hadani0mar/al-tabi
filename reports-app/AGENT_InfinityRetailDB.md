@@ -82,6 +82,10 @@
 # | trial_products | قيد التجربة، أصناف جديدة |
 # | phantom_products | أصناف وهمية، بدون بيع طويل |
 # | product_movement_class | تصنيف حركة: منشط/ميت/ضعيف |
+# | check_items_uom | فحص الأصناف، معامل التعبئة والعبوات والوحدات |
+# | check_availability | حساب توفر المخزون، تتبع الرصيد التراكمي وتواجد الصنف |
+# | net_required_check | المبيعات وصافي المطلوب، متوسط السحب اليومي والكمية المطلوبة |
+# | purchase_invoices_expiry | فواتير المشتريات والصلاحية، فحص فواتير الشراء والخصومات والتكلفة |
 # **لا تدمجها** — اطلب `run_query_pattern(pattern_id=...)` للوظيفة المطلوبة فقط.
 # للتقرير الشامل استخدم schedule_report مع sql1.sql — لا execute_raw_sql.
 #
@@ -1473,11 +1477,9 @@ NOTES: Infinity — بدون بيع 90/180/270 يوم. pattern_id=phantom_produc
 SELECT 1;
 ```
 
----
-
 ## PATTERN: تصنيف-حركة-الصنف
 BATCH: yes
-TRIGGERS: حركة الصنف, منشط, ضعيف الحركة, صنف ميت, تصنيف الحركة
+TRIGGERS: حركة الصنف, منشط, ضعيف الحركة, صنف ميت, تصنيف الحركة, product movement class
 TABLES: Inventory.*, SALES.*
 NOTES: Infinity — منشط جداً/نشط/ميت/قيد التجربة. pattern_id=product_movement_class. لتاريخ حركة منتج واحد استخدم حركة-صنف-تفصيلية + product_filter.
 ---
@@ -1487,4 +1489,57 @@ SELECT 1;
 ```
 
 ---
+
+## PATTERN: فحص-الأصناف-والوحدات
+BATCH: yes
+TRIGGERS: فحص الأصناف والعبوات, معامل التعبئة, check items uom, فحص الأصناف
+TABLES: Inventory.Data_Products, Inventory.Data_ProductUOMs, Inventory.RefUOMs
+NOTES: Infinity — فحص الأصناف وتحديد معامل التعبئة والتكلفة المرجعية. pattern_id=check_items_uom
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: حساب-توفر-المخزون
+BATCH: yes
+TRIGGERS: حساب توفر المخزون, توفر المخزون, أيام التوفر, رصيد نهاية اليوم, check availability
+TABLES: Inventory.Data_Products, Inventory.Data_InventoryTransactions
+NOTES: Infinity — حساب رصيد نهاية اليوم وتتبع أيام توفر الصنف. pattern_id=check_availability
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: المبيعات-وصافي-المطلوب
+BATCH: yes
+TRIGGERS: المبيعات وصافي المطلوب, صافي المطلوب لتغطية, متوسط البيع اليومي الدقيق, net required
+TABLES: Inventory.Data_Products, SALES.Data_SalesInvoices, SALES.Data_SalesInvoiceItems
+NOTES: Infinity — حساب متوسط البيع اليومي وصافي الاحتياجات المطلوبة لتغطية 30 يوماً. pattern_id=net_required_check
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
+## PATTERN: فواتير-المشتريات-والصلاحية
+BATCH: yes
+TRIGGERS: فواتير المشتريات والصلاحية, فواتير آخر 3 أشهر, فحص فواتير الشراء, تواريخ صلاحيات المشتريات, purchase invoices expiry
+TABLES: Purchase.Data_PurchaseInvoices, Purchase.Data_PurchaseInvoiceItems, Purchase.Data_Suppliers
+NOTES: Infinity — فحص فواتير المشتريات لآخر 3 أشهر مع احتساب الخصومات والتكلفة. pattern_id=purchase_invoices_expiry
+---
+
+```sql
+SELECT 1;
+```
+
+---
+
 # نهاية الملف

@@ -16,6 +16,7 @@ import {
   Tag,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
@@ -73,6 +74,8 @@ interface Props {
 
 export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [inputValue, setInputValue] = useState("");
+  const [refreshingAgent, setRefreshingAgent] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [loadingChatIds, setLoadingChatIds] = useState<Set<string>>(new Set());
@@ -104,6 +107,33 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     (activeChatIdRef.current !== null &&
       loadingChatIds.has(activeChatIdRef.current)) ||
     (activeChatId !== null && loadingChatIds.has(activeChatId));
+
+  const handleQuickRefreshAgent = async () => {
+    setRefreshingAgent(true);
+    setRefreshMessage(null);
+    try {
+      const status = await invoke<{
+        bundles_updated: number;
+        patterns_updated: number;
+        source: string;
+        error?: string | null;
+      }>("refresh_agent_cloud_content", { force: true });
+      
+      const total = status.bundles_updated + status.patterns_updated;
+      if (status.error) {
+        setRefreshMessage(`❌ تعذّر التحديث: ${status.error}`);
+      } else if (total > 0) {
+        setRefreshMessage(`✅ تم تحديث الوكيل! تم تنزيل ${status.bundles_updated} ملف و${status.patterns_updated} نمط.`);
+      } else {
+        setRefreshMessage("⚡ الوكيل محدّث بالفعل! لا توجد تعديلات جديدة.");
+      }
+    } catch (err) {
+      setRefreshMessage(`❌ فشل التحديث: ${err}`);
+    } finally {
+      setRefreshingAgent(false);
+      setTimeout(() => setRefreshMessage(null), 4000);
+    }
+  };
 
   const saveLastActiveChatId = async (id: string | null) => {
     try {

@@ -1,4 +1,4 @@
-﻿/* خطر الصلاحية (FEFO) — InfinityRetailDB
+/* خطر الصلاحية (FEFO) — InfinityRetailDB
    كمية قد تنتهي قبل بيعها حسب معدل السحب
 */
 

@@ -1,4 +1,4 @@
-﻿/* اتجاه المبيعات 30/30 (واعٍ بالتوفّر) — InfinityRetailDB
+/* اتجاه المبيعات 30/30 (واعٍ بالتوفّر) — InfinityRetailDB
 */
 
 SET NOCOUNT ON;

@@ -23,6 +23,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Extract changelog for this version
+        id: changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $content = Get-Content CHANGELOG.md -Raw
+          # استخراج قسم الإصدار الحالي
+          $pattern = "## \[$tag\].*?(?=\n## \[|\z)"
+          if ($content -match "(?s)$pattern") {
+            $notes = $matches[0].Trim()
+          } else {
+            $notes = "الإصدار $tag"
+          }
+          # حفظ في ملف مؤقت لتفادي مشاكل الأحرف الخاصة
+          $notes | Out-File -FilePath release_notes.txt -Encoding utf8
+          echo "RELEASE_NOTES_FILE=release_notes.txt" >> $env:GITHUB_ENV
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -52,9 +69,18 @@ jobs:
           projectPath: reports-app
           tagName: ${{ github.ref_name }}
           releaseName: "نظام المتمكن ${{ github.ref_name }}"
-          releaseBody: "راجع CHANGELOG لتفاصيل هذا الإصدار."
+          releaseBody: "${{ env.RELEASE_NOTES }}"
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      - name: Update release notes from file
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = Get-Content release_notes.txt -Raw
+          $tag = "${{ github.ref_name }}"
+          gh release edit $tag --notes $notes

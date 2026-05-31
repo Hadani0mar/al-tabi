@@ -30,6 +30,7 @@ function buildConn(c: ConnectionInfo) {
     username:         c.username,
     password:         c.password ?? "",
     use_windows_auth: c.use_windows_auth,
+    disable_encryption: c.disable_encryption ?? false,
   };
 }
 

@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 interface SqlConnection {
   server: string; port: number; database: string;
   username: string; password: string; use_windows_auth: boolean;
+  disable_encryption: boolean;
 }
 interface ConnectionResult {
   success: boolean; message: string; server_version: string | null;
@@ -37,7 +38,8 @@ interface SqlLoginPageProps {
   onConnected?: (info: {
     server: string; port: number; database: string;
     username: string; password: string;
-    use_windows_auth: boolean; server_version: string | null;
+    use_windows_auth: boolean; disable_encryption: boolean;
+    server_version: string | null;
   }) => void;
 }
 
@@ -61,7 +63,7 @@ const AI_STEPS: AiStep[] = [
 ];
 
 export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps) {
-  const [form, setForm] = useState<SqlConnection>({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false });
+  const [form, setForm] = useState<SqlConnection>({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false, disable_encryption: false });
   const [showPass, setShowPass] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [msg, setMsg] = useState("");
@@ -92,7 +94,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
       const enc = await store.get<Record<string, string>>(`conn_${name}`);
       if (!enc) return;
       const password = enc.password ? await invoke<string>("decrypt_value", { encrypted: enc.password }) : "";
-      setForm({ server: enc.server ?? "", port: parseInt(enc.port ?? "1433"), database: enc.database ?? "", username: enc.username ?? "", password, use_windows_auth: enc.use_windows_auth === "true" });
+      setForm({ server: enc.server ?? "", port: parseInt(enc.port ?? "1433"), database: enc.database ?? "", username: enc.username ?? "", password, use_windows_auth: enc.use_windows_auth === "true", disable_encryption: enc.disable_encryption === "true" });
       setSavedConn(true);
     } catch (_) {}
   }
@@ -100,7 +102,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
     try {
       const store = await load(STORE_FILE, { autoSave: false, defaults: {} });
       const encPassword = form.password ? await invoke<string>("encrypt_value", { value: form.password }) : "";
-      await store.set(`conn_${name}`, { server: form.server, port: String(form.port), database: form.database, username: form.username, password: encPassword, use_windows_auth: String(form.use_windows_auth) });
+      await store.set(`conn_${name}`, { server: form.server, port: String(form.port), database: form.database, username: form.username, password: encPassword, use_windows_auth: String(form.use_windows_auth), disable_encryption: String(form.disable_encryption) });
       const names = await store.get<string[]>("connection_names") ?? [];
       if (!names.includes(name)) await store.set("connection_names", [...names, name]);
       await store.set("last_connection", name);
@@ -138,6 +140,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
             server: form.server, port: form.port, database: form.database,
             username: form.username, password: form.password,
             use_windows_auth: form.use_windows_auth,
+            disable_encryption: form.disable_encryption,
             server_version: result.server_version,
           });
         }, 1200);
@@ -164,7 +167,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
     setAutoError("");
     setStatus("idle");
     setMsg("");
-    setForm({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false });
+    setForm({ server: "", port: 1433, database: "", username: "", password: "", use_windows_auth: false, disable_encryption: false });
     await sleep(450);
 
     try {
@@ -202,6 +205,7 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
         username: "",
         password: "",
         use_windows_auth: true,
+        disable_encryption: false,
       };
 
       const result = await invoke<ConnectionResult>("test_sql_connection", { conn });
@@ -374,6 +378,17 @@ export function SqlLoginPage({ autoConnecting, onConnected }: SqlLoginPageProps)
                 استخدام مصادقة Windows
               </Label>
               <ShieldAlert className={cn("w-3.5 h-3.5 mr-auto transition-colors", form.use_windows_auth ? "text-primary" : "text-muted-foreground/30")} />
+            </div>
+
+            {/* تعطيل تشفير TLS — لـ SQL Server القديم */}
+            <div className="flex items-center gap-2.5 p-3 rounded-lg border border-dashed border-border bg-muted/30">
+              <Checkbox id="noencrypt" checked={form.disable_encryption}
+                onCheckedChange={v => set("disable_encryption", !!v)} />
+              <Label htmlFor="noencrypt" className="flex items-center gap-1.5 font-normal cursor-pointer">
+                <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />
+                تعطيل تشفير الاتصال (TLS)
+              </Label>
+              <span className="text-[10px] text-muted-foreground mr-auto">للسيرفرات القديمة</span>
             </div>
 
             {/* بيانات تسجيل الدخول */}

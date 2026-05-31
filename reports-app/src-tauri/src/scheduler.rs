@@ -460,20 +460,11 @@ async fn execute_scheduled_sql(
     conn: &crate::SqlConnection,
     sql: &str,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    use tiberius::{Client, AuthMethod, Config};
+    use tiberius::Client;
     use tokio::net::TcpStream;
     use tokio_util::compat::TokioAsyncWriteCompatExt;
 
-    let mut config = Config::new();
-    config.host(&conn.server);
-    config.port(conn.port);
-    config.database(&conn.database);
-    if conn.use_windows_auth {
-        config.authentication(AuthMethod::Integrated);
-    } else {
-        config.authentication(AuthMethod::sql_server(&conn.username, &conn.password));
-    }
-    config.trust_cert();
+    let config = crate::prepare_config(conn);
 
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await

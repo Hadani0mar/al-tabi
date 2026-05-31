@@ -1,5 +1,5 @@
 use crate::pdf_generator::{generate_pos_receipt_pdf, PosReceiptLine, PosReceiptMeta};
-use crate::{build_config, AppState, SqlConnection};
+use crate::{AppState, SqlConnection};
 use serde::{Deserialize, Serialize};
 use tiberius::Client;
 use tokio::net::TcpStream;
@@ -45,8 +45,7 @@ fn local_receipt_no() -> String {
 }
 
 async fn connect_client(conn: &SqlConnection) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, String> {
-    let mut config = build_config(conn);
-    config.trust_cert();
+    let config = crate::prepare_config(conn);
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await
         .map_err(|e| format!("تعذّر الوصول للسيرفر: {}", e))?;

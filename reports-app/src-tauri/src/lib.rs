@@ -6,7 +6,7 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use tiberius::{AuthMethod, Client, Config};
+use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 use std::collections::HashMap;
@@ -65,6 +65,9 @@ pub struct SqlConnection {
     pub username: String,
     pub password: String,
     pub use_windows_auth: bool,
+    /// تعطيل TLS — لـ SQL Server القديم الذي لا يدعم خوارزميات TLS الحديثة
+    #[serde(default)]
+    pub disable_encryption: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -387,8 +390,7 @@ async fn test_sql_connection(conn: SqlConnection) -> Result<ConnectionResult, St
 }
 
 async fn try_connect(conn: SqlConnection) -> ConnectionResult {
-    let mut config = build_config(&conn);
-    config.trust_cert();
+    let config = prepare_config(&conn);
 
     match TcpStream::connect(format!("{}:{}", conn.server, conn.port)).await {
         Ok(tcp) => match Client::connect(config, tcp.compat_write()).await {
@@ -433,8 +435,7 @@ async fn execute_sql_query(
     conn: SqlConnection,
     sql_query: String,
 ) -> Result<QueryResult, String> {
-    let mut config = build_config(&conn);
-    config.trust_cert();
+    let config = prepare_config(&conn);
 
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await
@@ -507,8 +508,7 @@ async fn search_products(
         ),
     };
 
-    let mut config = build_config(&conn);
-    config.trust_cert();
+    let config = prepare_config(&conn);
 
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await
@@ -578,8 +578,7 @@ async fn search_product_mentions(
         },
     };
 
-    let mut config = build_config(&conn);
-    config.trust_cert();
+    let config = prepare_config(&conn);
 
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await
@@ -1028,6 +1027,16 @@ pub(crate) fn build_config(conn: &SqlConnection) -> Config {
         config.authentication(AuthMethod::Integrated);
     } else {
         config.authentication(AuthMethod::sql_server(&conn.username, &conn.password));
+    }
+    config
+}
+
+pub(crate) fn prepare_config(conn: &SqlConnection) -> Config {
+    let mut config = build_config(conn);
+    if conn.disable_encryption {
+        config.encryption(EncryptionLevel::NotSupported);
+    } else {
+        config.trust_cert();
     }
     config
 }

@@ -30,6 +30,7 @@ export interface ConnectionInfo {
   username: string;
   password: string;
   use_windows_auth: boolean;
+  disable_encryption: boolean;
   server_version: string | null;
 }
 
@@ -81,6 +82,7 @@ export default function App() {
           username: enc.username ?? "",
           password,
           use_windows_auth: enc.use_windows_auth === "true",
+          disable_encryption: enc.disable_encryption === "true",
         };
 
         const result = await invoke<{ success: boolean; message: string; server_version: string | null }>(

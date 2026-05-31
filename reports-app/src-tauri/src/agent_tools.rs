@@ -1065,6 +1065,27 @@ pub fn tool_definitions() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "export_html_pdf",
+                "description": "Converts an HTML string to a PDF using Gotenberg (Chromium). Use this when the user asks for a PDF report with custom design. YOU design the HTML+CSS freely — support RTL Arabic, use tables, colors, gradients, whatever fits the data. The HTML must be complete (<!DOCTYPE html>...) and self-contained (inline CSS only, no external files). Returns a local file path for the user to open.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "html": {
+                            "type": "string",
+                            "description": "Complete HTML document with inline CSS. Must include <!DOCTYPE html>, <html dir='rtl' lang='ar'>, UTF-8 charset meta, and all styling inline. Design freely — you choose colors, layout, fonts, tables."
+                        },
+                        "filename": {
+                            "type": "string",
+                            "description": "Output filename without extension (Arabic or English, no spaces — use dashes). Example: 'تقرير-المبيعات' or 'sales-report'."
+                        }
+                    },
+                    "required": ["html", "filename"]
+                }
+            }
+        }),
     ]
 }
 
@@ -1079,6 +1100,7 @@ pub const EXTENDED_TOOL_NAMES: &[&str] = &[
     "compare_periods",
     "suggest_indexes",
     "export_last_result",
+    "export_html_pdf",
     "get_product_schema",
     "get_database_views",
     "plan_complex_query",
@@ -2747,6 +2769,61 @@ mod product_filter_tests {
     }
 }
 
+/// يحوّل HTML يولّده الوكيل إلى PDF عبر Gotenberg ويسلّمه للمستخدم.
+pub async fn handle_export_html_pdf(
+    html: &str,
+    filename: &str,
+    app_state: &Arc<AppState>,
+    delivery: ExportDelivery,
+) -> Value {
+    if html.trim().is_empty() {
+        return json!({ "error": "HTML فارغ — لا يمكن توليد PDF." });
+    }
+
+    match crate::gotenberg::html_to_pdf(html).await {
+        Ok(bytes) => match delivery {
+            ExportDelivery::Local => {
+                let safe_name = filename
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+                    .collect::<String>();
+                let safe_name = if safe_name.is_empty() { "تقرير".to_string() } else { safe_name };
+                let fname = format!("{}.pdf", safe_name);
+                let path = std::env::temp_dir().join(&fname);
+                if std::fs::write(&path, &bytes).is_ok() {
+                    record_exported_file(app_state, &path).await;
+                    json!({
+                        "result": format!(
+                            "تم توليد PDF بنجاح. أخبر المستخدم بذلك وأضف في نهاية ردك: [FILE_PATH:{}]",
+                            path.display()
+                        )
+                    })
+                } else {
+                    json!({ "error": "فشل حفظ PDF على القرص." })
+                }
+            }
+            ExportDelivery::Telegram { client, token, chat_id } => {
+                let fname = format!("{}.pdf", filename.chars().take(30).collect::<String>().replace(' ', "-"));
+                let caption = format!("📄 {}", filename);
+                match crate::telegram::send_pdf(&client, &token, chat_id, &fname, bytes, &caption).await {
+                    Ok(_) => json!({ "result": "تم إرسال PDF إلى Telegram." }),
+                    Err(e) => json!({ "error": format!("فشل إرسال PDF: {e}") }),
+                }
+            }
+        },
+        Err(e) => {
+            crate::agent_error_log::log_error_background(
+                "any",
+                "export_html_pdf",
+                e.clone(),
+                None,
+                None,
+            );
+            json!({ "error": format!("فشل Gotenberg: {e}") })
+        }
+    }
+}
+
 pub async fn dispatch_extended_tool(
     name: &str,
     args_str: &str,
@@ -2841,6 +2918,11 @@ pub async fn dispatch_extended_tool(
             let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("تقرير");
             let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("excel");
             handle_export_last_result(title, format, app_state, delivery).await
+        }
+        "export_html_pdf" => {
+            let html = args.get("html").and_then(|v| v.as_str()).unwrap_or("");
+            let filename = args.get("filename").and_then(|v| v.as_str()).unwrap_or("تقرير");
+            handle_export_html_pdf(html, filename, app_state, delivery).await
         }
         _ => return None,
     };

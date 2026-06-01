@@ -287,11 +287,11 @@ fn item_pick_barcode_or(model_col: &str, name_col: &str, item_id_col: &str, esca
 
 /// يستبدل N'%PRODUCT%' / {{PRODUCT_FILTER}} — Marketing و Infinity
 pub fn apply_product_filter(sql: &str, filter: &str) -> String {
+    let mut out = sql.replace("{{PRODUCT_FILTER}}", filter.trim());
     let tokens = product_tokens(filter);
     if tokens.is_empty() {
-        return sql.to_string();
+        return out;
     }
-    let mut out = sql.to_string();
     if is_barcode_filter(filter) {
         let escaped = filter.trim().replace('\'', "''");
         for (model, name, id) in [
@@ -313,7 +313,6 @@ pub fn apply_product_filter(sql: &str, filter: &str) -> String {
         }
     }
     // Infinity placeholders
-    out = out.replace("{{PRODUCT_FILTER}}", filter.trim());
     for (model, name) in [
         ("I.ITEM_MODEL", "I.ITEM_NAME"),
         ("ITEM_MODEL", "ITEM_NAME"),
@@ -1447,6 +1446,8 @@ fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: u32) -> 
     let mut out = sql.to_string();
     out = out.replace("DATEADD(day,-60,", &format!("DATEADD(day,-{},", days_recent));
     out = out.replace("DATEADD(day, -60,", &format!("DATEADD(day, -{},", days_recent));
+    out = out.replace("DATEADD(day,60,", &format!("DATEADD(day,{},", days_recent));
+    out = out.replace("DATEADD(day, 60,", &format!("DATEADD(day, {},", days_recent));
     out = out.replace("*30 -", &format!("*{} -", coverage_days));
     out = out.replace("* 30 -", &format!("* {} -", coverage_days));
     out
@@ -2120,12 +2121,11 @@ pub async fn handle_run_query_pattern(
     let mut last_sql = String::new();
     let mut last_columns: Vec<String> = Vec::new();
     let mut last_rows: Vec<Vec<String>> = Vec::new();
-
     for (idx, block) in sql_blocks.iter().enumerate() {
         let mut sql = apply_pattern_sql_params(block, dr, cov);
-        if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
-            sql = apply_product_filter(&sql, pf);
-        } else if sql.contains("%EMPLOYEE%") {
+        let pf_val = product_filter.unwrap_or("");
+        sql = apply_product_filter(&sql, pf_val);
+        if sql.contains("%EMPLOYEE%") {
             let emp = extract_employee_hint_from_text(keywords).unwrap_or_default();
             sql = apply_employee_filter(&sql, &emp);
         } else if sql.contains("%PARTY%") {

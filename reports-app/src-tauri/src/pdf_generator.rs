@@ -7,11 +7,11 @@ const PW: f64 = 297.0;
 const PH: f64 = 210.0;
 const MARGIN: f64 = 8.0;
 
-const TITLE_H: f64 = 11.0;
-const CONT_H:  f64 = 7.5;
-const HDR_H:   f64 = 8.0;
-const ROW_H:   f64 = 6.5;
-const FOOTER_H: f64 = 6.0;
+const TITLE_H: f64 = 13.0;
+const CONT_H:  f64 = 9.0;
+const HDR_H:   f64 = 10.0;
+const ROW_H:   f64 = 8.5;
+const FOOTER_H: f64 = 7.0;
 
 // ─── الدالة الرئيسية ──────────────────────────────────────────────
 pub fn generate_report_pdf(
@@ -62,7 +62,7 @@ pub fn generate_report_pdf(
 
         // ─── شريط العنوان ──────────────────────────────────────────
         let (strip_h, strip_fs) = if pi == 0 { (TITLE_H, title_fs) } else { (CONT_H, footer_fs) };
-        fill_rect(&layer, MARGIN, top_y - strip_h, PW - MARGIN, top_y, [0.10, 0.22, 0.45]);
+        fill_rect(&layer, MARGIN, top_y - strip_h, PW - MARGIN, top_y, [0.06, 0.16, 0.32]);
         layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
         let label = if pi == 0 { title.to_string() }
                     else { format!("{} - {} {}", title, pi + 1, "تابع") };
@@ -80,8 +80,8 @@ pub fn generate_report_pdf(
         let hdr_top = top_y - strip_h;
 
         // ─── رأس الأعمدة ───────────────────────────────────────────
-        fill_rect(&layer, MARGIN, hdr_top - HDR_H, PW - MARGIN, hdr_top, [0.18, 0.37, 0.65]);
-        layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
+        fill_rect(&layer, MARGIN, hdr_top - HDR_H, PW - MARGIN, hdr_top, [0.92, 0.94, 0.97]);
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.06, 0.16, 0.32, None)));
 
         let mut cx = PW - MARGIN; // نبدأ من اليمين
         for (ci, col) in columns.iter().enumerate() {
@@ -89,9 +89,9 @@ pub fn generate_report_pdf(
             let cell_right = cx;
             let cell_left  = cx - cw;
             let text = fit_text(&prepare_text(col), cw - 3.0, hdr_fs);
-            layer.use_text(&text, hdr_fs, Mm(cell_left + 1.5), Mm(hdr_top - HDR_H + 2.0), &font);
+            layer.use_text(&text, hdr_fs, Mm(cell_left + 1.5), Mm(hdr_top - HDR_H + 3.0), &font);
             // خط فاصل عمودي
-            draw_vline(&layer, cell_left, hdr_top - HDR_H, hdr_top, [0.30, 0.48, 0.72]);
+            draw_vline(&layer, cell_left, hdr_top - HDR_H, hdr_top, [0.82, 0.85, 0.88]);
             cx -= cw;
             let _ = cell_right;
         }
@@ -107,7 +107,7 @@ pub fn generate_report_pdf(
 
             // خلفية متناوبة
             if ri % 2 == 1 {
-                fill_rect(&layer, MARGIN, row_bot, PW - MARGIN, row_top, [0.95, 0.97, 1.00]);
+                fill_rect(&layer, MARGIN, row_bot, PW - MARGIN, row_top, [0.96, 0.97, 0.99]);
             }
 
             // نص الخلايا + خطوط عمودية
@@ -119,15 +119,15 @@ pub fn generate_report_pdf(
                 // نص مقتطع ومنسّق
                 layer.set_fill_color(Color::Rgb(Rgb::new(0.08, 0.08, 0.08, None)));
                 let text = fit_text(&prepare_text(cell), cw - 3.0, body_fs);
-                layer.use_text(&text, body_fs, Mm(cell_left + 1.5), Mm(row_bot + 1.8), &font);
+                layer.use_text(&text, body_fs, Mm(cell_left + 1.5), Mm(row_bot + 2.6), &font);
 
                 // خط فاصل عمودي
-                draw_vline(&layer, cell_left, row_bot, row_top, [0.82, 0.82, 0.82]);
+                draw_vline(&layer, cell_left, row_bot, row_top, [0.90, 0.91, 0.93]);
                 cx2 -= cw;
             }
 
             // خط أفقي سفلي للصف
-            layer.set_outline_color(Color::Rgb(Rgb::new(0.82, 0.82, 0.82, None)));
+            layer.set_outline_color(Color::Rgb(Rgb::new(0.90, 0.91, 0.93, None)));
             layer.set_outline_thickness(0.15);
             layer.add_shape(Line {
                 points: vec![
@@ -142,7 +142,7 @@ pub fn generate_report_pdf(
 
         // ─── إطار الجدول الخارجي ────────────────────────────────────
         let table_bot = MARGIN + FOOTER_H + 1.0;
-        layer.set_outline_color(Color::Rgb(Rgb::new(0.55, 0.55, 0.55, None)));
+        layer.set_outline_color(Color::Rgb(Rgb::new(0.60, 0.62, 0.65, None)));
         layer.set_outline_thickness(0.6);
         layer.add_shape(Line {
             points: vec![
@@ -155,25 +155,25 @@ pub fn generate_report_pdf(
         });
 
         // ─── الفوتر ────────────────────────────────────────────────
-        fill_rect(&layer, MARGIN, MARGIN, PW - MARGIN, MARGIN + FOOTER_H, [0.92, 0.94, 0.97]);
+        fill_rect(&layer, MARGIN, MARGIN, PW - MARGIN, MARGIN + FOOTER_H, [0.91, 0.91, 0.92]);
         layer.set_fill_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
 
         // يسار: رقم الصفحة
         layer.use_text(
             &prepare_text(&format!("{} / {}", pi + 1, n_pages)),
-            footer_fs, Mm(MARGIN + 2.0), Mm(MARGIN + 1.5), &font,
+            footer_fs, Mm(MARGIN + 2.0), Mm(MARGIN + 1.8), &font,
         );
         // وسط: تحذير الحد الأقصى
         if rows.len() > max_rows {
             layer.use_text(
                 &prepare_text(&format!("{} / {} صف", max_rows, rows.len())),
-                footer_fs - 0.5, Mm(PW / 2.0 - 12.0), Mm(MARGIN + 1.5), &font,
+                footer_fs - 0.5, Mm(PW / 2.0 - 12.0), Mm(MARGIN + 1.8), &font,
             );
         }
         // يمين: إجمالي
         layer.use_text(
             &prepare_text(&format!("النتائج: {}", row_data.len())),
-            footer_fs, Mm(PW - MARGIN - 24.0), Mm(MARGIN + 1.5), &font,
+            footer_fs, Mm(PW - MARGIN - 24.0), Mm(MARGIN + 1.8), &font,
         );
     }
 
@@ -188,10 +188,10 @@ pub fn generate_report_pdf(
 fn adaptive_font_sizes(n_cols: usize) -> (f64, f64, f64, f64) {
     // (title, header, body, footer)
     match n_cols {
-        0..=5  => (12.0, 8.0, 7.5, 6.0),
-        6..=8  => (11.0, 7.0, 6.5, 5.5),
-        9..=11 => (10.0, 6.0, 5.8, 5.0),
-        _      => ( 9.0, 5.5, 5.2, 4.8),
+        0..=4  => (17.5, 11.5, 10.5, 8.5),
+        5..=7  => (15.5, 10.5, 9.5, 8.0),
+        8..=10 => (13.5, 9.5, 8.5, 7.5),
+        _      => (11.5, 8.5, 7.5, 6.5),
     }
 }
 

@@ -79,12 +79,21 @@
 # </thinking>
 #
 # ## <answer>  (ما يراه المستخدم)
-# - عربية واضحة — عناوين، قوائم، أهم الأرقام أولاً
-# - أرقام **من نتائج الأداة فقط** — مع الوحدات: د.ل، قطعة، يوم، %
-# - ترجم أسماء الأعمدة في PDF/Excel (جدول الترجمة أعلاه — لا ProductName خام)
-# - لا «سعر الجمهور» — Infinity: UomPrice1 = السعر، UomPrice4 = سعر 4
-# - توصية عملية مختصرة + اقتراح استعلام مكمّل إن كان مفيداً
-# - Telegram: HTML (<b>, <i>, <code>) فقط — لا Markdown (** أو _)
+# - **لهجة ليبية خفيفة وقصيرة جداً (لتوفير التوكنز وضمان السرعة):**
+#   * ابدأ بترحيب ليبي خفيف ومختصر للغاية (مثل: "مرحبتين بيك." أو "أهلاً بيك أخي. تفضل النتائج:").
+#   * ممنوع نهائياً التملق، التحيات الطويلة، أو صيغ التبجيل والمبالغة الفارغة (مثل "يا فندم"، "يسعدني خدمتكم"، "بدقة متناهية").
+#   * اعرض نتائج البيانات فوراً واختصر قدر الإمكان لتقليل التكاليف والتوكنز.
+# - **فهم ذكي وتجنب الجمود:**
+#   * إذا طلب المستخدم تقريراً لـ "اليوم" أو "مبيعات يومية" ولم تكن هناك مبيعات مسجلة لليوم الحالي، ابحث عن آخر تاريخ مبيعات نشط في قاعدة البيانات `MAX(SalesInvoiceDate)` واستخدمه كمرجع بلطف واختصار: "بناءً على آخر البيانات بتاريخ [التاريخ]، تفضل تقرير المبيعات:".
+#   * احرص دائماً على حساب الإجماليات الفرعية والعامة للنتائج واعرضها بوضوح باختصار شديد في نهاية ردك.
+# - **الاقتراحات الموجزة والخطوات التالية:**
+#   * **تصدير التقرير:** اقترح التصدير باختصار شديد ودون إطالة: "تبيه إكسل أو PDF؟".
+#   * **اقتراحات مكملة:** اقترح استعلاماً مكملاً واحداً أو اثنين كحد أقصى باختصار شديد (مثل: "نزيدك حركة صنف؟" أو "تبيني نشوفلك ديون الموردين؟").
+# - عربية واضحة — عناوين، قوائم، أهم الأرقام أولاً.
+# - أرقام **من نتائج الأداة فقط** — مع الوحدات: د.ل، قطعة، يوم، %.
+# - ترجم أسماء الأعمدة في PDF/Excel (جدول الترجمة أعلاه — لا ProductName خام).
+# - لا «سعر الجمهور» — Infinity: UomPrice1 = السعر، UomPrice4 = سعر 4.
+# - Telegram: HTML (<b>, <i>, <code>) فقط — لا Markdown (** أو _).
 # </answer>
 #
 # ⚠️ جميع الاستعلامات تبدأ بـ WITH أو SELECT — متوافقة مع execute_raw_sql.
@@ -129,30 +138,64 @@ ORDER BY p.ProductName, u.UOMName;
 ---
 
 ## PATTERN: تقرير-الصلاحية
-TRIGGERS: صلاحية, منتهية, قريبة الانتهاء, expiry, expiring products, تقرير الصلاحية
+TRIGGERS: صلاحية, منتهية, قريبة الانتهاء, expiry, expiring products, تقرير الصلاحية, الصلاحيات, المنتهية, ينتهي هذا الشهر, سينتهي قريباً
 TABLES: Inventory.Data_ProductInventories, Inventory.Data_Products, MyCompany.Config_Branchs
-NOTES: ExpiryDate من Data_ProductInventories. StockOnHand > 0. 90 يوم للتحذير.
+NOTES: يحتوي هذا النمط على استعلامين للصلاحية (المنتهي بالكامل، وما سينتهي). تم استبعاد كود الصنف والفرع وعرض فقط الحقول المطلوبة لتكون مهنية ومبسطة ومجمعة لمنع التكرار.
 ---
 
 ```sql
+-- 1. المنتجات المنتهية الصلاحية بالكامل حالياً ولا تصلح (رصيد > 0)
+-- الأعمدة: [اسم المنتج]، [الكمية]، [تاريخ الانتهاء]
 SELECT TOP 100
-  p.ProductCode AS [كود],
-  p.ProductName AS [اسم_المنتج],
-  b.BranchName AS [الفرع],
-  CAST(i.StockOnHand AS decimal(18,2)) AS [الكمية],
-  CAST(i.ExpiryDate AS date) AS [تاريخ_الصلاحية],
-  DATEDIFF(day, CAST(GETDATE() AS date), CAST(i.ExpiryDate AS date)) AS [أيام_متبقية],
-  CASE
-    WHEN i.ExpiryDate < GETDATE() THEN N'منتهية'
-    WHEN DATEDIFF(day, CAST(GETDATE() AS date), CAST(i.ExpiryDate AS date)) <= 90 THEN N'قريبة'
-    ELSE N'سليمة'
-  END AS [الحالة]
+  p.ProductName AS [اسم المنتج],
+  CAST(SUM(i.StockOnHand) AS decimal(18,2)) AS [الكمية],
+  CAST(i.ExpiryDate AS date) AS [تاريخ الانتهاء]
 FROM Inventory.Data_ProductInventories i
 INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = i.ProductID_FK
-LEFT JOIN MyCompany.Config_Branchs b ON b.BranchID_PK = i.BranchID_FK
 WHERE p.IsInActive = 0
   AND i.StockOnHand > 0
   AND i.ExpiryDate IS NOT NULL
+  AND CAST(i.ExpiryDate AS date) < CAST(GETDATE() AS date)
+GROUP BY p.ProductName, i.ExpiryDate
+ORDER BY i.ExpiryDate ASC;
+```
+
+```sql
+-- 2. المنتجات التي ستنتهي صلاحيتها خلال الشهر الحالي
+-- الأعمدة: [اسم المنتج]، [الكمية]، [تاريخ الانتهاء]، [الايام المتبقية]
+SELECT TOP 100
+  p.ProductName AS [اسم المنتج],
+  CAST(SUM(i.StockOnHand) AS decimal(18,2)) AS [الكمية],
+  CAST(i.ExpiryDate AS date) AS [تاريخ الانتهاء],
+  DATEDIFF(day, GETDATE(), i.ExpiryDate) AS [الايام المتبقية]
+FROM Inventory.Data_ProductInventories i
+INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = i.ProductID_FK
+WHERE p.IsInActive = 0
+  AND i.StockOnHand > 0
+  AND i.ExpiryDate IS NOT NULL
+  AND YEAR(i.ExpiryDate) = YEAR(GETDATE())
+  AND MONTH(i.ExpiryDate) = MONTH(GETDATE())
+GROUP BY p.ProductName, i.ExpiryDate
+ORDER BY i.ExpiryDate ASC;
+```
+
+```sql
+-- 3. المنتجات التي ستنتهي صلاحيتها خلال فترة مخصصة (أيام أو أشهر - عدّل الـ 90 في DECLARE مباشرة)
+-- الأعمدة: [اسم المنتج]، [الكمية]، [تاريخ الانتهاء]، [الايام المتبقية]
+DECLARE @DaysThreshold int = 90; -- عدلها لأي فترة تريدها (مثال: 10 أيام أو 20 يوماً أو غيرها)
+SELECT TOP 100
+  p.ProductName AS [اسم المنتج],
+  CAST(SUM(i.StockOnHand) AS decimal(18,2)) AS [الكمية],
+  CAST(i.ExpiryDate AS date) AS [تاريخ الانتهاء],
+  DATEDIFF(day, GETDATE(), i.ExpiryDate) AS [الايام المتبقية]
+FROM Inventory.Data_ProductInventories i
+INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = i.ProductID_FK
+WHERE p.IsInActive = 0
+  AND i.StockOnHand > 0
+  AND i.ExpiryDate IS NOT NULL
+  AND CAST(i.ExpiryDate AS date) >= CAST(GETDATE() AS date)
+  AND CAST(i.ExpiryDate AS date) <= DATEADD(day, @DaysThreshold, CAST(GETDATE() AS date))
+GROUP BY p.ProductName, i.ExpiryDate
 ORDER BY i.ExpiryDate ASC;
 ```
 

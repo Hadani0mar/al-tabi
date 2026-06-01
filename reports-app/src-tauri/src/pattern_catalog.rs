@@ -17,42 +17,141 @@ pub struct PatternEntry {
 
 pub const CATALOG: &[PatternEntry] = &[
     PatternEntry {
-        id: "product_count",
-        name_ar: "عدد المنتجات",
-        section_marketing: "عدد-المنتجات",
-        section_infinity: "عدد-المنتجات",
+        id: "expiry_report",
+        name_ar: "تقرير الصلاحية",
+        section_marketing: "تقرير-الصلاحية",
+        section_infinity: "تقرير-الصلاحية",
         marketing: true,
         infinity: true,
         needs_product_filter: false,
-        triggers: &["عدد المنتجات", "كم منتج", "count products", "عدد الاصناف"],
+        triggers: &[
+            "صلاحية",
+            "منتهية",
+            "expiry",
+            "سينتهي قريباً",
+            "ينتهي هذا الشهر",
+            "منتهية الصلاحية",
+            "صلاحيات",
+            "تاريخ انتهاء",
+            "سينخلص قريباً",
+            "ستنتهي صلاحيتها",
+            "expired",
+            "الصلاحيات",
+            "المنتهية",
+        ],
+    },
+    PatternEntry {
+        id: "last_purchase_price",
+        name_ar: "آخر سعر شراء + الكمية الحالية (يتطلب اسم منتج)",
+        section_marketing: "آخر-سعر-شراء-مورد",
+        section_infinity: "آخر-سعر-شراء-مورد",
+        marketing: true,
+        infinity: true,
+        needs_product_filter: true,
+        triggers: &[
+            "آخر سعر شراء",
+            "سعر شراء",
+            "last purchase price",
+            "buy price",
+            "آخر مشتريات",
+            "آخر شراء",
+            "سعر المورد",
+            "آخر تكلفة شراء",
+            "كم آخر مرة اشترينا",
+            "من أين اشترينا",
+            "كمية المنتج الآن",
+            "مورد المنتج",
+        ],
     },
     PatternEntry {
         id: "top_sellers",
-        name_ar: "أعلى منتجات مبيعاً (30 يوم)",
+        name_ar: "أكثر المنتجات مبيعاً (مع سعر الشراء والمورد)",
         section_marketing: "أعلى-منتجات-مبيعاً",
         section_infinity: "أعلى-منتجات-مبيعاً",
         marketing: true,
         infinity: true,
         needs_product_filter: false,
-        triggers: &["أعلى منتجات", "أكثر مبيعاً", "best sellers", "top products"],
+        triggers: &[
+            "أكثر مبيعاً",
+            "أعلى منتجات",
+            "top sellers",
+            "best selling",
+            "أكثر المنتجات بيعاً",
+            "أكثر الاصناف",
+            "رانكينج المبيعات",
+            "أعلى إيرادات",
+            "الأكثر طلباً",
+            "مبيعات هذا الشهر",
+            "مبيعات الشهر السابق",
+            "توقعات مبيعات",
+            "تنبؤات",
+            "forecast",
+        ],
     },
     PatternEntry {
-        id: "top_sellers_all_time",
-        name_ar: "أعلى منتجات مبيعاً (كل الوقت)",
-        section_marketing: "أعلى-منتجات-كل-الوقت",
-        section_infinity: "أعلى-منتجات-كل-الوقت",
+        id: "monthly_expenses",
+        name_ar: "المصروفات الشهرية (رواتب، إيجار، كهرباء، أخرى)",
+        section_marketing: "المصروفات-الشهرية",
+        section_infinity: "المصروفات-الشهرية",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "مصروفات",
+            "مصاريف",
+            "expenses",
+            "رواتب وإيجار",
+            "مصاريف الشهر",
+            "كم صرفنا",
+            "نفقات",
+            "مصاريف شهرية",
+            "مقارنة مصاريف",
+            "مصاريف هذا الشهر",
+            "مصاريف الشهر الماضي",
+        ],
+    },
+    PatternEntry {
+        id: "supplier_price_compare",
+        name_ar: "مقارنة أسعار الموردين (يتطلب اسم منتج)",
+        section_marketing: "مقارنة-أسعار-موردين",
+        section_infinity: "مقارنة-أسعار-موردين",
+        marketing: true,
+        infinity: true,
+        needs_product_filter: true,
+        triggers: &[
+            "مقارنة أسعار",
+            "مقارنة موردين",
+            "موردي منتج",
+            "أرخص مورد",
+            "أغلى مورد",
+            "supplier prices",
+            "compare suppliers",
+            "افضل الموردين",
+            "أفضل مورد",
+            "موردين له",
+        ],
+    },
+    PatternEntry {
+        id: "shortage_supplier",
+        name_ar: "نواقص نشطة (الكمية + آخر سعر شراء + المورد)",
+        section_marketing: "نواقص-نشطة-مورد",
+        section_infinity: "نواقص-نشطة-مورد",
         marketing: true,
         infinity: true,
         needs_product_filter: false,
         triggers: &[
-            "كل الوقت",
-            "بدون تاريخ",
-            "all time",
-            "على مستوى قاعدة",
-            "مستوى قاعدة",
-            "ليس في تاريخ",
-            "ليس اخر 30",
-            "بدون فترة",
+            "نواقص",
+            "نواقصنا",
+            "شن النواقص",
+            "عندنا نواقص",
+            "نفاد",
+            "shortage",
+            "نواقص نشطة",
+            "تحت الحد",
+            "ايش ناقصنا",
+            "ماذا ينقصنا",
+            "قائمة النواقص",
+            "المنتجات الناقصة",
         ],
     },
     PatternEntry {
@@ -63,7 +162,16 @@ pub const CATALOG: &[PatternEntry] = &[
         marketing: true,
         infinity: true,
         needs_product_filter: false,
-        triggers: &["مبيعات آخر يوم", "آخر يوم مبيعات", "last sale day"],
+        triggers: &[
+            "مبيعات آخر يوم",
+            "آخر يوم مبيعات",
+            "last sale day",
+            "مبيعات الموظفين اليومية",
+            "المبيعات اليومية للموظفين",
+            "مبيعات يومية للموظفين",
+            "إيرادات آخر يوم",
+            "مبيعات الموظفين آخر يوم",
+        ],
     },
     PatternEntry {
         id: "sales_daily_employee",
@@ -73,202 +181,17 @@ pub const CATALOG: &[PatternEntry] = &[
         marketing: true,
         infinity: true,
         needs_product_filter: false,
-        triggers: &["مبيعات يومية", "مبيعات كل موظف", "daily sales employee"],
-    },
-    PatternEntry {
-        id: "products_sold_today",
-        name_ar: "آخر منتجات بيعت اليوم",
-        section_marketing: "آخر-منتجات-بيعت-اليوم",
-        section_infinity: "آخر-منتجات-بيعت-اليوم",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["منتجات بيعت اليوم", "ماذا بيع اليوم", "what sold today"],
-    },
-    PatternEntry {
-        id: "debts_full",
-        name_ar: "متابعة الديون",
-        section_marketing: "متابعة-الديون",
-        section_infinity: "متابعة-الديون",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["متابعة الديون", "ديون", "اللي لي", "اللي علي"],
-    },
-    PatternEntry {
-        id: "debts_suppliers",
-        name_ar: "ديون الموردين",
-        section_marketing: "ديون-الموردين-مبسط",
-        section_infinity: "ديون-الموردين",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["ديون الموردين", "supplier debts"],
-    },
-    PatternEntry {
-        id: "debts_advances_schedule",
-        name_ar: "ديون وسلف ومواعيد الدفع",
-        section_marketing: "ديون-وسلف-ومواعيد",
-        section_infinity: "ديون-وسلف-ومواعيد",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
         triggers: &[
-            "ديون وسلف",
-            "سلف ومواعيد",
-            "مواعيد الدفع",
-            "موعد الدفع",
-            "سلف",
-            "قرض",
-            "ذمة",
-            "payment schedule",
-            "payment due",
-            "advances",
-            "سلف مسترد",
+            "مبيعات يومية",
+            "مبيعات كل موظف",
+            "daily sales employee",
+            "مبيعات موظفين",
+            "مبيعات الموظفين ليوم",
+            "مبيعات موظفين تاريخ",
+            "employee sales specific date",
+            "أداء يومي موظف",
+            "لخص المبيعات اليومية",
         ],
-    },
-    PatternEntry {
-        id: "financial_summary",
-        name_ar: "ملخص مالي شهري",
-        section_marketing: "ملخص-مالي-شهري",
-        section_infinity: "ملخص-مالي-شهري",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["ملخص مالي", "مصاريف شهرية", "رواتب شهرية"],
-    },
-    PatternEntry {
-        id: "shortage_monitor",
-        name_ar: "متابعة النواقص",
-        section_marketing: "متابعة-النواقص",
-        section_infinity: "متابعة-النواقص",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["متابعة النواقص", "نواقص", "shortage"],
-    },
-    PatternEntry {
-        id: "shortage_supplier",
-        name_ar: "نواقص نشطة مع المورد",
-        section_marketing: "نواقص-نشطة-مورد",
-        section_infinity: "نواقص-نشطة-مورد",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["نواقص نشطة", "آخر سعر شراء"],
-    },
-    PatternEntry {
-        id: "smart_purchase",
-        name_ar: "طلبية شراء ذكية",
-        section_marketing: "طلبية-شراء-ذكية",
-        section_infinity: "طلبية-شراء-ذكية",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["طلبية شراء", "شراء ذكي", "smart purchase"],
-    },
-    PatternEntry {
-        id: "supplier_prices",
-        name_ar: "مقارنة أسعار الموردين",
-        section_marketing: "مقارنة-أسعار-موردين",
-        section_infinity: "مقارنة-أسعار-موردين",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: true,
-        triggers: &["مقارنة أسعار", "موردين", "supplier prices", "موردي", "افضل الموردين", "أفضل مورد", "أفضل الموردين", "موردين له"],
-    },
-    PatternEntry {
-        id: "product_info",
-        name_ar: "معلومات منتج كاملة",
-        section_marketing: "معلومات-منتج-كاملة",
-        section_infinity: "معلومات-منتج-كاملة",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: true,
-        triggers: &[
-            "معلومات منتج",
-            "معلومات عن",
-            "تفاصيل المنتج",
-            "بيانات المنتج",
-            "معدل السحب",
-            "معدل سحب",
-            "سرعة البيع",
-            "سعر البيع",
-            "الصلاحية",
-            "product info",
-            "اعرضلي",
-            "اعرض لي",
-            "ابحث عن منتج",
-        ],
-    },
-    PatternEntry {
-        id: "product_study",
-        name_ar: "دراسة منتج شاملة",
-        section_marketing: "دراسة-منتج-شاملة",
-        section_infinity: "دراسة-منتج-شاملة",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: true,
-        triggers: &["دراسة منتج", "تفاصيل منتج", "كل شي", "product study"],
-    },
-    PatternEntry {
-        id: "expiry_report",
-        name_ar: "تقرير الصلاحية",
-        section_marketing: "تقرير-الصلاحية",
-        section_infinity: "تقرير-الصلاحية",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["صلاحية", "منتهية", "expiry"],
-    },
-    PatternEntry {
-        id: "best_customers",
-        name_ar: "أفضل عملاء مبيعات",
-        section_marketing: "أفضل-عملاء-مبيعات",
-        section_infinity: "أفضل-عملاء-مبيعات",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["أفضل عملاء", "top customers"],
-    },
-    PatternEntry {
-        id: "employee_discounts_debts",
-        name_ar: "خصومات وديون الموظفين",
-        section_marketing: "خصومات-وديون-موظفين",
-        section_infinity: "خصومات-وديون-موظفين",
-        marketing: false,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &[
-            "خصومات موظف",
-            "خصومات الموظفين",
-            "ديون موظف",
-            "ديون الموظفين",
-            "employee discount",
-            "employee debt",
-            "خصم موظف",
-            "ذمة موظف",
-        ],
-    },
-    PatternEntry {
-        id: "sales_by_location",
-        name_ar: "مبيعات حسب المخزن/الفرع",
-        section_marketing: "مبيعات-حسب-المخزن",
-        section_infinity: "مبيعات-حسب-الفرع",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: false,
-        triggers: &["مبيعات مخزن", "مبيعات فرع", "sales by store"],
-    },
-    PatternEntry {
-        id: "product_search",
-        name_ar: "بحث منتج سريع",
-        section_marketing: "بحث-منتج-سريع",
-        section_infinity: "بحث-منتج-سريع",
-        marketing: true,
-        infinity: true,
-        needs_product_filter: true,
-        triggers: &["بحث منتج", "product search", "باركود", "barcode"],
     },
 ];
 
@@ -338,13 +261,6 @@ pub fn resolve_pattern_id(hint: &str, erp: ErpKind) -> Option<&'static PatternEn
     }
     if let Some(p) = find_by_id(&h) {
         return if p.available_on(erp) { Some(p) } else { None };
-    }
-    if looks_like_bare_product_query(hint) {
-        if let Some(p) = find_by_id("product_info") {
-            if p.available_on(erp) {
-                return Some(p);
-            }
-        }
     }
     let mut best: Option<(&PatternEntry, usize)> = None;
     for entry in CATALOG.iter() {
@@ -445,11 +361,25 @@ pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
                     "properties": {
                         "pattern_id": { "type": "string", "description": "Stable id from list_available_patterns (preferred)." },
                         "keywords": { "type": "string", "description": "Fallback Arabic keywords if pattern_id unknown." },
-                        "days_recent": { "type": "integer", "description": "Override sales window (default 60)." },
+                        "days_recent": { "type": "integer", "description": "Override sales window or expiration days window (default 60)." },
                         "coverage_days": { "type": "integer", "description": "Purchase coverage days (default 30)." },
                         "product_filter": { "type": "string", "description": "Product name/code for patterns that need it." }
                     },
                     "required": []
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "execute_raw_sql",
+                "description": "Executes a T-SQL SELECT/WITH query. Copy SQL from patterns in your system prompt, adjust dates/filters, then call this. No DECLARE — start with WITH or SELECT only.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sql_query": { "type": "string", "description": "The T-SQL query." }
+                    },
+                    "required": ["sql_query"]
                 }
             }
         }),
@@ -484,6 +414,13 @@ pub fn build_executor_system_prompt(
         "<role>\n\
         منفّذ تقارير {erp} — **لا تكتب SQL** — **لا تخترع أرقاماً**.\n\
         </role>\n\n\
+        <tone_and_dialect>\n\
+        - **لهجة ليبية خفيفة وموجزة جداً (لتوفير التوكنز):**\n\
+          - ابدأ بترحيب ليبي خفيف ومختصر للغاية (مثل: 'مرحبتين بيك.' أو 'أهلاً بيك. تفضل النتائج:').\n\
+          - ممنوع نهائياً التملق، التحيات الطويلة، الكلام الفارغ، أو التبجيل والمبالغة (مثل 'يا فندم'، 'يسعدني خدمتكم'، 'بدقة متناهية').\n\
+          - اعرض نتائج البيانات فوراً واختصر قدر الإمكان لتقليل استهلاك التوكنز.\n\
+          - اقترح التصدير أو الخطوة التالية باختصار شديد ودون إطالة (مثل: 'تبيه إكسل أو PDF؟').\n\
+        </tone_and_dialect>\n\n\
         <critical_rules>\n\
         1. **أي سؤال بيانات** → استدعِ `run_query_pattern` فوراً (pattern_id مفضل).\n\
         2. **ممنوع** الرد بجدول أو أرقام أو «تم التنفيذ» بدون tool call ناجح.\n\
@@ -491,26 +428,25 @@ pub fn build_executor_system_prompt(
         4. إن لم يوجد pattern → `list_available_patterns` ثم اقترح الأقرب.\n\
         5. تصدير → `export_last_result` بعد run_query_pattern.\n\
         6. التاريخ → `get_current_datetime` عند الحاجة.\n\
-        7. لخّص نتائج الأداة بالعربية — العملة: د.ل.\n\
+        7. احسب الإجماليات الفرعية والعامة للنتائج واعرضها بوضوح باختصار في نهاية ردك.\n\
+        8. **الأسئلة العامة والاستشارية:** أجب باختصار شديد بلهجة ليبية ودية وموجزة دون أدوات قاعدة البيانات.\n\
+        9. لخّص نتائج الأداة باختصار — العملة: د.ل.\n\
         </critical_rules>\n\n\
         <patterns>\n\
         ERP: **{erp}** | ملف SQL: `{agent_file}`\n\n\
         {table}\n\
         </patterns>{pf_note}\n\n\
         <mapping_hints>\n\
-        - «كم منتج» → pattern_id=product_count\n\
-        - «أعلى مبيعاً بدون تاريخ / كل الوقت» → top_sellers_all_time\n\
-        - «أعلى مبيعاً» (30 يوم) → top_sellers\n\
-        - «مبيعات آخر يوم موظف» → sales_last_day_employee\n\
-        - «خصومات/ديون الموظفين» → employee_discounts_debts (Infinity فقط)\n\
-        - «ديون وسلف/مواعيد الدفع/سلف» → debts_advances_schedule (3 أجزاء)\n\
-        - «ديون ومصاريف شهرية» → financial_summary\n\
-        - «موردي @منتج» أو «افضل الموردين له» → supplier_prices + product_filter\n\
-        - **اسم أو باركود فقط** أو «معلومات عن منتج» → pattern_id=product_info + product_filter\n\
-        - product_info يُرجع: مخزون، سعر بيع، تكلفة، معدل سحب، أيام تغطية، صلاحية، آخر مورد\n\
-        - باركود (8–14 رقم) بدون سياق آخر → product_info (ليس product_search)\n\
-        - إن row_count=0 و product_found=true: المنتج موجود لكن لا مشتريات موردين — لا تقل «غير موجود»\n\
-        - إن product_found=false: اذكر active_erp و database من نتيجة الأداة\n\
+        - «أكثر مبيعاً» → top_sellers SQL-A | «هذا الشهر» → SQL-B | «الشهر السابق» → SQL-C | «توقعات/تنبؤات» → SQL-D\n\
+        - «نواقص / نفاد / شن النواقص» → pattern_id=shortage_supplier\n\
+        - «صلاحية / منتهية / ينتهي» → pattern_id=expiry_report\n\
+        - «مصروفات / مصاريف / كم صرفنا» → monthly_expenses: SQL-A هذا الشهر | SQL-B الشهر السابق | SQL-C مقارنة 6 شهور\n\
+        - «مقارنة أسعار / أرخص مورد / موردي منتج» → pattern_id=supplier_price_compare + product_filter\n\
+        - «آخر سعر شراء / سعر المورد / كم اشترينا» → pattern_id=last_purchase_price + product_filter\n\
+        - «مبيعات آخر يوم موظف / إيرادات اليوم» → pattern_id=sales_last_day_employee\n\
+        - «مبيعات يومية موظف / مبيعات الموظفين ليوم X» → pattern_id=sales_daily_employee\n\
+        - ⚠️ عند طلب تاريخ صريح (مثل «ليوم 21/5/2026»): استخدم sales_daily_employee وضع التاريخ في @TargetDate.\n\
+        - ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE) — استخدمه مباشرةً.\n\
         </mapping_hints>",
         erp = erp.display_name_ar(),
         agent_file = erp.agent_file_label(),
@@ -524,46 +460,104 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_top_sellers_all_time() {
-        let p = resolve_pattern_id("ليس في تاريخ معين أعلى منتج", ErpKind::Marketing2026);
-        assert_eq!(p.map(|x| x.id), Some("top_sellers_all_time"));
+    fn resolve_expiry_by_id() {
+        let p = resolve_pattern_id("expiry_report", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("expiry_report"));
     }
 
     #[test]
-    fn resolve_by_id() {
-        let p = resolve_pattern_id("product_count", ErpKind::Marketing2026);
+    fn resolve_expiry_by_trigger() {
+        let p = resolve_pattern_id("منتهية الصلاحية", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("expiry_report"));
+    }
+
+    #[test]
+    fn resolve_last_purchase_price() {
+        let p = resolve_pattern_id("آخر سعر شراء", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("last_purchase_price"));
+    }
+
+    #[test]
+    fn resolve_sales_last_day() {
+        let p = resolve_pattern_id("مبيعات آخر يوم", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("sales_last_day_employee"));
+    }
+
+    #[test]
+    fn resolve_sales_daily_employee() {
+        let p = resolve_pattern_id("مبيعات يومية", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("sales_daily_employee"));
+    }
+
+    #[test]
+    fn resolve_specific_date_to_daily_employee() {
+        let p = resolve_pattern_id("مبيعات الموظفين ليوم", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("sales_daily_employee"));
+    }
+
+    #[test]
+    fn resolve_by_id_infinity() {
+        let p = resolve_pattern_id("expiry_report", ErpKind::InfinityRetailDb);
         assert!(p.is_some());
     }
 
     #[test]
-    fn resolve_barcode_to_product_info() {
-        let p = resolve_pattern_id("8718951291010", ErpKind::Marketing2026);
-        assert_eq!(p.map(|x| x.id), Some("product_info"));
+    fn catalog_has_eight_entries() {
+        assert_eq!(CATALOG.len(), 8);
     }
 
     #[test]
-    fn resolve_supplier_query_not_product_info() {
-        let p = resolve_pattern_id("ما افضل الموردين لمنتج 8718951291010", ErpKind::Marketing2026);
-        assert_eq!(p.map(|x| x.id), Some("supplier_prices"));
+    #[test]
+    fn resolve_top_sellers() {
+        let p = resolve_pattern_id("أكثر مبيعاً", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("top_sellers"));
     }
 
     #[test]
-    fn resolve_employee_discounts_infinity() {
-        let p = resolve_pattern_id("خصومات وديون الموظفين", ErpKind::InfinityRetailDb);
-        assert_eq!(p.map(|x| x.id), Some("employee_discounts_debts"));
+    fn resolve_top_sellers_this_month() {
+        let p = resolve_pattern_id("مبيعات هذا الشهر", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("top_sellers"));
     }
 
     #[test]
-    fn resolve_employee_discounts_not_on_marketing() {
-        let p = resolve_pattern_id("خصومات الموظفين", ErpKind::Marketing2026);
+    fn resolve_top_sellers_forecast() {
+        let p = resolve_pattern_id("توقعات مبيعات", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("top_sellers"));
+    }
+
+    #[test]
+    fn resolve_monthly_expenses() {
+        let p = resolve_pattern_id("مصروفات", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("monthly_expenses"));
+    }
+
+    #[test]
+    fn resolve_expenses_not_on_infinity() {
+        let p = resolve_pattern_id("مصروفات", ErpKind::InfinityRetailDb);
         assert!(p.is_none());
     }
 
     #[test]
-    fn resolve_debts_advances_schedule() {
-        let p = resolve_pattern_id("ديون وسلف ومواعيد الدفع", ErpKind::Marketing2026);
-        assert_eq!(p.map(|x| x.id), Some("debts_advances_schedule"));
-        let p2 = resolve_pattern_id("مواعيد الدفع للموردين", ErpKind::InfinityRetailDb);
-        assert_eq!(p2.map(|x| x.id), Some("debts_advances_schedule"));
+    fn resolve_supplier_price_compare() {
+        let p = resolve_pattern_id("مقارنة أسعار", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("supplier_price_compare"));
+    }
+
+    #[test]
+    fn resolve_cheapest_supplier_trigger() {
+        let p = resolve_pattern_id("أرخص مورد", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("supplier_price_compare"));
+    }
+
+    #[test]
+    fn resolve_shortage_supplier() {
+        let p = resolve_pattern_id("نواقص", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("shortage_supplier"));
+    }
+
+    #[test]
+    fn resolve_shortage_dialect() {
+        let p = resolve_pattern_id("شن النواقص", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("shortage_supplier"));
     }
 }

@@ -348,7 +348,7 @@ fn load_telegram_settings_local(
     app: tauri::AppHandle,
 ) -> Result<TelegramSettingsLocal, String> {
     let (bot_token, chat_id) =
-        supabase_config::load_local_telegram_settings(&app, decrypt_value)?;
+        supabase_config::load_local_telegram_settings(&app, decrypt_value_internal)?;
     Ok(TelegramSettingsLocal { bot_token, chat_id })
 }
 
@@ -356,8 +356,7 @@ fn load_telegram_settings_local(
 const ENCRYPTION_KEY: &[u8; 32] = b"ReportsApp-SecureKey-2026-v1.0!!";
 
 // ─── تشفير ────────────────────────────────────────────────────
-#[tauri::command]
-fn encrypt_value(value: String) -> Result<String, String> {
+pub(crate) fn encrypt_value_internal(value: String) -> Result<String, String> {
     let cipher = Aes256Gcm::new_from_slice(ENCRYPTION_KEY).map_err(|e| e.to_string())?;
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -368,9 +367,13 @@ fn encrypt_value(value: String) -> Result<String, String> {
     Ok(BASE64.encode(combined))
 }
 
-// ─── فك تشفير ─────────────────────────────────────────────────
 #[tauri::command]
-fn decrypt_value(encrypted: String) -> Result<String, String> {
+fn encrypt_value(value: String) -> Result<String, String> {
+    encrypt_value_internal(value)
+}
+
+// ─── فك تشفير ─────────────────────────────────────────────────
+pub(crate) fn decrypt_value_internal(encrypted: String) -> Result<String, String> {
     let cipher = Aes256Gcm::new_from_slice(ENCRYPTION_KEY).map_err(|e| e.to_string())?;
     let combined = BASE64.decode(encrypted).map_err(|e| e.to_string())?;
     if combined.len() < 12 {
@@ -381,6 +384,11 @@ fn decrypt_value(encrypted: String) -> Result<String, String> {
     let plaintext = cipher.decrypt(nonce, ciphertext)
         .map_err(|_| "فشل فك التشفير".to_string())?;
     String::from_utf8(plaintext).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn decrypt_value(encrypted: String) -> Result<String, String> {
+    decrypt_value_internal(encrypted)
 }
 
 // ─── اختبار الاتصال ───────────────────────────────────────────
@@ -704,7 +712,7 @@ async fn execute_favorite_query(
 async fn load_app_secrets_settings(
     app: tauri::AppHandle,
 ) -> Result<supabase_config::AppSecretsSettings, String> {
-    supabase_config::resolve_app_secrets(&app, decrypt_value, encrypt_value).await
+    supabase_config::resolve_app_secrets(&app, decrypt_value_internal, encrypt_value_internal).await
 }
 
 #[tauri::command]
@@ -716,7 +724,7 @@ async fn save_app_secrets_settings(
         return Err("أدخل مفتاح OpenRouter أو OpenAI.".to_string());
     }
 
-    let access_token = supabase_config::read_stored_access_token(&app, decrypt_value)?
+    let access_token = supabase_config::read_stored_access_token(&app, decrypt_value_internal)?
         .unwrap_or_else(|| supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string());
 
     let remote = supabase_config::AppSecretsSettings {
@@ -737,7 +745,7 @@ async fn save_telegram_settings_local(
     chat_id: String,
     enable_queries: bool,
 ) -> Result<(), String> {
-    supabase_config::save_local_telegram_settings(&app, &bot_token, &chat_id, encrypt_value)?;
+    supabase_config::save_local_telegram_settings(&app, &bot_token, &chat_id, encrypt_value_internal)?;
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     store.set("telegram_enable_queries", enable_queries);
     store.save().map_err(|e| e.to_string())?;
@@ -757,7 +765,7 @@ async fn update_telegram_settings(
     };
 
     let secrets =
-        supabase_config::resolve_app_secrets(&app, decrypt_value, encrypt_value).await?;
+        supabase_config::resolve_app_secrets(&app, decrypt_value_internal, encrypt_value_internal).await?;
 
     let ai_model = crate::ai_agent::DEFAULT_AI_MODEL.to_string();
 
@@ -866,7 +874,7 @@ async fn ask_local_ai(
     let reports_cache = crate::telegram::fetch_reports().await;
 
     let secrets =
-        supabase_config::resolve_app_secrets(&app_handle, decrypt_value, encrypt_value).await?;
+        supabase_config::resolve_app_secrets(&app_handle, decrypt_value_internal, encrypt_value_internal).await?;
     let groq_key = secrets.openrouter_api_key;
     let dec_openai_key = secrets.openai_api_key;
 
@@ -1166,6 +1174,117 @@ async fn clear_all_notifications(
     Ok(())
 }
 
+#[tauri::command]
+async fn sync_chat_to_supabase(
+    chat_id: String,
+    title: String,
+    messages: serde_json::Value,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let access_token = supabase_config::read_stored_access_token(&app, decrypt_value_internal)?
+        .unwrap_or_else(|| supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string());
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+        
+    let url = format!("{}/rest/v1/rpc/upsert_user_chat", supabase_config::SUPABASE_URL);
+    let payload = serde_json::json!({
+        "p_access_token": access_token.trim(),
+        "p_chat_id": chat_id.trim(),
+        "p_title": title.trim(),
+        "p_messages": messages,
+    });
+    
+    let res = client
+        .post(&url)
+        .header("apikey", supabase_config::SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", supabase_config::SUPABASE_ANON_KEY))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("فشل الاتصال بـ Supabase: {}", e))?;
+        
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("Supabase upsert_user_chat error: {}", body));
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn fetch_chats_from_supabase(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let access_token = supabase_config::read_stored_access_token(&app, decrypt_value_internal)?
+        .unwrap_or_else(|| supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string());
+        
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+        
+    let url = format!("{}/rest/v1/rpc/get_user_chats", supabase_config::SUPABASE_URL);
+    let payload = serde_json::json!({
+        "p_access_token": access_token.trim(),
+    });
+    
+    let res = client
+        .post(&url)
+        .header("apikey", supabase_config::SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", supabase_config::SUPABASE_ANON_KEY))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("فشل الاتصال بـ Supabase: {}", e))?;
+        
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("Supabase get_user_chats error: {}", body));
+    }
+    
+    let value: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    Ok(value)
+}
+
+#[tauri::command]
+async fn delete_chat_from_supabase(
+    chat_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let access_token = supabase_config::read_stored_access_token(&app, decrypt_value_internal)?
+        .unwrap_or_else(|| supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string());
+        
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+        
+    let url = format!("{}/rest/v1/rpc/delete_user_chat", supabase_config::SUPABASE_URL);
+    let payload = serde_json::json!({
+        "p_access_token": access_token.trim(),
+        "p_chat_id": chat_id.trim(),
+    });
+    
+    let res = client
+        .post(&url)
+        .header("apikey", supabase_config::SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", supabase_config::SUPABASE_ANON_KEY))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("فشل الاتصال بـ Supabase: {}", e))?;
+        
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("Supabase delete_user_chat error: {}", body));
+    }
+    
+    Ok(())
+}
+
 // ─── نقطة الدخول ──────────────────────────────────────────────
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1260,6 +1379,9 @@ pub fn run() {
             sync_pharmacy_products_now,
             stop_pharmacy_sharing_cmd,
             preview_pharmacy_business_profile,
+            sync_chat_to_supabase,
+            fetch_chats_from_supabase,
+            delete_chat_from_supabase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

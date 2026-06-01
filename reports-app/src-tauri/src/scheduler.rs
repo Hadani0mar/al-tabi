@@ -327,7 +327,7 @@ async fn send_notification_to_telegram(
 ) {
     let (token, chat_id_str) = match crate::supabase_config::load_local_telegram_settings(
         app_handle,
-        crate::decrypt_value,
+        crate::decrypt_value_internal,
     ) {
         Ok(v) => v,
         Err(e) => {

@@ -324,80 +324,88 @@ fn is_valid_local_preference(content: &str) -> bool {
         || lower.contains("يوم")
 }
 
-fn store_local_fact(kind: &str, content: &str, embedding: &[f32]) -> Result<bool, String> {
-    if is_near_duplicate_local(embedding)? {
+async fn search_user_memories(
+    access_token: &str,
+    embedding: &[f32],
+    limit: i32,
+) -> Result<Vec<(String, String, f32)>, String> {
+    let client = http_client();
+    let rpc = json!({
+        "p_access_token": access_token.trim(),
+        "query_embedding": embedding,
+        "match_threshold": RECALL_MIN_SIMILARITY,
+        "match_count": limit + 2,
+    });
+    let url = format!("{}/rest/v1/rpc/match_user_memories", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("match_user_memories failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("match_user_memories") || body.contains("does not exist") {
+            return Ok(Vec::new());
+        }
+        return Err(format!("match_user_memories HTTP: {}", body));
+    }
+    let rows: Vec<SharedFactRow> = res.json().await.unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let content = r.content?;
+            let cat = r.category.unwrap_or_else(|| "preference".to_string());
+            let sim = r.similarity.unwrap_or(0.0);
+            Some((cat, content, sim))
+        })
+        .collect())
+}
+
+async fn is_near_duplicate_user(access_token: &str, embedding: &[f32]) -> Result<bool, String> {
+    let hits = search_user_memories(access_token, embedding, 3).await?;
+    Ok(hits
+        .iter()
+        .any(|(_, _, sim)| *sim >= LOCAL_DEDUP_SIMILARITY))
+}
+
+async fn store_user_memory(
+    access_token: &str,
+    category: &str,
+    content: &str,
+    embedding: &[f32],
+) -> Result<bool, String> {
+    if is_near_duplicate_user(access_token, embedding).await? {
         return Ok(false);
     }
-    let hash = content_fingerprint(content);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let blob = f32_vec_to_blob(embedding);
-    let db = local_db();
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let inserted = conn
-        .execute(
-            "INSERT OR IGNORE INTO local_memories (kind, content, content_hash, embedding, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![kind, content, hash, blob, now as i64],
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(inserted > 0)
-}
-
-fn is_near_duplicate_local(embedding: &[f32]) -> Result<bool, String> {
-    let db = local_db();
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT embedding FROM local_memories")
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, Vec<u8>>(0))
-        .map_err(|e| e.to_string())?;
-    for row in rows {
-        if let Some(stored) = blob_to_f32_vec(&row.map_err(|e| e.to_string())?) {
-            if cosine_similarity(embedding, &stored) >= LOCAL_DEDUP_SIMILARITY {
-                return Ok(true);
-            }
+    let fingerprint = content_fingerprint(content);
+    let client = http_client();
+    let rpc = json!({
+        "p_access_token": access_token.trim(),
+        "p_content": content,
+        "p_category": category,
+        "p_fingerprint": fingerprint,
+        "p_embedding": embedding,
+    });
+    let url = format!("{}/rest/v1/rpc/upsert_user_memory", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("upsert_user_memory failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("upsert_user_memory") || body.contains("does not exist") {
+            return Ok(false);
         }
+        return Err(format!("upsert_user_memory HTTP: {}", body));
     }
-    Ok(false)
-}
-
-fn search_local_facts(embedding: &[f32], limit: usize) -> Result<Vec<(String, String)>, String> {
-    let db = local_db();
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT kind, content, embedding FROM local_memories")
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut scored: Vec<(f32, String, String)> = Vec::new();
-    for row in rows {
-        let (kind, content, blob) = row.map_err(|e| e.to_string())?;
-        if let Some(stored) = blob_to_f32_vec(&blob) {
-            let score = cosine_similarity(embedding, &stored);
-            if score >= RECALL_MIN_SIMILARITY {
-                scored.push((score, kind, content));
-            }
-        }
-    }
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(dedupe_similar_contents(
-        scored
-            .into_iter()
-            .map(|(_, k, c)| (k, c))
-            .collect(),
-        limit,
-    ))
+    Ok(true)
 }
 
 fn dedupe_similar_contents(items: Vec<(String, String)>, limit: usize) -> Vec<(String, String)> {
@@ -419,6 +427,7 @@ fn dedupe_similar_contents(items: Vec<(String, String)>, limit: usize) -> Vec<(S
     }
     out
 }
+
 
 async fn search_shared_db_facts(
     embedding: &[f32],
@@ -522,6 +531,7 @@ pub async fn recall_memory_prompt_block(
     user_query: &str,
     openai_key: &str,
     erp: ErpKind,
+    access_token: &str,
 ) -> String {
     if openai_key.trim().is_empty() {
         return String::new();
@@ -534,13 +544,21 @@ pub async fn recall_memory_prompt_block(
         }
     };
 
-    let local = match search_local_facts(&embedding, LOCAL_MATCH_K) {
+    let local_raw = match search_user_memories(access_token, &embedding, LOCAL_MATCH_K as i32).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[agent_memory] local search: {}", e);
+            eprintln!("[agent_memory] user search: {}", e);
             Vec::new()
         }
     };
+    let local: Vec<(String, String)> = dedupe_similar_contents(
+        local_raw
+            .into_iter()
+            .map(|(c, t, _)| (c, t))
+            .collect(),
+        LOCAL_MATCH_K,
+    );
+
     let shared_raw = match search_shared_db_facts(&embedding, SHARED_MATCH_K).await {
         Ok(v) => v,
         Err(e) => {
@@ -576,7 +594,7 @@ pub async fn recall_memory_prompt_block(
     }
 
     if !local.is_empty() {
-        block.push_str("### Private preferences (this device)\n");
+        block.push_str("### Private preferences (this device / cloud)\n");
         for (kind, content) in &local {
             block.push_str(&format!("- [{}] {}\n", kind, content));
         }
@@ -684,6 +702,7 @@ pub async fn persist_turn_memories(
     groq_key: &str,
     ctx: TurnMemoryContext,
     erp: ErpKind,
+    access_token: &str,
 ) {
     if groq_key.trim().is_empty() || openai_key.trim().is_empty() {
         return;
@@ -739,10 +758,10 @@ pub async fn persist_turn_memories(
                 Err(e) => eprintln!("[agent_memory] shared store: {}", e),
             }
         } else if scope == "local" && is_valid_local_preference(&tagged_content) {
-            match store_local_fact("preference", &tagged_content, &embedding) {
-                Ok(true) => eprintln!("[agent_memory] local preference stored: {}", tagged_content),
+            match store_user_memory(access_token, "preference", &tagged_content, &embedding).await {
+                Ok(true) => eprintln!("[agent_memory] local preference stored on Supabase: {}", tagged_content),
                 Ok(false) => {}
-                Err(e) => eprintln!("[agent_memory] local store: {}", e),
+                Err(e) => eprintln!("[agent_memory] local store on Supabase: {}", e),
             }
         }
     }
@@ -755,9 +774,10 @@ pub fn spawn_persist_turn_memories(
     groq_key: String,
     ctx: TurnMemoryContext,
     erp: ErpKind,
+    access_token: String,
 ) {
     tokio::spawn(async move {
-        persist_turn_memories(&user_text, &assistant_text, &openai_key, &groq_key, ctx, erp).await;
+        persist_turn_memories(&user_text, &assistant_text, &openai_key, &groq_key, ctx, erp, &access_token).await;
     });
 }
 

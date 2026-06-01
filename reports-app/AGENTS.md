@@ -21,7 +21,7 @@
 reports-app/
 ├── src/                              # React 19 + TypeScript
 │   ├── App.tsx                       # التوجيه بين الشاشات + auto-login
-│   ├── lib/ai-config.ts              # FIXED_AI_MODEL = minimax/minimax-m2.7
+│   ├── lib/ai-config.ts              # FIXED_AI_MODEL = google/gemini-3.1-pro-preview
 │   └── components/ui/
 │       ├── sql-login-page.tsx        # اتصال MSSQL + تذكر الدخول
 │       ├── ai-assistant-interface.tsx # شات الوكيل
@@ -115,15 +115,15 @@ taskkill /f /im reports-app.exe   # إيقاف قبل إعادة البناء (W
 - **Marketing — SALE_ITEMS** لا يحتوي `S_DATE` — JOIN مع `SALE_INVOICE`
 - **Infinity — بنود البيع** — JOIN `SALES.Data_SalesInvoices` للتاريخ (`SalesInvoiceDate`)
 - **COMM_ID = 0** دائماً — تجاهل `COMMISSIONER`
-- **Marketing — مرجع التاريخ:** `MAX(S_DATE)` من `SALE_INVOICE`
-- **Infinity — مرجع التاريخ:** `MAX(SalesInvoiceDate)` من `SALES.Data_SalesInvoices`
+- **Marketing — مرجع التاريخ:** `MAX(S_DATE)` من `SALE_INVOICE` — **فقط** عند غياب تاريخ صريح أو حين يقول المستخدم "اليوم" ولا مبيعات في GETDATE(). إذا ذكر المستخدم تاريخاً محدداً (مثل "21/5/2026") استخدمه مباشرةً — لا تُعوّضه بـ MAX(S_DATE).
+- **Infinity — مرجع التاريخ:** `MAX(SalesInvoiceDate)` من `SALES.Data_SalesInvoices` — نفس قاعدة Marketing أعلاه.
 - **DAYS_RECENT = 60** افتراضياً (ليس 30)
 - **المبالغ:** أضف `د.ل` في الردود العربية
 - **حفظ مفضلة:** بعد `execute_raw_sql` ناجح → **يجب** استدعاء `save_favorite_query` — لا تقل «تم الحفظ» بدون tool call
 
 ### النموذج الحالي
 
-- Desktop + Telegram: `minimax/minimax-m2.7` عبر OpenRouter
+- Desktop + Telegram: `google/gemini-3.1-pro-preview` عبر OpenRouter
 - المفتاح: `groq_api_key` في settings (اسم legacy) = OpenRouter API key
 - `supabase_config.rs`: يحمّل المفتاح المحلي أولاً، ثم Supabase (timeout 5ث)
 

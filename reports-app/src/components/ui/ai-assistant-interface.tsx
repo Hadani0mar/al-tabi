@@ -122,13 +122,40 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   useEffect(() => {
     async function loadChats() {
       try {
+        let supabaseChats: ChatSession[] | null = null;
+        try {
+          const remoteChats = await invoke<any[]>("fetch_chats_from_supabase");
+          if (remoteChats && Array.isArray(remoteChats)) {
+            supabaseChats = remoteChats.map((c: any) => ({
+              id: c.chat_id,
+              title: c.title,
+              messages: c.messages,
+              updatedAt: new Date(c.updated_at).getTime(),
+            }));
+          }
+        } catch (err) {
+          console.warn("Failed to fetch chats from Supabase, falling back to local:", err);
+        }
+
         const store = await load("chats.json");
-        const savedChats = await store.get<ChatSession[]>("history");
         const lastId = await store.get<string>("lastActiveChatId");
-        if (savedChats?.length) {
-          setChats(savedChats);
+        
+        let finalChats: ChatSession[] = [];
+        if (supabaseChats?.length) {
+          finalChats = supabaseChats;
+          await store.set("history", supabaseChats);
+          await store.save();
+        } else {
+          const savedChats = await store.get<ChatSession[]>("history");
+          if (savedChats?.length) {
+            finalChats = savedChats;
+          }
+        }
+
+        if (finalChats.length) {
+          setChats(finalChats);
           if (lastId) {
-            const last = savedChats.find((c) => c.id === lastId);
+            const last = finalChats.find((c) => c.id === lastId);
             if (last) {
               activeChatIdRef.current = last.id;
               setActiveChatId(last.id);
@@ -283,11 +310,23 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     inputRef.current?.focus();
   };
 
-  const saveChatsToStore = async (newChats: ChatSession[]) => {
+  const saveChatsToStore = async (newChats: ChatSession[], chatIdToSync?: string) => {
     try {
       const store = await load("chats.json");
       await store.set("history", newChats);
       await store.save();
+
+      const syncId = chatIdToSync || activeChatIdRef.current || activeChatId;
+      if (syncId) {
+        const chat = newChats.find(c => c.id === syncId);
+        if (chat) {
+          invoke("sync_chat_to_supabase", {
+            chatId: chat.id,
+            title: chat.title,
+            messages: chat.messages,
+          }).catch(err => console.error("Supabase chat sync failed:", err));
+        }
+      }
     } catch (e) {
       console.error("Failed to save chats:", e);
     }
@@ -509,7 +548,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     e.stopPropagation();
     const newChats = chats.filter(c => c.id !== id);
     setChats(newChats);
-    saveChatsToStore(newChats);
+    saveChatsToStore(newChats, id);
+    invoke("delete_chat_from_supabase", { chatId: id }).catch(err =>
+      console.error("Failed to delete chat from Supabase:", err)
+    );
     if (activeChatId === id) {
       handleNewChat();
     }

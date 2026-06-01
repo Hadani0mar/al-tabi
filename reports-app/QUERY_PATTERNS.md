@@ -1099,34 +1099,30 @@ NOTES: **لا subquery يجمع PRICE وحده.** الإيراد = SUM(QTY*PRICE
 -- مبيعات يومية لكل موظف — آخر 7 أيام من آخر يوم مبيعات
 DECLARE @AsOfDate date = (SELECT CAST(MAX(S_DATE) AS date) FROM dbo.SALE_INVOICE);
 DECLARE @FromDate date = DATEADD(day, -7, @AsOfDate);
-SELECT
-  CAST(V.S_DATE AS date) AS SaleDay,
-  ISNULL(V.FULL_NAME, N'غير محدد') AS EmployeeName,
-  COUNT(DISTINCT V.S_ID) AS InvoiceCount,
-  CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS TotalRevenue
-FROM dbo.SALE_ITEMS_INVOICE_VIEW V
-WHERE CAST(V.S_DATE AS date) BETWEEN @FromDate AND @AsOfDate
-GROUP BY CAST(V.S_DATE AS date), V.USERS_ID, V.FULL_NAME
-ORDER BY SaleDay DESC, TotalRevenue DESC;
-```
-
-```sql
--- بديل: جداول أساسية + CTE (نفس النتيجة)
-DECLARE @AsOfDate date = (SELECT CAST(MAX(S_DATE) AS date) FROM dbo.SALE_INVOICE);
-DECLARE @FromDate date = DATEADD(day, -7, @AsOfDate);
-;WITH LineSales AS (
-  SELECT CAST(INV.S_DATE AS date) AS SaleDay, INV.USERS_ID,
-    ISNULL(U.FULL_NAME, N'غير محدد') AS EmployeeName, SI.S_ID, SI.QTY * SI.PRICE AS LineValue
-  FROM dbo.SALE_ITEMS SI
-  INNER JOIN dbo.SALE_INVOICE INV ON SI.S_ID = INV.S_ID
-  LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
-  WHERE CAST(INV.S_DATE AS date) BETWEEN @FromDate AND @AsOfDate
+;WITH EmpDaily AS (
+  SELECT
+    CAST(V.S_DATE AS date) AS [اليوم],
+    ISNULL(V.FULL_NAME, N'غير محدد') AS [الموظف],
+    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
+    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات],
+    0 AS SortOrder
+  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
+  WHERE CAST(V.S_DATE AS date) BETWEEN @FromDate AND @AsOfDate
+  GROUP BY CAST(V.S_DATE AS date), V.USERS_ID, V.FULL_NAME
+),
+GrandTotal AS (
+  SELECT
+    NULL AS [اليوم],
+    N'═══ الإجمالي ═══' AS [الموظف],
+    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
+    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات],
+    1 AS SortOrder
+  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
+  WHERE CAST(V.S_DATE AS date) BETWEEN @FromDate AND @AsOfDate
 )
-SELECT SaleDay, EmployeeName, COUNT(DISTINCT S_ID) AS InvoiceCount,
-  CAST(SUM(LineValue) AS decimal(18,2)) AS TotalRevenue
-FROM LineSales
-GROUP BY SaleDay, USERS_ID, EmployeeName
-ORDER BY SaleDay DESC, TotalRevenue DESC;
+SELECT [اليوم], [الموظف], [عدد الفواتير], [الإيرادات]
+FROM (SELECT * FROM EmpDaily UNION ALL SELECT * FROM GrandTotal) X
+ORDER BY SortOrder, [اليوم] DESC, [الإيرادات] DESC;
 ```
 
 ---

@@ -73,7 +73,7 @@ On connection, `erp_profile::detect_erp_kind()` probes SQL Server schema: checks
 Sync runs every 15 min via `refresh_agent_cloud_content`. **The AGENT_*.md files must exist at compile time** (they're `include_str!`-embedded), but at runtime the Supabase version takes precedence.
 
 ### Agent Tool Dispatch
-`ai_agent.rs` runs an agentic loop calling OpenRouter (model: `minimax/minimax-m2.7`). Tools split into:
+`ai_agent.rs` runs an agentic loop calling OpenRouter (model: `google/gemini-3.1-pro-preview`). Tools split into:
 - **Inline tools** (handled directly in loop): `execute_raw_sql`, `explore_local_schema`, `search_schema`
 - **Extended tools** (dispatched via `agent_tools::dispatch_extended_tool`): `run_query_pattern`, `export_last_result`, `export_html_pdf`, `save_favorite_query`, `validate_sql`, etc.
 

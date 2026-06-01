@@ -155,6 +155,47 @@ pub const CATALOG: &[PatternEntry] = &[
         ],
     },
     PatternEntry {
+        id: "customer_debts",
+        name_ar: "ديون الزباين مع آخر إيصال قبض والإجمالي",
+        section_marketing: "ديون-الزباين",
+        section_infinity: "",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "ديون الزباين",
+            "ديون الزبائن",
+            "ديون العملاء",
+            "رصيد الزباين",
+            "رصيد الزبائن",
+            "ديون زباين فقط",
+            "اللي لي على الزباين",
+            "customer debts",
+            "customer receivables",
+        ],
+    },
+    PatternEntry {
+        id: "supplier_debts",
+        name_ar: "ديون الموردين مع آخر إيصال صرف",
+        section_marketing: "ديون-الموردين-مبسط",
+        section_infinity: "",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "ديون الموردين",
+            "ديون موردين",
+            "ديون مورد",
+            "رصيد مورد",
+            "رصيد الموردين",
+            "آخر إيصال صرف مورد",
+            "اللي علي للموردين",
+            "supplier debts",
+            "vendor debts",
+            "supplier balance",
+        ],
+    },
+    PatternEntry {
         id: "sales_last_day_employee",
         name_ar: "مبيعات آخر يوم لكل موظف",
         section_marketing: "مبيعات-آخر-يوم-موظف",
@@ -443,6 +484,8 @@ pub fn build_executor_system_prompt(
         - «مصروفات / مصاريف / كم صرفنا» → monthly_expenses: SQL-A هذا الشهر | SQL-B الشهر السابق | SQL-C مقارنة 6 شهور\n\
         - «مقارنة أسعار / أرخص مورد / موردي منتج» → pattern_id=supplier_price_compare + product_filter\n\
         - «آخر سعر شراء / سعر المورد / كم اشترينا» → pattern_id=last_purchase_price + product_filter\n\
+        - «ديون الزباين / ديون الزبائن / اللي لي على الزباين» → pattern_id=customer_debts\n\
+        - «ديون الموردين / ديون مورد / آخر إيصال صرف مورد» → pattern_id=supplier_debts\n\
         - «مبيعات آخر يوم موظف / إيرادات اليوم» → pattern_id=sales_last_day_employee\n\
         - «مبيعات يومية موظف / مبيعات الموظفين ليوم X» → pattern_id=sales_daily_employee\n\
         - ⚠️ عند طلب تاريخ صريح (مثل «ليوم 21/5/2026»): استخدم sales_daily_employee وضع التاريخ في @TargetDate.\n\
@@ -502,11 +545,34 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_eight_entries() {
-        assert_eq!(CATALOG.len(), 8);
+    fn catalog_has_ten_entries() {
+        assert_eq!(CATALOG.len(), 10);
     }
 
     #[test]
+    fn resolve_customer_debts() {
+        let p = resolve_pattern_id("ديون الزباين", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("customer_debts"));
+    }
+
+    #[test]
+    fn customer_debts_not_on_infinity() {
+        let p = resolve_pattern_id("ديون الزباين", ErpKind::InfinityRetailDb);
+        assert!(p.is_none());
+    }
+
+    #[test]
+    fn resolve_supplier_debts() {
+        let p = resolve_pattern_id("ديون الموردين", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("supplier_debts"));
+    }
+
+    #[test]
+    fn supplier_debts_not_on_infinity() {
+        let p = resolve_pattern_id("supplier_debts", ErpKind::InfinityRetailDb);
+        assert!(p.is_none());
+    }
+
     #[test]
     fn resolve_top_sellers() {
         let p = resolve_pattern_id("أكثر مبيعاً", ErpKind::Marketing2026);

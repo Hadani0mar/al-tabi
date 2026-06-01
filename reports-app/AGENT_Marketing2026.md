@@ -1034,50 +1034,181 @@ ORDER BY [متبقي_للاسترداد] DESC;
 
 ---
 
-## PATTERN: ديون-الموردين-مبسط
-TRIGGERS: ديون الموردين, ديون موردين, ديون الموردين فقط, تقرير ديون الموردين, الذي علي للموردين, اللي علي للموردين, كم علي للموردين, supplier debts, supplier balances only, vendor debts simple
-TABLES: CUSTOMERS, BUY_INVOICE, BUY_ITEMS, B_R_INVOICE, B_R_ITEMS, GIVE, BALANCE_EDIT
-NOTES: نسخة مبسّطة من «متابعة الديون» — تعرض ديون الموردين فقط بعمودين: اسم المورد، والدين. تخدم الحالات التي لا يحتاج فيها المستخدم تفاصيل المقبوضات/التسويات/التواريخ. الصيغة هي: مشتريات − مردودات مشتريات − GIVE + تسوية BALANCE_EDIT.
+## PATTERN: ديون-الزباين
+TRIGGERS: ديون الزباين, ديون الزبائن, ديون العملاء, رصيد الزباين, رصيد الزبائن, اللي لي على الزباين, ديون زباين فقط, customer debts, customer receivables
+TABLES: CUSTOMERS, SALE_INVOICE, SALE_ITEMS, R_S_INVOICE, R_S_ITEMS, TAKE, BALANCE_EDIT
+NOTES: يعرض ديون الزبائن فقط، وليس الموردين. الأعمدة المطلوبة: اسم الزبون، القيمة، آخر إيصال قبض. أضف صفاً أخيراً باسم «إجمالي الديون» يحوي مجموع الديون. الصيغة: مبيعات − مردودات مبيعات − TAKE + BALANCE_EDIT. لا تستخدم BALANCE_C لأنه فارغ.
 ---
 
-**الأعمدة:** فقط `اسم المورد` و `الدين` — لا تضف أعمدة أخرى مهما كان السياق.
+**الأعمدة:** `اسم الزبون`، `القيمة`، `آخر إيصال قبض`، وفي الأسفل صف `إجمالي الديون`.
 
 ```sql
--- ديون الموردين فقط: اسم المورد + الدين (د.ل)
+-- ديون الزباين فقط: اسم الزبون + القيمة + آخر إيصال قبض + إجمالي الديون في الأسفل
 ;WITH
 BalanceAdj AS (
   SELECT CUST_ID, SUM(ISNULL(BL_DEBIT,0))-SUM(ISNULL(BL_CREDIT,0)) AS AdjBalance
-  FROM dbo.BALANCE_EDIT GROUP BY CUST_ID
+  FROM dbo.BALANCE_EDIT
+  GROUP BY CUST_ID
+),
+SaleTot AS (
+  SELECT SI.CUST_ID, SUM(ISNULL(SI2.QTY,0)*ISNULL(SI2.PRICE,0)) AS SalesValue
+  FROM dbo.SALE_INVOICE SI
+  INNER JOIN dbo.SALE_ITEMS SI2 ON SI.S_ID = SI2.S_ID
+  GROUP BY SI.CUST_ID
+),
+SaleReturnTot AS (
+  SELECT R.CUST_ID, SUM(ISNULL(RI.QTY,0)*ISNULL(RI.PRICE,0)) AS ReturnValue
+  FROM dbo.R_S_INVOICE R
+  INNER JOIN dbo.R_S_ITEMS RI ON R.S_R_ID = RI.S_R_ID
+  GROUP BY R.CUST_ID
+),
+TakeTot AS (
+  SELECT CUST_ID, SUM(ISNULL(T_VALUE,0)) AS PaidValue
+  FROM dbo.TAKE
+  GROUP BY CUST_ID
+),
+LastTake AS (
+  SELECT
+    CUST_ID,
+    T_DATE,
+    T_NO,
+    T_VALUE,
+    ROW_NUMBER() OVER (PARTITION BY CUST_ID ORDER BY T_DATE DESC, T_ID DESC) AS rn
+  FROM dbo.TAKE
+),
+CustomerDebts AS (
+  SELECT
+    C.CUST_NAME AS CustomerName,
+    ISNULL(ST.SalesValue,0)-ISNULL(SRT.ReturnValue,0)-ISNULL(TT.PaidValue,0)+ISNULL(BA.AdjBalance,0) AS DebtValue,
+    LT.T_DATE AS LastReceiptDate,
+    LT.T_NO AS LastReceiptNo,
+    LT.T_VALUE AS LastReceiptValue
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN SaleTot ST ON C.CUST_ID = ST.CUST_ID
+  LEFT JOIN SaleReturnTot SRT ON C.CUST_ID = SRT.CUST_ID
+  LEFT JOIN TakeTot TT ON C.CUST_ID = TT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  LEFT JOIN LastTake LT ON C.CUST_ID = LT.CUST_ID AND LT.rn = 1
+  WHERE C.CUST_CUSTOM = 1
+    AND C.CUST_INVISIBLE = 0
+    AND ISNULL(ST.SalesValue,0)-ISNULL(SRT.ReturnValue,0)-ISNULL(TT.PaidValue,0)+ISNULL(BA.AdjBalance,0) >= 1
+),
+FinalRows AS (
+  SELECT TOP 100
+    0 AS SortGroup,
+    CustomerName,
+    CAST(DebtValue AS decimal(18,2)) AS DebtValue,
+    CASE
+      WHEN LastReceiptDate IS NULL THEN N'لا يوجد'
+      ELSE CONCAT(
+        CONVERT(varchar(10), LastReceiptDate, 120),
+        N' | ',
+        ISNULL(NULLIF(LastReceiptNo, ''), N'بدون رقم'),
+        N' | ',
+        CONVERT(varchar(40), CAST(ISNULL(LastReceiptValue,0) AS decimal(18,2)))
+      )
+    END AS LastReceipt
+  FROM CustomerDebts
+  ORDER BY DebtValue DESC
+),
+TotalRow AS (
+  SELECT
+    1 AS SortGroup,
+    N'إجمالي الديون' AS CustomerName,
+    CAST(SUM(DebtValue) AS decimal(18,2)) AS DebtValue,
+    N'' AS LastReceipt
+  FROM CustomerDebts
+)
+SELECT
+  CustomerName AS [اسم الزبون],
+  DebtValue AS [القيمة],
+  LastReceipt AS [آخر إيصال قبض]
+FROM (
+  SELECT SortGroup, CustomerName, DebtValue, LastReceipt FROM FinalRows
+  UNION ALL
+  SELECT SortGroup, CustomerName, DebtValue, LastReceipt FROM TotalRow
+) X
+ORDER BY SortGroup, DebtValue DESC;
+```
+
+---
+
+## PATTERN: ديون-الموردين-مبسط
+TRIGGERS: ديون الموردين, ديون موردين, ديون الموردين فقط, تقرير ديون الموردين, الذي علي للموردين, اللي علي للموردين, كم علي للموردين, ديون مورد, رصيد مورد, آخر إيصال صرف مورد, supplier debts, supplier balances only, vendor debts simple
+TABLES: CUSTOMERS, BUY_INVOICE, BUY_ITEMS, B_R_INVOICE, B_R_ITEMS, GIVE, BALANCE_EDIT
+NOTES: نسخة مبسّطة من «متابعة الديون» — تعرض ديون الموردين فقط. الأعمدة المطلوبة: اسم المورد، القيمة، آخر إيصال صرف. تدعم السؤال عن مورد واحد عبر فلتر `%PARTY%` في اسم المورد. الصيغة هي: مشتريات − مردودات مشتريات − GIVE + تسوية BALANCE_EDIT.
+---
+
+**الأعمدة:** `اسم المورد`، `القيمة`، `آخر إيصال صرف`.
+**فلتر مورد واحد:** عند السؤال عن مورد محدد، استبدل `%PARTY%` بجزء من اسم المورد. عند التقرير العام يكون `%PARTY% = %`.
+
+```sql
+-- ديون الموردين فقط: اسم المورد + القيمة + آخر إيصال صرف
+;WITH
+BalanceAdj AS (
+  SELECT CUST_ID, SUM(ISNULL(BL_DEBIT,0))-SUM(ISNULL(BL_CREDIT,0)) AS AdjBalance
+  FROM dbo.BALANCE_EDIT
+  GROUP BY CUST_ID
 ),
 BuyTot AS (
-  SELECT B.CUST_ID, SUM(BI.QTY*BI.PRICE) AS BuyValue
-  FROM dbo.BUY_INVOICE B JOIN dbo.BUY_ITEMS BI ON B.B_ID=BI.B_ID GROUP BY B.CUST_ID
+  SELECT B.CUST_ID, SUM(ISNULL(BI.QTY,0)*ISNULL(BI.PRICE,0)) AS BuyValue
+  FROM dbo.BUY_INVOICE B
+  INNER JOIN dbo.BUY_ITEMS BI ON B.B_ID = BI.B_ID
+  GROUP BY B.CUST_ID
 ),
 BuyReturnTot AS (
-  SELECT BR.CUST_ID, SUM(BRI.QTY*BRI.PRICE) AS ReturnValue
-  FROM dbo.B_R_INVOICE BR JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID=BRI.B_R_ID GROUP BY BR.CUST_ID
+  SELECT BR.CUST_ID, SUM(ISNULL(BRI.QTY,0)*ISNULL(BRI.PRICE,0)) AS ReturnValue
+  FROM dbo.B_R_INVOICE BR
+  INNER JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID = BRI.B_R_ID
+  GROUP BY BR.CUST_ID
 ),
 GiveTot AS (
-  SELECT CUST_ID, SUM(G_VALUE) AS PaidValue
-  FROM dbo.GIVE GROUP BY CUST_ID
+  SELECT CUST_ID, SUM(ISNULL(G_VALUE,0)) AS PaidValue
+  FROM dbo.GIVE
+  GROUP BY CUST_ID
+),
+LastGive AS (
+  SELECT
+    CUST_ID,
+    G_DATE,
+    G_NO,
+    G_VALUE,
+    ROW_NUMBER() OVER (PARTITION BY CUST_ID ORDER BY G_DATE DESC, G_ID DESC) AS rn
+  FROM dbo.GIVE
+),
+SupplierDebts AS (
+  SELECT
+    C.CUST_NAME AS SupplierName,
+    ISNULL(BT.BuyValue,0)-ISNULL(BRT.ReturnValue,0)-ISNULL(GT.PaidValue,0)+ISNULL(BA.AdjBalance,0) AS DebtValue,
+    LG.G_DATE AS LastPaymentDate,
+    LG.G_NO AS LastPaymentNo,
+    LG.G_VALUE AS LastPaymentValue
+  FROM dbo.CUSTOMERS C
+  LEFT JOIN BuyTot BT ON C.CUST_ID = BT.CUST_ID
+  LEFT JOIN BuyReturnTot BRT ON C.CUST_ID = BRT.CUST_ID
+  LEFT JOIN GiveTot GT ON C.CUST_ID = GT.CUST_ID
+  LEFT JOIN BalanceAdj BA ON C.CUST_ID = BA.CUST_ID
+  LEFT JOIN LastGive LG ON C.CUST_ID = LG.CUST_ID AND LG.rn = 1
+  WHERE C.CUST_VENDOR = 1
+    AND C.CUST_INVISIBLE = 0
+    AND C.CUST_NAME LIKE N'%PARTY%'
+    AND ISNULL(BT.BuyValue,0)-ISNULL(BRT.ReturnValue,0)-ISNULL(GT.PaidValue,0)+ISNULL(BA.AdjBalance,0) >= 1
 )
 SELECT TOP 200
-  C.CUST_NAME AS [اسم المورد],
-  CAST(
-    ISNULL(BT.BuyValue,0) - ISNULL(BRT.ReturnValue,0)
-    - ISNULL(GT.PaidValue,0) + ISNULL(BA.AdjBalance,0)
-    AS decimal(18,2)
-  ) AS [الدين]
-FROM dbo.CUSTOMERS C
-LEFT JOIN BuyTot       BT  ON C.CUST_ID = BT.CUST_ID
-LEFT JOIN BuyReturnTot BRT ON C.CUST_ID = BRT.CUST_ID
-LEFT JOIN GiveTot      GT  ON C.CUST_ID = GT.CUST_ID
-LEFT JOIN BalanceAdj   BA  ON C.CUST_ID = BA.CUST_ID
-WHERE C.CUST_VENDOR = 1
-  AND C.CUST_INVISIBLE = 0
-  AND (ISNULL(BT.BuyValue,0) - ISNULL(BRT.ReturnValue,0)
-       - ISNULL(GT.PaidValue,0) + ISNULL(BA.AdjBalance,0)) >= 1
-ORDER BY [الدين] DESC;
+  SupplierName AS [اسم المورد],
+  CAST(DebtValue AS decimal(18,2)) AS [القيمة],
+  CASE
+    WHEN LastPaymentDate IS NULL THEN N'لا يوجد'
+    ELSE CONCAT(
+      CONVERT(varchar(10), LastPaymentDate, 120),
+      N' | ',
+      ISNULL(NULLIF(LastPaymentNo, ''), N'بدون رقم'),
+      N' | ',
+      CONVERT(varchar(40), CAST(ISNULL(LastPaymentValue,0) AS decimal(18,2)))
+    )
+  END AS [آخر إيصال صرف]
+FROM SupplierDebts
+ORDER BY [القيمة] DESC;
 ```
 
 ---

@@ -9,16 +9,18 @@ use tauri_plugin_store::StoreExt;
 
 /// النموذج الثابت — لا يُقرأ من الإعدادات
 /// النموذج الافتراضي — مدفوع على OpenRouter (أدوات + SQL + عربية)
-pub const DEFAULT_AI_MODEL: &str = "google/gemini-3.1-flash-lite";
+pub const DEFAULT_AI_MODEL: &str = "google/gemini-2.5-flash";
 
 /// احتياطي مدفوع عند تعذّر النموذج أو rate limit
 pub const OPENROUTER_PAID_MODEL_FALLBACKS: &[&str] = &[
-    "google/gemini-3.1-flash-lite",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-pro",
+    "openai/gpt-4o-mini",
 ];
 const RATE_LIMIT_RETRIES_PER_MODEL: u8 = 2;
 const RATE_LIMIT_BASE_DELAY_MS: u64 = 2000;
 /// حد افتراضي منخفض لتجنب خطأ OpenRouter 402 (رصيد غير كافٍ لـ max_tokens كبير)
-pub const DEFAULT_MAX_TOKENS: u32 = 2048;
+pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// حد أقصى لحجم مخطط RAG داخل system prompt (تجنب تجاوز حد OpenRouter)
 const PROMPT_SCHEMA_CHAR_LIMIT: usize = 2000;
 const HISTORY_MSG_CHAR_LIMIT: usize = 1500;

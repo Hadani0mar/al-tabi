@@ -243,7 +243,15 @@ pub async fn resolve_app_secrets(
 ) -> Result<AppSecretsSettings, String> {
     let (telegram_bot_token, telegram_chat_id) = load_local_telegram_settings(app, decrypt)?;
 
-    // 1. محاولة جلب المفاتيح من Supabase أولاً كصاحب السيادة ومصدر الحقيقة الأساسي
+    // 1. المفتاح المحلي أولاً — أسرع وأكثر موثوقية
+    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
+    if legacy.has_remote_payload() {
+        legacy.telegram_bot_token = telegram_bot_token;
+        legacy.telegram_chat_id = telegram_chat_id;
+        return Ok(legacy);
+    }
+
+    // 2. إذا لا يوجد مفتاح محلي → نجرب Supabase كاحتياطي
     let access_token = access_token_for_fetch(app, decrypt)?;
     let remote_result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -258,15 +266,7 @@ pub async fn resolve_app_secrets(
             return Ok(remote);
         }
     } else if remote_result.is_err() {
-        eprintln!("[secrets] Supabase fetch timed out — trying local fallback");
-    }
-
-    // 2. إذا تعذر الاتصال بـ Supabase أو كانت فارغة، نلجأ للمفتاح المحلي كاحتياطي (Offline fallback)
-    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
-    if legacy.has_remote_payload() {
-        legacy.telegram_bot_token = telegram_bot_token;
-        legacy.telegram_chat_id = telegram_chat_id;
-        return Ok(legacy);
+        eprintln!("[secrets] Supabase fetch timed out — no local OpenRouter key found");
     }
 
     Ok(AppSecretsSettings {

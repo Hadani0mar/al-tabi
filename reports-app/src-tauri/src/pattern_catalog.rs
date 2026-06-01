@@ -155,44 +155,56 @@ pub const CATALOG: &[PatternEntry] = &[
         ],
     },
     PatternEntry {
-        id: "customer_debts",
-        name_ar: "ديون الزباين مع آخر إيصال قبض والإجمالي",
-        section_marketing: "ديون-الزباين",
-        section_infinity: "",
+        id: "employee_debts",
+        name_ar: "ديون وسلف الموظفين",
+        section_marketing: "ديون-الموظفين",
+        section_infinity: "ديون-الموظفين",
         marketing: true,
         infinity: false,
         needs_product_filter: false,
         triggers: &[
-            "ديون الزباين",
+            "ديون الموظفين",
+            "ديون موظفين",
+            "سلف الموظفين",
+            "ذمة الموظفين",
+            "employee debts",
+            "سلف",
+            "ديون العمال",
+        ],
+    },
+    PatternEntry {
+        id: "customer_debts",
+        name_ar: "ديون الزبائن (+ آخر إيصال قبض)",
+        section_marketing: "ديون-الزبائن",
+        section_infinity: "ديون-الزبائن",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
             "ديون الزبائن",
+            "ديون الزباين",
             "ديون العملاء",
-            "رصيد الزباين",
-            "رصيد الزبائن",
-            "ديون زباين فقط",
-            "اللي لي على الزباين",
+            "اللي لي",
+            "من يدينني",
             "customer debts",
-            "customer receivables",
+            "ذمة الزبائن",
         ],
     },
     PatternEntry {
         id: "supplier_debts",
-        name_ar: "ديون الموردين مع آخر إيصال صرف",
-        section_marketing: "ديون-الموردين-مبسط",
-        section_infinity: "",
+        name_ar: "ديون الموردين (+ آخر إيصال صرف)",
+        section_marketing: "ديون-الموردين",
+        section_infinity: "ديون-الموردين",
         marketing: true,
         infinity: false,
         needs_product_filter: false,
         triggers: &[
             "ديون الموردين",
             "ديون موردين",
-            "ديون مورد",
-            "رصيد مورد",
-            "رصيد الموردين",
-            "آخر إيصال صرف مورد",
-            "اللي علي للموردين",
+            "اللي علي",
+            "من أدين له",
             "supplier debts",
-            "vendor debts",
-            "supplier balance",
+            "ذمة الموردين",
         ],
     },
     PatternEntry {
@@ -546,11 +558,23 @@ mod tests {
 
     #[test]
     fn catalog_has_ten_entries() {
-        assert_eq!(CATALOG.len(), 10);
+        assert_eq!(CATALOG.len(), 11);
     }
 
     #[test]
     fn resolve_customer_debts() {
+        let p = resolve_pattern_id("ديون الزبائن", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("customer_debts"));
+    }
+
+    #[test]
+    fn resolve_supplier_debts() {
+        let p = resolve_pattern_id("ديون الموردين", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("supplier_debts"));
+    }
+
+    #[test]
+    fn resolve_customer_debts_dialect() {
         let p = resolve_pattern_id("ديون الزباين", ErpKind::Marketing2026);
         assert_eq!(p.map(|x| x.id), Some("customer_debts"));
     }
@@ -559,12 +583,6 @@ mod tests {
     fn customer_debts_not_on_infinity() {
         let p = resolve_pattern_id("ديون الزباين", ErpKind::InfinityRetailDb);
         assert!(p.is_none());
-    }
-
-    #[test]
-    fn resolve_supplier_debts() {
-        let p = resolve_pattern_id("ديون الموردين", ErpKind::Marketing2026);
-        assert_eq!(p.map(|x| x.id), Some("supplier_debts"));
     }
 
     #[test]

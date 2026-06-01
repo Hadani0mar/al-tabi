@@ -9,12 +9,12 @@ use tauri_plugin_store::StoreExt;
 
 /// النموذج الثابت — لا يُقرأ من الإعدادات
 /// النموذج الافتراضي — مدفوع على OpenRouter (أدوات + SQL + عربية)
-pub const DEFAULT_AI_MODEL: &str = "google/gemini-2.5-flash";
+pub const DEFAULT_AI_MODEL: &str = "google/gemini-3.5-flash";
 
 /// احتياطي مدفوع عند تعذّر النموذج أو rate limit
 pub const OPENROUTER_PAID_MODEL_FALLBACKS: &[&str] = &[
-    "google/gemini-2.5-flash",
-    "google/gemini-2.5-pro",
+    "google/gemini-3.5-flash",
+    "google/gemini-3.1-flash-lite",
     "openai/gpt-4o-mini",
 ];
 const RATE_LIMIT_RETRIES_PER_MODEL: u8 = 2;
@@ -498,23 +498,20 @@ fn build_fast_system_prompt(
     product_note: &str,
     erp: crate::erp_profile::ErpKind,
 ) -> String {
-    // يقرأ ملف التعليمات والأنماط المحلي مباشرة — الوكيل يرى SQL الفعلي وينسخه
     let agent_md = crate::erp_profile::load_agent_patterns(erp);
-    let domain = crate::erp_profile::domain_critical_facts(erp);
     format!(
-        "أنت مساعد تقارير ذكي لقاعدة بيانات {}.\n\n\
-        ## قواعد صارمة:\n\
-        1. انسخ SQL من الأنماط أدناه وعدّله حسب طلب المستخدم (تاريخ، فلتر، عدد).\n\
-        2. نفّذه بـ execute_raw_sql مرة واحدة فقط.\n\
-        3. بعد النتيجة: توقف فوراً وقدّم الرد بالعربية. لا تنفّذ استعلاماً ثانياً.\n\
-        4. لا تخترع أسماء جداول أو أعمدة — انسخ فقط مما هو مكتوب أدناه.\n\
-        5. العملة: د.ل | تصدير: export_last_result بعد نجاح الاستعلام.\n\
-        6. إن طلب المستخدم تاريخاً محدداً: استبدل MAX(S_DATE) بالتاريخ مثل CAST('2026-05-20' AS date).\n\n\
-        {}\n\n\
+        "أنت منفّذ تقارير {}. كل SQL جاهز أدناه — انسخه ونفّذه فوراً.\n\n\
+        قواعد:\n\
+        1. اختر النمط المناسب من ## PATTERN أدناه.\n\
+        2. انسخ SQL منه وعدّل فقط: التاريخ أو {{{{PRODUCT_FILTER}}}} أو عدد الأيام.\n\
+        3. نفّذ بـ execute_raw_sql مرة واحدة فقط.\n\
+        4. اعرض النتائج بالعربية باختصار مع إجمالي. العملة: د.ل.\n\
+        5. لا تخترع SQL — انسخ فقط.\n\
+        6. تاريخ صريح من المستخدم → استخدمه مباشرةً. لا تستبدله بـ MAX(S_DATE).\n\
+        7. بعد النتائج: «تبيه إكسل أو PDF؟» واقترح تقريراً مكملاً واحداً فقط.\n\n\
         {}\n\n\
         {}",
         erp.display_name_ar(),
-        domain,
         agent_md,
         product_note
     )
@@ -649,6 +646,7 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
     let mut max_tokens = DEFAULT_MAX_TOKENS;
     current_body["max_tokens"] = json!(max_tokens);
     let clean_key = api_key.trim();
+    eprintln!("[OpenRouter] key len after trim: {} starts_with: '{}'", clean_key.len(), &clean_key[..clean_key.len().min(10)]);
     let mut last_error = String::new();
 
     for model in models {

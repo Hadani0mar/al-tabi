@@ -39,6 +39,7 @@ impl AppSecretsSettings {
                 .get(key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
+                .trim()
                 .to_string()
         };
         Self {
@@ -204,8 +205,18 @@ pub fn load_legacy_secrets_from_store(
 
     if let Some(v) = store.get("groq_api_key") {
         let enc = v.as_str().unwrap_or("").to_string();
+        eprintln!("[secrets] groq_api_key enc len={}", enc.len());
         if !enc.is_empty() {
-            settings.openrouter_api_key = decrypt(enc).unwrap_or_default();
+            match decrypt(enc) {
+                Ok(key) => {
+                    eprintln!("[secrets] groq_api_key decrypted OK, len={}, starts_with='{}'",
+                        key.len(), &key[..key.len().min(8)]);
+                    settings.openrouter_api_key = key;
+                }
+                Err(e) => {
+                    eprintln!("[secrets] groq_api_key decrypt FAILED: {}", e);
+                }
+            }
         }
     }
     if let Some(v) = store.get("openai_api_key") {
@@ -243,30 +254,35 @@ pub async fn resolve_app_secrets(
 ) -> Result<AppSecretsSettings, String> {
     let (telegram_bot_token, telegram_chat_id) = load_local_telegram_settings(app, decrypt)?;
 
-    // 1. المفتاح المحلي أولاً — أسرع وأكثر موثوقية
-    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
-    if legacy.has_remote_payload() {
-        legacy.telegram_bot_token = telegram_bot_token;
-        legacy.telegram_chat_id = telegram_chat_id;
-        return Ok(legacy);
-    }
-
-    // 2. إذا لا يوجد مفتاح محلي → نجرب Supabase كاحتياطي
+    // 1. Supabase Vault أولاً — مصدر الحقيقة (المفتاح يُدار من هناك)
     let access_token = access_token_for_fetch(app, decrypt)?;
     let remote_result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(8),
         fetch_secrets_from_supabase(&access_token),
     )
     .await;
 
     if let Ok(Ok(mut remote)) = remote_result {
         if remote.has_remote_payload() {
+            eprintln!("[secrets] USING SUPABASE key (len={})", remote.openrouter_api_key.len());
             remote.telegram_bot_token = telegram_bot_token;
             remote.telegram_chat_id = telegram_chat_id;
             return Ok(remote);
         }
-    } else if remote_result.is_err() {
-        eprintln!("[secrets] Supabase fetch timed out — no local OpenRouter key found");
+        eprintln!("[secrets] Supabase returned empty — trying local fallback");
+    } else if let Err(_) = remote_result {
+        eprintln!("[secrets] Supabase fetch timed out — trying local fallback");
+    } else {
+        eprintln!("[secrets] Supabase fetch failed — trying local fallback");
+    }
+
+    // 2. احتياطي محلي فقط عند تعذّر Supabase (offline)
+    let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
+    if legacy.has_remote_payload() {
+        eprintln!("[secrets] USING LOCAL fallback key (len={})", legacy.openrouter_api_key.len());
+        legacy.telegram_bot_token = telegram_bot_token;
+        legacy.telegram_chat_id = telegram_chat_id;
+        return Ok(legacy);
     }
 
     Ok(AppSecretsSettings {

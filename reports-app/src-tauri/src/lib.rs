@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::Manager;
-use tauri::Emitter;
 use tauri_plugin_store::StoreExt;
 
 pub mod telegram;
@@ -22,8 +21,6 @@ pub mod pdf_generator;
 pub mod excel_generator;
 pub mod ai_agent;
 pub mod agent_tools;
-pub mod infinity_inventory_sql;
-pub mod agent_content_sync;
 pub mod agent_memory;
 pub mod scheduler;
 pub mod pos_sale;
@@ -31,8 +28,6 @@ pub mod erp_profile;
 pub mod erp_adapters;
 pub mod pattern_catalog;
 pub mod pharmacy_share;
-pub mod agent_error_log;
-pub mod gotenberg;
 
 pub struct AppState {
     pub conn: Arc<Mutex<Option<SqlConnection>>>,
@@ -706,16 +701,6 @@ async fn execute_favorite_query(
 }
 
 #[tauri::command]
-async fn refresh_agent_cloud_content(force: Option<bool>) -> Result<agent_content_sync::AgentSyncStatus, String> {
-    Ok(agent_content_sync::refresh_from_supabase(force.unwrap_or(true)).await)
-}
-
-#[tauri::command]
-fn get_agent_cloud_sync_status() -> agent_content_sync::AgentSyncStatus {
-    agent_content_sync::get_sync_status()
-}
-
-#[tauri::command]
 async fn load_app_secrets_settings(
     app: tauri::AppHandle,
 ) -> Result<supabase_config::AppSecretsSettings, String> {
@@ -1234,23 +1219,6 @@ pub fn run() {
                 }
             }
 
-            // مزامنة أنماط الوكيل من Supabase (OTA)
-            crate::agent_content_sync::warm_cache_from_disk();
-            let app_sync = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let status = crate::agent_content_sync::refresh_from_supabase(false).await;
-                if status.bundles_updated + status.patterns_updated > 0 {
-                    let _ = app_sync.emit(
-                        "agent-cloud-sync",
-                        serde_json::json!({
-                            "bundles_updated": status.bundles_updated,
-                            "patterns_updated": status.patterns_updated,
-                            "source": status.source,
-                        }),
-                    );
-                }
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1282,8 +1250,6 @@ pub fn run() {
             list_favorite_queries,
             delete_favorite_query,
             execute_favorite_query,
-            refresh_agent_cloud_content,
-            get_agent_cloud_sync_status,
             get_business_profile,
             list_cancelled_invoices,
             pos_sale::search_pos_products,

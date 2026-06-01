@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Brand — Logo Lockup</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body { padding: 0; background: var(--bg-canvas); }
+  .lockup-stage {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 220px;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    padding: 28px;
+    position: relative;
+  }
+  .panel--light { background: var(--bg-canvas); }
+  .panel--dark  { background: #0E1729; color: #F1EBDB; }
+
+  .mark {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: var(--brand-primary);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 18px rgba(15,110,112,0.28);
+    position: relative;
+  }
+  .mark__glyph {
+    font-family: 'Reem Kufi', sans-serif;
+    font-weight: 700;
+    font-size: 36px;
+    color: #FBF8F0;
+    line-height: 1;
+    margin-top: -2px;
+  }
+  .mark__spark {
+    position: absolute;
+    inset: auto -8px -6px auto;
+    width: 22px; height: 22px;
+    background: var(--brand-accent);
+    border-radius: 7px;
+    border: 3px solid var(--bg-canvas);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .panel--dark .mark__spark { border-color: #0E1729; }
+  .mark__spark svg { width: 10px; height: 10px; color: #FBF8F0; }
+
+  .word {
+    font-family: 'Reem Kufi', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+  }
+  .panel--light .word { color: var(--fg-1); }
+  .panel--dark  .word { color: #F1EBDB; }
+  .word .latin {
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--fg-3);
+    display: block;
+    margin-top: 2px;
+  }
+  .panel--dark .word .latin { color: #807C70; }
+
+  .tag {
+    position: absolute;
+    top: 12px; inset-inline-start: 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+  .panel--dark .tag { color: #807C70; }
+</style></head>
+<body>
+<div class="lockup-stage">
+  <div class="panel panel--light">
+    <span class="tag">light</span>
+    <div class="mark">
+      <span class="mark__glyph">ت</span>
+      <span class="mark__spark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"></polyline></svg></span>
+    </div>
+    <div class="word">التابي<span class="latin">al-tabi · reports</span></div>
+  </div>
+  <div class="panel panel--dark">
+    <span class="tag">dark</span>
+    <div class="mark">
+      <span class="mark__glyph">ت</span>
+      <span class="mark__spark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"></polyline></svg></span>
+    </div>
+    <div class="word">التابي<span class="latin">al-tabi · reports</span></div>
+  </div>
+</div>
+</body></html>

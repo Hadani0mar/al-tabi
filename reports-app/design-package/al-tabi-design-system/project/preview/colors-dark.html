@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Colors — Dark Mode</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  html[data-theme="mihbar-dark"] { color-scheme: dark; }
+  body { padding: 18px 22px; background: #0B1220; color: #F1EBDB; }
+  .row { gap: 14px; }
+  .swatch__chip { border: 1px solid rgba(255,255,255,0.06); }
+  .swatch__name { color: #F1EBDB; }
+  .swatch__hex  { color: #807C70; }
+</style></head>
+<body>
+<script>document.documentElement.setAttribute('data-theme','mihbar-dark');</script>
+<div class="row">
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--bg-canvas)"></div>
+    <div class="swatch__name">Canvas</div>
+    <div class="swatch__hex">#0B1220</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--bg-surface)"></div>
+    <div class="swatch__name">Surface</div>
+    <div class="swatch__hex">#121A2C</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--bg-elevated)"></div>
+    <div class="swatch__name">Elevated</div>
+    <div class="swatch__hex">#1A2438</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--brand-primary)"></div>
+    <div class="swatch__name">Primary</div>
+    <div class="swatch__hex">#4DB8B8</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--brand-accent)"></div>
+    <div class="swatch__name">Accent</div>
+    <div class="swatch__hex">#E09060</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--fg-1)"></div>
+    <div class="swatch__name">Ink 1</div>
+    <div class="swatch__hex">#F1EBDB</div>
+  </div>
+  
+  <div class="swatch">
+    <div class="swatch__chip" style="background: var(--fg-3)"></div>
+    <div class="swatch__name">Ink 3</div>
+    <div class="swatch__hex">#807C70</div>
+  </div>
+</div></body></html>

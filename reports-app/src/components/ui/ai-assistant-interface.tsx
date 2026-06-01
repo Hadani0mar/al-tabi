@@ -16,7 +16,6 @@ import {
   Tag,
   ChevronDown,
   ChevronUp,
-  RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
@@ -74,8 +73,6 @@ interface Props {
 
 export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [inputValue, setInputValue] = useState("");
-  const [refreshingAgent, setRefreshingAgent] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [loadingChatIds, setLoadingChatIds] = useState<Set<string>>(new Set());
@@ -107,33 +104,6 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     (activeChatIdRef.current !== null &&
       loadingChatIds.has(activeChatIdRef.current)) ||
     (activeChatId !== null && loadingChatIds.has(activeChatId));
-
-  const handleQuickRefreshAgent = async () => {
-    setRefreshingAgent(true);
-    setRefreshMessage(null);
-    try {
-      const status = await invoke<{
-        bundles_updated: number;
-        patterns_updated: number;
-        source: string;
-        error?: string | null;
-      }>("refresh_agent_cloud_content", { force: true });
-      
-      const total = status.bundles_updated + status.patterns_updated;
-      if (status.error) {
-        setRefreshMessage(`❌ تعذّر التحديث: ${status.error}`);
-      } else if (total > 0) {
-        setRefreshMessage(`✅ تم تحديث الوكيل! تم تنزيل ${status.bundles_updated} ملف و${status.patterns_updated} نمط.`);
-      } else {
-        setRefreshMessage("⚡ الوكيل محدّث بالفعل! لا توجد تعديلات جديدة.");
-      }
-    } catch (err) {
-      setRefreshMessage(`❌ فشل التحديث: ${err}`);
-    } finally {
-      setRefreshingAgent(false);
-      setTimeout(() => setRefreshMessage(null), 4000);
-    }
-  };
 
   const saveLastActiveChatId = async (id: string | null) => {
     try {
@@ -605,32 +575,13 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             <Menu className="w-5 h-5" />
             <span className="text-sm font-medium">سجل المحادثات</span>
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleQuickRefreshAgent}
-              disabled={refreshingAgent}
-              title="تحديث تعليمات الوكيل من السحابة"
-              className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-5 h-5 ${refreshingAgent ? "animate-spin" : ""}`} />
-              <span className="text-sm font-medium hidden sm:inline">تحديث الوكيل</span>
+          {activeChatId && (
+            <button onClick={handleNewChat} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
+              <Plus className="w-5 h-5" />
+              <span className="text-sm font-medium hidden sm:inline">محادثة جديدة</span>
             </button>
-            {activeChatId && (
-              <button onClick={handleNewChat} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
-                <Plus className="w-5 h-5" />
-                <span className="text-sm font-medium hidden sm:inline">محادثة جديدة</span>
-              </button>
-            )}
-          </div>
+          )}
         </div>
-
-        {refreshMessage && (
-          <div className="w-full mx-auto mb-3 px-2">
-            <div className="rounded-xl border px-4 py-2.5 text-sm text-center" style={{ borderColor: "var(--ai-bubble-border)", background: "var(--ai-bubble-bg)", color: "var(--ai-bubble-fg)" }}>
-              {refreshMessage}
-            </div>
-          </div>
-        )}
 
         <div className="w-full mx-auto flex flex-col h-[calc(100vh-12rem)] min-h-0 overflow-visible">
         
@@ -683,9 +634,6 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                     filePath = fileMatch[1].trim();
                     content = content.replace(/\[FILE_PATH:.*?\]/g, "");
                 }
-                const lastFileIdx = chatHistory.reduce((last: number, m, j) =>
-                    /\[FILE_PATH:.*?\]/.test(m.content) ? j : last, -1);
-                const isLastFileMsg = filePath !== null && i === lastFileIdx;
                 
                 return (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
@@ -800,7 +748,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                   {content}
                                </ReactMarkdown>
                             </div>
-                            {isLastFileMsg && filePath && (
+                            {filePath && (
                                 <button
                                     onClick={() => invoke("open_local_file", { path: filePath }).catch(err => alert("فشل فتح الملف: " + err))}
                                     className="self-start flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-semibold mt-2 shadow-sm border"

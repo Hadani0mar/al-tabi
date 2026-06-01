@@ -766,49 +766,6 @@ pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// أنماط مخزون Infinity: batch بجداول مؤقتة (#temp) — CREATE/DROP/INSERT INTO #… مسموح
-pub fn validate_pattern_batch_sql(sql: &str) -> Result<(), String> {
-    let upper = sql.to_uppercase();
-    if upper.trim().is_empty() {
-        return Err("الاستعلام فارغ.".to_string());
-    }
-    if !upper.contains("SELECT ") {
-        return Err("يجب أن يحتوي النمط على SELECT نهائي على الأقل.".to_string());
-    }
-    const HARD_BLOCK: &[&str] = &[
-        "INSERT INTO INVENTORY.", "INSERT INTO SALES.", "INSERT INTO PURCHASE.",
-        "UPDATE ", "DELETE FROM ", "DROP TABLE INVENTORY.", "DROP TABLE SALES.",
-        "DROP TABLE PURCHASE.", "EXEC ", "EXECUTE ", "TRUNCATE ", "ALTER ",
-        "CREATE TABLE INVENTORY.", "CREATE TABLE SALES.", "CREATE TABLE PURCHASE.",
-    ];
-    for kw in HARD_BLOCK {
-        if upper.contains(kw) {
-            return Err(format!("محظور في أنماط القراءة: {}", kw.trim()));
-        }
-    }
-    if upper.contains("CREATE TABLE ") && !upper.contains("CREATE TABLE #") {
-        return Err("CREATE TABLE مسموح للجداول المؤقتة (#…) فقط.".to_string());
-    }
-    if upper.contains("DROP TABLE ") && !upper.contains("DROP TABLE #") && !upper.contains("TEMPDB..#")
-    {
-        return Err("DROP TABLE مسموح للجداول المؤقتة (#…) فقط.".to_string());
-    }
-    Ok(())
-}
-
-pub fn is_pattern_batch_sql(sql: &str) -> bool {
-    let u = sql.to_uppercase();
-    u.contains("CREATE TABLE #") || u.contains("TEMPDB..#") || u.contains("IF OBJECT_ID('TEMPDB")
-}
-
-pub fn validate_sql_for_execution(sql: &str) -> Result<(), String> {
-    if is_pattern_batch_sql(sql) {
-        validate_pattern_batch_sql(sql)
-    } else {
-        validate_read_only_sql(sql)
-    }
-}
-
 /// يُفعّل QUOTED_IDENTIFIER لدعم أسماء أعمدة عربية بين \"...\"
 pub fn prepare_sql_batch(sql: &str) -> String {
     format!(
@@ -1065,27 +1022,6 @@ pub fn tool_definitions() -> Vec<Value> {
                 }
             }
         }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": "export_html_pdf",
-                "description": "Converts an HTML string to a PDF using Gotenberg (Chromium). Use this when the user asks for a PDF report with custom design. YOU design the HTML+CSS freely — support RTL Arabic, use tables, colors, gradients, whatever fits the data. The HTML must be complete (<!DOCTYPE html>...) and self-contained (inline CSS only, no external files). Returns a local file path for the user to open.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "html": {
-                            "type": "string",
-                            "description": "Complete HTML document with inline CSS. Must include <!DOCTYPE html>, <html dir='rtl' lang='ar'>, UTF-8 charset meta, and all styling inline. Design freely — you choose colors, layout, fonts, tables."
-                        },
-                        "filename": {
-                            "type": "string",
-                            "description": "Output filename without extension (Arabic or English, no spaces — use dashes). Example: 'تقرير-المبيعات' or 'sales-report'."
-                        }
-                    },
-                    "required": ["html", "filename"]
-                }
-            }
-        }),
     ]
 }
 
@@ -1100,7 +1036,6 @@ pub const EXTENDED_TOOL_NAMES: &[&str] = &[
     "compare_periods",
     "suggest_indexes",
     "export_last_result",
-    "export_html_pdf",
     "get_product_schema",
     "get_database_views",
     "plan_complex_query",
@@ -1508,23 +1443,12 @@ fn extract_all_sql_from_pattern_section(section: &str) -> Vec<String> {
     blocks
 }
 
-fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: Option<u32>) -> String {
+fn apply_pattern_sql_params(sql: &str, days_recent: u32, coverage_days: u32) -> String {
     let mut out = sql.to_string();
     out = out.replace("DATEADD(day,-60,", &format!("DATEADD(day,-{},", days_recent));
     out = out.replace("DATEADD(day, -60,", &format!("DATEADD(day, -{},", days_recent));
-    let cov_legacy = coverage_days.unwrap_or(30);
-    out = out.replace("*30 -", &format!("*{} -", cov_legacy));
-    out = out.replace("* 30 -", &format!("* {} -", cov_legacy));
-    out = out.replace(
-        "@window_days INT = 60",
-        &format!("@window_days INT = {}", days_recent),
-    );
-    if let Some(cov) = coverage_days {
-        out = out.replace(
-            "@target_coverage_days INT = 35",
-            &format!("@target_coverage_days INT = {}", cov),
-        );
-    }
+    out = out.replace("*30 -", &format!("*{} -", coverage_days));
+    out = out.replace("* 30 -", &format!("* {} -", coverage_days));
     out
 }
 
@@ -2169,29 +2093,12 @@ pub async fn handle_run_query_pattern(
         });
     }
 
-    let section_body_raw = section
+    let section_body = section
         .split("\n\n---\n\n")
         .next()
         .unwrap_or(&section);
 
-    let slug_from_header = section_body_raw
-        .lines()
-        .next()
-        .and_then(|l| l.strip_prefix("## PATTERN:"))
-        .map(str::trim)
-        .unwrap_or("");
-    let pattern_slug = catalog_entry
-        .as_ref()
-        .and_then(|e| e.section_slug(erp))
-        .unwrap_or(slug_from_header);
-
-    let section_body = crate::infinity_inventory_sql::augment_pattern_section(
-        section_body_raw,
-        pattern_slug,
-        erp,
-    );
-
-    let sql_blocks = extract_all_sql_from_pattern_section(&section_body);
+    let sql_blocks = extract_all_sql_from_pattern_section(section_body);
     if sql_blocks.is_empty() {
         return json!({
             "error": "وُجد النمط لكن لم تُستخرج كتلة SQL. استخدم search_query_patterns ثم انسخ SQL يدوياً.",
@@ -2200,7 +2107,7 @@ pub async fn handle_run_query_pattern(
     }
 
     let dr = days_recent.filter(|d| *d > 0).unwrap_or(60);
-    let cov_opt = coverage_days.filter(|d| *d > 0);
+    let cov = coverage_days.filter(|d| *d > 0).unwrap_or(30);
 
     let conn_opt = app_state.conn.lock().await.clone();
     if conn_opt.is_none() {
@@ -2215,7 +2122,7 @@ pub async fn handle_run_query_pattern(
     let mut last_rows: Vec<Vec<String>> = Vec::new();
 
     for (idx, block) in sql_blocks.iter().enumerate() {
-        let mut sql = apply_pattern_sql_params(block, dr, cov_opt);
+        let mut sql = apply_pattern_sql_params(block, dr, cov);
         if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
             sql = apply_product_filter(&sql, pf);
         } else if sql.contains("%EMPLOYEE%") {
@@ -2227,7 +2134,7 @@ pub async fn handle_run_query_pattern(
         } else if sql.contains("%CUSTOMER%") {
             sql = apply_customer_filter(&sql, keywords);
         }
-        if let Err(e) = validate_sql_for_execution(&sql) {
+        if let Err(e) = validate_read_only_sql(&sql) {
             return json!({ "error": e, "sql_attempted": sql, "part_index": idx + 1 });
         }
         let exec_sql = prepare_sql_batch(&sql);
@@ -2633,19 +2540,6 @@ INNER JOIN dbo.ITEMS I ON M.ITEM_ID = I.ITEM_ID;
         assert!(n.to_uppercase().starts_with("WITH"));
         assert!(!n.to_uppercase().contains("DECLARE"));
     }
-
-    #[test]
-    fn allows_infinity_batch_temp_tables() {
-        let sql = r"
-SET NOCOUNT ON;
-IF OBJECT_ID('tempdb..#X') IS NOT NULL DROP TABLE #X;
-CREATE TABLE #X (ProductID INT PRIMARY KEY);
-INSERT INTO #X SELECT 1;
-SELECT ProductID FROM #X;
-";
-        assert!(is_pattern_batch_sql(sql));
-        assert!(validate_pattern_batch_sql(sql).is_ok());
-    }
 }
 
 #[cfg(test)]
@@ -2769,61 +2663,6 @@ mod product_filter_tests {
     }
 }
 
-/// يحوّل HTML يولّده الوكيل إلى PDF عبر Gotenberg ويسلّمه للمستخدم.
-pub async fn handle_export_html_pdf(
-    html: &str,
-    filename: &str,
-    app_state: &Arc<AppState>,
-    delivery: ExportDelivery,
-) -> Value {
-    if html.trim().is_empty() {
-        return json!({ "error": "HTML فارغ — لا يمكن توليد PDF." });
-    }
-
-    match crate::gotenberg::html_to_pdf(html).await {
-        Ok(bytes) => match delivery {
-            ExportDelivery::Local => {
-                let safe_name = filename
-                    .chars()
-                    .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-                    .collect::<String>();
-                let safe_name = if safe_name.is_empty() { "تقرير".to_string() } else { safe_name };
-                let fname = format!("{}.pdf", safe_name);
-                let path = std::env::temp_dir().join(&fname);
-                if std::fs::write(&path, &bytes).is_ok() {
-                    record_exported_file(app_state, &path).await;
-                    json!({
-                        "result": format!(
-                            "تم توليد PDF بنجاح. أخبر المستخدم بذلك وأضف في نهاية ردك: [FILE_PATH:{}]",
-                            path.display()
-                        )
-                    })
-                } else {
-                    json!({ "error": "فشل حفظ PDF على القرص." })
-                }
-            }
-            ExportDelivery::Telegram { client, token, chat_id } => {
-                let fname = format!("{}.pdf", filename.chars().take(30).collect::<String>().replace(' ', "-"));
-                let caption = format!("📄 {}", filename);
-                match crate::telegram::send_pdf(&client, &token, chat_id, &fname, bytes, &caption).await {
-                    Ok(_) => json!({ "result": "تم إرسال PDF إلى Telegram." }),
-                    Err(e) => json!({ "error": format!("فشل إرسال PDF: {e}") }),
-                }
-            }
-        },
-        Err(e) => {
-            crate::agent_error_log::log_error_background(
-                "any",
-                "export_html_pdf",
-                e.clone(),
-                None,
-                None,
-            );
-            json!({ "error": format!("فشل Gotenberg: {e}") })
-        }
-    }
-}
-
 pub async fn dispatch_extended_tool(
     name: &str,
     args_str: &str,
@@ -2918,11 +2757,6 @@ pub async fn dispatch_extended_tool(
             let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("تقرير");
             let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("excel");
             handle_export_last_result(title, format, app_state, delivery).await
-        }
-        "export_html_pdf" => {
-            let html = args.get("html").and_then(|v| v.as_str()).unwrap_or("");
-            let filename = args.get("filename").and_then(|v| v.as_str()).unwrap_or("تقرير");
-            handle_export_html_pdf(html, filename, app_state, delivery).await
         }
         _ => return None,
     };

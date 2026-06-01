@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Badges & Status</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:18px 24px;}
+  .group{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+  .group:last-child{margin-bottom:0;}
+  .label-mini{ width: 80px; }
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; font-weight:600; padding: 3px 10px;
+    border-radius: var(--radius-pill); border:1px solid transparent;
+  }
+  .badge--success{ background: var(--success-soft); color: var(--success-fg); border-color: rgba(63,125,88,0.2);}
+  .badge--warning{ background: var(--warning-soft); color: var(--warning-fg); border-color: rgba(180,115,18,0.2);}
+  .badge--danger { background: var(--danger-soft);  color: var(--danger-fg);  border-color: rgba(179,58,42,0.2);}
+  .badge--info   { background: var(--info-soft);    color: var(--info-fg);    border-color: rgba(42,94,140,0.2);}
+  .badge--neutral{ background: var(--bg-muted);     color: var(--fg-2);}
+  .badge--brand  { background: var(--brand-primary-soft); color: var(--brand-primary-ink); border-color: rgba(15,110,112,0.2);}
+  .badge .dot{ width:6px; height:6px; border-radius:50%;}
+  .badge--success .dot{ background: var(--success);}
+  .badge--warning .dot{ background: var(--warning);}
+  .badge--danger  .dot{ background: var(--danger);}
+  .badge--info    .dot{ background: var(--info);}
+  .badge--brand   .dot{ background: var(--brand-primary);}
+</style></head>
+<body>
+<div class="group">
+  <span class="label-mini">STATUS</span>
+  <span class="badge badge--success"><span class="dot"></span>متصل</span>
+  <span class="badge badge--warning"><span class="dot"></span>جارٍ التزامن</span>
+  <span class="badge badge--danger"><span class="dot"></span>منقطع</span>
+  <span class="badge badge--info"><span class="dot"></span>قيد التشغيل</span>
+  <span class="badge badge--neutral">مسوّدة</span>
+</div>
+<div class="group">
+  <span class="label-mini">CATEGORY</span>
+  <span class="badge badge--brand">يومي</span>
+  <span class="badge badge--brand">أسبوعي</span>
+  <span class="badge badge--brand">شهري</span>
+  <span class="badge badge--neutral">يدوي</span>
+  <span class="badge badge--success">جديد</span>
+</div></body></html>

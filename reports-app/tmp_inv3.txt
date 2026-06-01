@@ -1,0 +1,293 @@
+_DISCOUNT ),0)   FROM GIVE_VIEW  WHERE G_STATUES <> 0 AND  G_STATUES <> 2  AND CUST_ID <> 0 AND   COMM_ID  = @COMM_ID
+
+
+
+SET  @COMM_RESULT  = ( @COMM_TOTAL_SALE + @COMM_DIBIT  - @COMM_TOTAL_SALE_DISCOUNT + @COMM_TOTAL_SALE_TAX1) + @COMM_TOTAL_R_BUY + @COMM_TOTAL_GIVE -( @COMM_TOTAL_BUY - @COMM_TOTAL_BUY_DISCOUNT ) -  @COMM_TOTAL_R_SALE -  @COMM_TOTAL_TAKE
+
+
+
+
+
+SELECT @COMM_MAX_DEBIT = COMM_MAX_DEBIT FROM COMMISSIONER WHERE COMM_ID = @COMM_ID
+
+
+
+
+
+
+END
+
+
+
+
+
+IF ( ((@CUST_RESULT > @CUST_MAX_DEBIT) and (@CUST_MAX_DEBIT <> 0)) or  ( (@NO_SALE_DEBIT = 1) And (@CUST_RESULT1 > 0) ))
+
+SELECT @STATE_FLAG =1
+else
+
+IF @COMM_RESULT > @COMM_MAX_DEBIT and  @COMM_MAX_DEBIT <> 0
+
+SELECT @STATE_FLAG = 2
+
+
+if @STATE_FLAG = 0  OR @CUST_ID = 0  OR  @CUST_ID =  1
+begin
+
+
+
+if ((@COMM_PERCENT_FLAG =  1 ) or ( @COMM_PERCENT_FLAG = 4))
+
+begin
+
+IF  @COMM_ID <> 0
+BEGIN
+
+SELECT  @COMM_PERCENT = COMM_PERCENT    FROM COMMISSIONER WHERE COMM_ID = @COMM_ID 
+ 
+UPDATE SALE_ITEMS SET AGENT_PERCENT =  @COMM_PERCENT  WHERE  S_ID =@S_ID 
+END
+ELSE
+UPDATE SALE_ITEMS SET AGENT_PERCENT =  0 WHERE  S_ID =@S_ID
+
+
+end
+
+
+UPDATE    SALE_INVOICE
+SET  WAIT= 0,   TRAN_ID = @TRAN_ID ,  ACC_TAX_CREDIT = @ACC_TAX_CREDIT,  ACC_DIS_DEBIT =@ACC_DIS_DEBIT , ACC_DEBIT=@ACC_DEBIT , ACC_CREDIT=@ACC_CREDIT ,  BRANCH = @BRANCH   ,    S_DATE  = @S_DATE , CUST_ID = @CUST_ID , CUST_NAME = @CUST_NAME , COMM_ID = @COMM_ID , S_STATUES = @S_STATUES , S_NOTE = @S_NOTE , S_DISCOUNT =@S_DISCOUNT , S_TAX1 = @S_TAX1 , S_TAX2 = @S_TAX2 ,   S_SHIPMENT=@S_SHIPMENT   , S_UPDATE_DATE = Getdate() , USERS_ID =  @USERS_ID
+WHERE   S_ID = @S_ID AND S_STATUES =0
+
+
+DECLARE @G_TAKE_DO1 BIT
+
+
+SELECT @G_TAKE_DO1 = G_TAKE_DO FROM  USER_GROUP_VIEW WHERE GROUP_ID IN (SELECT GROUP_ID FROM USERS WHERE  USERS_ID =  @USERS_ID )
+
+
+if @SEPARATE1 = 0  AND @CB_TAKE = 1  AND ( @G_TAKE_DO1 = 0  OR @CUST_ID<> 1  )
+begin
+
+DECLARE @TS_ID INT
+DECLARE @TOTAL_PRICE FLOAT
+DECLARE @TRANS_N0_S1 INT
+DECLARE @FATORRA VARCHAR(100)
+
+DECLARE @TAKE_ISSUE int  
+
+
+SET @TS_ID = 0
+ 
+ if(@CUST_ID <>  1)
+
+SELECT @G_DEFULT_BANK1  = BANK_ID , @TAKE_ISSUE =  TAKE_ISSUE ,   @PAY_PERENT = PAY_PERENT   FROM CUSTOMERS_VIEW WHERE CUST_ID = @CUST_ID
+
+else
+
+set @TAKE_ISSUE = 0
+
+if @TAKE_ISSUE = 1 OR  @CUST_ID =  1 
+begin
+
+if(@CUST_ID =  1 )
+UPDATE TAKE SET   T_STATUES =  2 , T_UPDATE_DATE =  Getdate() WHERE   S_ID = @S_ID and S_ID <> 0
+  
+
+ if(@CUST_ID <>  1)
+ BEGIN
+ SELECT
+@ACC_T_DEBIT1  = ACC_T_DEBIT  ,
+@ACC_T_CREDIT1 = ACC_T_CREDIT ,
+@ACC_T_M_S_DEBIT_S1 = ACC_T_M_S_DEBIT_S1 ,
+@ACC_T_M_S_CREDIT_S1 = ACC_T_M_S_CREDIT_S1  FROM ACCOUNTS_DEFULTS
+ END
+ ELSE
+ BEGIN
+ SELECT
+
+@ACC_T_DEBIT1  = ACC_T_DEBIT2   ,
+@ACC_T_CREDIT1 = ACC_T_CREDIT2  ,
+@ACC_T_M_S_DEBIT_S1 = 0 ,
+@ACC_T_M_S_CREDIT_S1 = 0  FROM ACCOUNTS_DEFULTS
+
+
+ END
+
+
+
+CREATE TABLE #TAKES(
+
+        T_ID  INT 
+      , T_NO varchar(10)
+      , T_DATE datetime
+      , T_VALUE float
+      , T_DISC varchar(100)
+      , CUST_ID int
+      , COMM_ID int
+      , COMM_PERCENT FLOAT
+      , T_STATUES tinyint
+      , T_NOTE varchar(50)
+      , T_CHECK varchar(20)
+      , BANK_ID int
+      , T_KIND bit
+      , PC_ID tinyint
+      , T_UPDATE_DATE datetime
+      , FULL_NAME varchar(50)
+      , BANK_NAME varchar(40)
+      , BANK_ACCOUNT varchar(20)
+      , COMM_NO varchar(10)
+      , COMM_NAME varchar(50)
+      , CUST_NO varchar(20)
+      , CUST_NAME varchar(100)
+      , CUST_NAME_CASH varchar(100)
+      , USERS_ID INT 
+      , T_NAME varchar(50)
+      , S_ID INT 
+      , AC_NAME_DEBIT varchar(50)
+      , AC_NAME_CREDIT varchar(50)
+      , ACC_DEBIT INT 
+      , ACC_CREDIT INT 
+      , CAT9_ID INT 
+      , G_DISCOUNT FLOAT
+      , ACC_T_DISCOUNT_DEBIT  INT 
+      , ACC_NAME_DISCOUNT_DEBIT varchar(50) 
+      , TRAN_ID INT 
+      , TRAN_DESC  varchar(50)
+      , TRAN_SHORT_CUT varchar(30)
+      , LOGO varchar(100)
+      , TRAN_NO int
+      , TRAN_BARNCH varchar(10)
+      , CAT8_ID int
+      , ACC_T_M_S_DEBIT_S1 int
+      , ACC_T_M_S_CREDIT_S1 int
+      , ACC_T_M_S_DEBIT_NAME varchar(50)
+      , ACC_T_M_S_CREDIT_NAME varchar(50)
+      , A_USERS_ID int
+      , A_FULL_NAME varchar(50)
+	  , BALANCE_HIDE BIT 
+
+)
+
+ 
+
+
+ SET @FATORRA = '›« Ê—… „»Ì⁄«  —ﬁ„ ' + @TRAN_BARNCH + CAST(@TRAN_NO AS VARCHAR(10))
+
+
+ SELECT  @TOTAL_PRICE =  ISNULL(SUM (PRICE * QTY ) ,0) + ISNULL(SUM( ISNULL(COLOR_PRICE,0) * QTY ),0)    -  ISNULL(SUM(((PRICE * QTY) + (COLOR_PRICE * QTY)) * S_DISCOUNT /100 ),0) +  ISNULL(SUM((((PRICE* QTY)+ (COLOR_PRICE * QTY)) - (((PRICE * QTY) + (COLOR_PRICE * QTY)) * S_DISCOUNT /100 ) )* S_TAX1 /100) ,0) + ISNULL( SUM((((PRICE * QTY) + (COLOR_PRICE * QTY) )- (((PRICE * QTY)+ (COLOR_PRICE * QTY)) * S_DISCOUNT /100) + (((((PRICE* QTY)+ (COLOR_PRICE * QTY))-(((PRICE * QTY)+ (COLOR_PRICE * QTY)) * S_DISCOUNT /100 ) )* S_TAX1 /100))  ) * S_TAX2 /100),0)  FROM  SALE_ITEMS_INVOICE_VIEW WHERE  S_ID = @S_ID
+
+
+
+ DELETE FROM #TAKES 
+
+ 
+ --  insert into #TAKES 
+
+ IF @PAY_PERENT > 0 
+ SET @TOTAL_PRICE = @TOTAL_PRICE * @PAY_PERENT / 100 
+
+
+
+insert into #TAKES  EXEC TAKE_TRANS  @TS_ID , '' , @S_DATE  , @TOTAL_PRICE  , @FATORRA  , @CUST_ID  , @CUST_NAME  , @COMM_ID , 0 , 1, '' ,'', @G_DEFULT_BANK1 , 1, 0, @USERS_ID , @S_ID_1 , @ACC_T_DEBIT1 , @ACC_T_CREDIT1 , 0, 0, @TRAN_ID , @TRANS_N0_S1 , @TRAN_BARNCH , @ACC_T_M_S_DEBIT_S1 , @ACC_T_M_S_CREDIT_S1 , 1
+ 
+
+
+ SELECT @TS_ID  =  T_ID ,  @TRANS_N0_S1 = TRAN_NO FROM #TAKES
+
+
+insert into #TAKES  EXEC TAKE_TRANS  @TS_ID , '' , @S_DATE  , @TOTAL_PRICE  , @FATORRA  , @CUST_ID  , @CUST_NAME  , @COMM_ID , 0 , 1, '' ,'', @G_DEFULT_BANK1 , 1, 0, @USERS_ID , @S_ID_1 , @ACC_T_DEBIT1 , @ACC_T_CREDIT1 , 0, 0, @TRAN_ID , @TRANS_N0_S1 , @TRAN_BARNCH , @ACC_T_M_S_DEBIT_S1 , @ACC_T_M_S_CREDIT_S1 , 2
+
+
+ END
+
+end
+
+
+
+
+INSERT INTO USER_HISTORY (D_ID , USERS_ID , E_DATE , DISC , FLAG ) VALUES (@S_ID ,@USERS_ID , GETDATE(),'Õ›Ÿ ›« Ê—…' ,   0)
+
+end
+end
+
+
+end
+else
+if @Flag = 2 ---- lock
+
+begin
+
+if @A_USERS_ID = @USERS_ID
+begin
+
+
+UPDATE    SALE_INVOICE
+SET      WAIT= 0,      S_STATUES = 10   WHERE   S_ID = @S_ID
+
+INSERT INTO USER_HISTORY (D_ID , USERS_ID , E_DATE , DISC , FLAG ) VALUES (@S_ID ,@USERS_ID , GETDATE(),'ﬁ›· ›« Ê—…' ,   0)
+
+end
+end
+
+else
+if @Flag = 120 ---- unlock
+
+begin
+
+if @A_USERS_ID = @USERS_ID
+begin
+
+
+UPDATE    SALE_INVOICE
+SET        WAIT= 0,    S_STATUES = 1  WHERE   S_ID = @S_ID
+
+INSERT INTO USER_HISTORY (D_ID , USERS_ID , E_DATE , DISC , FLAG ) VALUES (@S_ID ,@USERS_ID , GETDATE(),'≈·€«¡ ﬁ›· ›« Ê—…' ,   0)
+
+end
+end
+else
+if @Flag = 3 ---- update
+
+begin
+
+
+
+if @A_USERS_ID = @USERS_ID
+begin
+
+UPDATE SHORT_CUT_CUSTOMER SET FLAG = 0 WHERE CUST_ID = @CUST_ID
+
+
+
+UPDATE    SALE_INVOICE
+SET       WAIT= 0,     S_STATUES = 0  , S_UPDATE_DATE = Getdate() , USERS_ID =  @USERS_ID WHERE   S_ID = @S_ID and  S_STATUES <> 10 and  S_STATUES <> 0 and S_STATUES <> 2
+
+INSERT INTO USER_HISTORY (D_ID , USERS_ID , E_DATE , DISC , FLAG ) VALUES (@S_ID ,@USERS_ID , GETDATE(),' ⁄œÌ· ›« Ê—…' ,   0)
+
+
+UPDATE TAKE SET   T_STATUES =  2 , T_UPDATE_DATE =  Getdate() WHERE   S_ID = @S_ID and S_ID <> 0 AND CUST_ID = 1 
+end
+end
+else
+if @Flag = 4 ---- delete 
+
+begin
+if @A_USERS_ID = @USERS_ID
+begin
+
+BEGIN TRY --Start the Try Block..
+
+   BEGIN TRANSACTION -- Start the transaction..
+
+UPDATE    SALE_INVOICE   SET WAIT= 0, S_NOTE = @S_NOTE , S_STATUES = 2  ,  S_UPDATE_DATE = Getdate() , USERS_ID =  @USERS_ID  WHERE   S_ID = @S_ID and  S_STATUES <> 10    and S_STATUES <> 2
+
+INSERT INTO USER_HISTORY (D_ID , USERS_ID , E_DATE , DISC , FLAG ) VALUES (@S_ID ,@USERS_ID , GETDATE(),'«·€«¡ ›« Ê—…' ,   0)
+
+
+UPDATE TAKE SET   T_STATUES =  2 , T_UPDATE_DATE =  Getdate() WHERE   S_ID = @S_ID and S_ID <> 0
+
+DECLARE INVOICE6 CURSOR FOR
+
+SELECT  S_ITEM_ID, ITEM_ID ,   QTY  ,  UNIT_QTY ,  PRICE  ,  AVER_COST ,  AVER_COST_DIS,  STORE_ID  , CATEOGRY1  , CATEOGRY2  ,    CATEOGRY3 ,  CAT3   FROM  SALE_IT
+
+(1 rows affected)

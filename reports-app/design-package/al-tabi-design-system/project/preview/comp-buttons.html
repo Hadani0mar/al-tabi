@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:18px 24px;}
+  .group{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+  .group:last-child{margin-bottom:0;}
+  .label-mini{ width: 64px; }
+  .btn{
+    font-family:var(--font-ui); font-size:14px; font-weight:600;
+    padding:0 16px; height:38px; border-radius: var(--radius-sm); border:1px solid transparent;
+    display:inline-flex; align-items:center; gap:8px; cursor:pointer;
+    transition: all var(--dur-fast) var(--ease-soft);
+  }
+  .btn-primary{ background:var(--brand-primary); color:var(--fg-on-brand); }
+  .btn-primary:hover{ background:var(--brand-primary-hover);}
+  .btn-secondary{ background:var(--bg-surface); color:var(--fg-1); border-color:var(--border-default);}
+  .btn-secondary:hover{ background:var(--bg-subtle);}
+  .btn-ghost{ background:transparent; color:var(--brand-primary);}
+  .btn-ghost:hover{ background:var(--brand-primary-soft);}
+  .btn-danger{ background:var(--danger); color:#fff;}
+  .btn-accent{ background:var(--brand-accent); color:var(--fg-on-brand);}
+  .btn-sm{ height:30px; font-size:13px; padding:0 12px;}
+  .btn-lg{ height:46px; font-size:15px; padding:0 22px;}
+  svg{ width:15px; height:15px;}
+</style></head>
+<body>
+<div class="group">
+  <span class="label-mini">PRIMARY</span>
+  <button class="btn btn-primary">تشغيل التقرير</button>
+  <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> تشغيل</button>
+  <button class="btn btn-accent">سؤال الذكاء</button>
+  <button class="btn btn-danger">حذف</button>
+</div>
+<div class="group">
+  <span class="label-mini">SECONDARY</span>
+  <button class="btn btn-secondary">إلغاء</button>
+  <button class="btn btn-secondary">تصدير</button>
+  <button class="btn btn-ghost">عرض الكل</button>
+</div>
+<div class="group">
+  <span class="label-mini">SIZES</span>
+  <button class="btn btn-primary btn-sm">صغير</button>
+  <button class="btn btn-primary">متوسط</button>
+  <button class="btn btn-primary btn-lg">كبير</button>
+</div></body></html>

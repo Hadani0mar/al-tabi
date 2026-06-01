@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="al-tabi mark">
+  <defs>
+    
+  </defs>
+  <rect class="bg" x="0" y="0" width="64" height="64" rx="14"></rect>
+  <text class="glyph" x="32" y="46" text-anchor="middle">ت</text>
+  <g transform="translate(40 40)">
+    <rect class="accent" x="0" y="0" width="22" height="22" rx="7" stroke="#0F6E70" stroke-width="3"></rect>
+    <polyline class="check" points="5 12 9 16 17 7"></polyline>
+  </g>
+</svg>

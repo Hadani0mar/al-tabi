@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Modal</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:0; background: rgba(14, 23, 41, 0.32); height: 320px; display:flex; align-items:center; justify-content:center;}
+  .modal{
+    background: var(--bg-elevated);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
+    border: 1px solid var(--border-subtle);
+    max-width: 440px; width: 90%;
+    padding: 22px 24px;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .modal h3 { margin:0; font-size:17px; font-weight:600;}
+  .modal p { margin:0; font-size:13.5px; color: var(--fg-2); line-height: 1.55;}
+  .modal__actions{ display:flex; justify-content:flex-start; gap:8px; margin-top: 4px;}
+  .btn{ font-family:var(--font-ui); font-size:13.5px; font-weight:600; padding: 0 14px; height:36px; border-radius: var(--radius-sm); border:1px solid transparent; cursor:pointer;}
+  .btn-danger{ background:var(--danger); color:#fff;}
+  .btn-secondary{ background: var(--bg-surface); color:var(--fg-1); border-color: var(--border-default);}
+  .icon{ width:32px; height:32px; border-radius:8px; background: var(--danger-soft); color: var(--danger); display:flex; align-items:center; justify-content:center;}
+  .icon svg{ width:18px; height:18px;}
+  .head{display:flex; gap:12px; align-items:flex-start;}
+  .head__body{display:flex; flex-direction:column; gap:6px;}
+</style></head>
+<body>
+<div class="modal" role="dialog">
+  <div class="head">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div>
+    <div class="head__body">
+      <h3>حذف الجدولة؟</h3>
+      <p>سيتم إيقاف الإرسال التلقائي لتقرير «مبيعات اليوم» إلى Telegram. لا يمكن التراجع.</p>
+    </div>
+  </div>
+  <div class="modal__actions">
+    <button class="btn btn-danger">حذف الجدولة</button>
+    <button class="btn btn-secondary">إلغاء</button>
+  </div>
+</div></body></html>

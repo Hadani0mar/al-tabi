@@ -1,0 +1,51 @@
+{
+  "patterns": [
+    {
+      "file": "pattern_طلبية-شراء-متقدمة.sql",
+      "slug": "طلبية-شراء-متقدمة",
+      "bytes": 25368
+    },
+    {
+      "file": "pattern_أصناف-راكدة-متقدمة.sql",
+      "slug": "أصناف-راكدة-متقدمة",
+      "bytes": 18684
+    },
+    {
+      "file": "pattern_خطر-الصلاحية-FEFO.sql",
+      "slug": "خطر-الصلاحية-FEFO",
+      "bytes": 20718
+    },
+    {
+      "file": "pattern_اتجاه-مبيعات-30-30.sql",
+      "slug": "اتجاه-مبيعات-30-30",
+      "bytes": 22847
+    },
+    {
+      "file": "pattern_أصناف-قيد-التجربة.sql",
+      "slug": "أصناف-قيد-التجربة",
+      "bytes": 22645
+    },
+    {
+      "file": "pattern_أصناف-وهمية.sql",
+      "slug": "أصناف-وهمية",
+      "bytes": 5646
+    },
+    {
+      "file": "pattern_تصنيف-حركة-الصنف.sql",
+      "slug": "تصنيف-حركة-الصنف",
+      "bytes": 23111
+    }
+  ],
+  "bundles": [
+    {
+      "file": "bundle_marketing_agent_md.sql",
+      "key": "marketing_agent_md",
+      "bytes": 92187
+    },
+    {
+      "file": "bundle_infinity_agent_md.sql",
+      "key": "infinity_agent_md",
+      "bytes": 55313
+    }
+  ]
+}

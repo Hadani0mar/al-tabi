@@ -277,7 +277,6 @@ export function QuickSaleAddon() {
       note: payload.note.trim() || null,
       lines: payload.lines,
     });
-    // يفتح الإيصال في العارض — اضغط طباعة فيه لتظهر نافذة طابعات Windows
     await openPdf(path);
   };
 
@@ -297,7 +296,7 @@ export function QuickSaleAddon() {
       };
       await printReceipt(payload);
       setLastReceipt(payload);
-      setSuccess(`تم فتح الإيصال للطباعة — الإجمالي ${formatMoney(total)}`);
+      setSuccess(`تم طباعة إثبات البيع — الإجمالي ${formatMoney(total)}`);
       setCart([]);
       setNote("");
       inputRef.current?.focus();

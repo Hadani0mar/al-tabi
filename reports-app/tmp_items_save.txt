@@ -1,0 +1,170 @@
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+ 
+
+CREATE PROCEDURE [dbo].[SALE_ITEMS_SAVE] 
+
+
+
+
+
+
+@PROC_TYPE tinyint     ,
+@S_ITEM_ID  int        ,
+@S_ID  int             ,
+@ITEM_ID int           ,
+@STORE_ID int      , 
+@QTY float             , 
+@UNIT_ID int       ,
+@UNIT_QTY float        ,
+@CATEOGRY1 varchar(10) ,
+@CATEOGRY2 varchar(10) ,
+@CATEOGRY3 datetime    ,
+@CAT3 bit              ,
+@PRICE float           ,
+@LAST_COST float       ,
+@AVER_COST  float      ,
+@PUBLIC_PRICE float    ,
+@S_ITEM_INVISIBLE bit  ,
+@COLLECT_ID smallint   ,
+@AGENT_PERCENT float   ,
+@OFS bit ,
+@F1 bit ,
+@ITEMS_ORDER tinyint ,
+@CUST_ID int,
+@COMM_ID smallint ,
+@STATE_FLAG1  tinyint ,
+@BARCODE varchar(30),
+@COLLECT_FLAG bit ,
+@USERS_ID int ,
+@H float ,
+@W float ,
+@Q float ,
+@RING BIT ,
+@PULISH BIT ,
+@MADE BIT ,
+@CUT BIT ,
+@ASSEMP BIT ,
+@STREACH BIT ,
+@SIZE VARCHAR(8),
+@TATIM BIT ,
+@SIZE_RING VARCHAR(8),
+
+@COLOR VARCHAR(50),
+@COLOR_PRICE FLOAT,
+
+@SUM_ALL_ITEMS TINYINT ,
+@DETAILS bit ,
+@STATE_FLAG tinyint  OUTPUT,
+@TOTAL_PRICE  float  OUTPUT ,   
+@TOTAL_PRICE_BEFORE  float  OUTPUT ,   
+@TOTAL_PAIED  float  OUTPUT ,   
+@TOTAL_RETURN  float  OUTPUT , 
+@TOTAL_NOT_DONE float OUTPUT ,
+@TOTAL_QTY float OUTPUT 
+
+AS
+
+DECLARE @TOTAL_PRICE_BEFORE1  float    
+DECLARE @SALE_KEEP_HISTORY BIT
+DECLARE @S_TIME DATETIME
+
+DECLARE @S_STATUES tinyint
+DECLARE @CUST_RESULT1 float
+DECLARE @CUST_TOTAL_SALE1 float
+DECLARE @CUST_TOTAL_SALE_DISCOUNT1 float
+DECLARE @CUST_TOTAL_SALE_TAX11 float
+DECLARE @NO_SALE_DEBIT BIT
+DECLARE @O_OF_STOCK BIT
+DECLARE @H333 float
+DECLARE @W333 float  
+DECLARE @Q333 float  
+DECLARE @RING333 BIT
+DECLARE @PULISH333 BIT
+DECLARE @MADE333 BIT
+DECLARE @CUT333 BIT
+DECLARE @ASSEMP333 BIT
+DECLARE @STREACH333 BIT
+DECLARE @SIZE333 VARCHAR(8)
+DECLARE @REST_QTY FLOAT
+DECLARE @COMM_TOTAL_SALE1 FLOAT
+DECLARE @COMM_TOTAL_SALE_DISCOUNT1 FLOAT
+DECLARE @COMM_TOTAL_SALE_TAX11 FLOAT
+
+
+DECLARE @TATIM333 BIT
+DECLARE @SIZE_RING333 VARCHAR(8)
+DECLARE @COLOR333 VARCHAR(50)
+DECLARE @COLOR_PRICE333 FLOAT
+
+DECLARE @UNIT_PRICE FLOAT
+DECLARE @CAT2_NAME VARCHAR(50)
+
+
+
+
+DECLARE @PLACE333 VARCHAR(30)
+DECLARE @P_CHECK333 BIT
+DECLARE @AVER_COST_DIS FLOAT   
+DECLARE @DISCOUNT_TYPE BIT
+DECLARE @ITEM_ID_F7 int
+DECLARE @NO_QTY_F7 bit
+DECLARE @PAIED_VISIBLE bit
+DECLARE @A_USERS_ID int
+DECLARE @SERIAL_FLAG BIT
+DECLARE @SERIAL_NO VARCHAR(50)
+DECLARE @COLLECT_TYPE tinyint
+DECLARE @R11_QTY float
+DECLARE @R11_FREE_QTY  float
+DECLARE @R11_FREE_LEVEL float
+DECLARE @QTY_LEFT10 float
+DECLARE @R_FREE_LEVEL float
+DECLARE @R_QTY float
+DECLARE @R_FREE_QTY float
+DECLARE @S_ITEM_INVISIBLE333 bit
+DECLARE @TOTAL_NOT_DONE1 float  
+DECLARE @CUST_TOTAL_SALE FLOAT  
+DECLARE @CUST_TOTAL_SALE_DISCOUNT  FLOAT 
+DECLARE @CUST_TOTAL_SALE_TAX1  FLOAT 
+DECLARE @CUST_TOTAL_SALE_TAX2  FLOAT 
+DECLARE @CUST_TOTAL_BUY FLOAT 
+DECLARE @CUST_TOTAL_BUY_DISCOUNT  FLOAT 
+DECLARE @CUST_TOTAL_R_SALE FLOAT 
+DECLARE @CUST_TOTAL_R_BUY FLOAT 
+DECLARE @CUST_TOTAL_TAKE FLOAT 
+DECLARE @CUST_TOTAL_GIVE FLOAT 
+DECLARE @COMM_TOTAL_SALE FLOAT 
+DECLARE @COMM_TOTAL_SALE_DISCOUNT FLOAT 
+DECLARE @COMM_TOTAL_SALE_TAX1 FLOAT 
+DECLARE @COMM_TOTAL_SALE_TAX2 FLOAT 
+DECLARE @COMM_TOTAL_BUY FLOAT 
+DECLARE @COMM_TOTAL_BUY_DISCOUNT FLOAT 
+DECLARE @COMM_TOTAL_R_SALE FLOAT 
+DECLARE @COMM_TOTAL_R_BUY FLOAT 
+DECLARE @COMM_TOTAL_TAKE FLOAT 
+DECLARE @COMM_TOTAL_GIVE FLOAT 
+DECLARE @QTY_OLD FLOAT
+DECLARE @STORE_ID_1 int 
+DECLARE @QTY_1 float
+DECLARE @QTY_123 float
+DECLARE @PRICE_1 float
+DECLARE @PRICE_2 float
+DECLARE @PRICE_3 float
+DECLARE @UNIT_ID_1 int 
+DECLARE @UNIT_QTY_1 float
+DECLARE @CATEOGRY1_1 varchar(10) 
+DECLARE @CATEOGRY2_1 varchar(10) 
+DECLARE @CATEOGRY3_1 datetime 
+DECLARE @CAT3_1 bit
+DECLARE @AVER_COST_1  float
+DECLARE @AVER_COST_DIS_1  float
+DECLARE @QTY_REAL float 
+DECLARE @QTY_LEFT  float 
+DECLARE @ITEM_QTY  float
+DECLARE @ITEM_QTY1  float
+DECLARE @CUST_MAX_DEBIT  float
+DECLARE @COMM_MAX_DEBIT  float
+DECLARE @CUST_RESULT  floa
+
+(1 rows affected)

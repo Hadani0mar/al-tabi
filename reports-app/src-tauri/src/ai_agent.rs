@@ -41,10 +41,7 @@ pub fn extract_pattern_section_by_slug(
     for section in content.split("\n## PATTERN:").skip(1) {
         let header = section.lines().next()?.trim();
         if header == target {
-            let raw = format!("## PATTERN:{section}");
-            return Some(crate::infinity_inventory_sql::augment_pattern_section(
-                &raw, target, erp,
-            ));
+            return Some(format!("## PATTERN:{section}"));
         }
     }
     None
@@ -1190,10 +1187,6 @@ pub async fn handle_with_groq(
 ) {
     // Greeting gate: skip RAG and LLM for simple social messages
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
-
-    // مزامنة أنماط/برومبت من Supabase (OTA — بدون تحديث التطبيق)
-    let _cloud_sync = crate::agent_content_sync::refresh_from_supabase(false).await;
-
     if let Some(reply) = try_handle_greeting(user_text, erp) {
         let _ = send_html(client, token, chat_id, reply).await;
         return;
@@ -1967,19 +1960,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                             },
                                         )
                                         .await;
-                                        let r_str = result.to_string();
-                                        if r_str.contains("\"error\"") {
-                                            crate::agent_error_log::log_error_background(
-                                                erp.kind_id(),
-                                                "execute_raw_sql",
-                                                r_str.chars().take(600).collect::<String>(),
-                                                Some(sql_query.chars().take(800).collect::<String>()),
-                                                None,
-                                            );
-                                        }
                                         recent_sql.push(sql_norm);
                                         if recent_sql.len() > 3 { recent_sql.remove(0); }
-                                        r_str
+                                        result.to_string()
                                     };
 
                                     let tool_resp_msg = json!({
@@ -2495,15 +2478,6 @@ pub async fn handle_with_groq_local(
     }
 
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
-
-    // مزامنة أنماط/برومبت من Supabase (كل ~15 دقيقة — بدون تحديث التطبيق)
-    let _cloud_sync = crate::agent_content_sync::refresh_from_supabase(false).await;
-    if _cloud_sync.bundles_updated + _cloud_sync.patterns_updated > 0 {
-        println!(
-            "[agent_sync] updated bundles={} patterns={}",
-            _cloud_sync.bundles_updated, _cloud_sync.patterns_updated
-        );
-    }
 
     if let Some(reply) = try_handle_greeting(user_text, erp) {
         return Ok(reply);
@@ -3603,15 +3577,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                             kw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
                                         };
                                         if pattern_call_count >= MAX_PATTERN_PER_TURN {
-                                            crate::agent_error_log::log_error_background(
-                                                erp.kind_id(),
-                                                "run_query_pattern",
-                                                format!("تجاوز الحد: {} محاولات — keywords={}", MAX_PATTERN_PER_TURN, kw),
-                                                None,
-                                                None,
-                                            );
                                             json!({
-                                                "error": format!("وصلت لـ {} محاولات. قدّم للمستخدم ملخصاً بما وجدته حتى الآن — لا تذكر أي قيود تقنية.", MAX_PATTERN_PER_TURN)
+                                                "error": format!("تجاوزت {} محاولات لـ run_query_pattern. لخّص آخر نتيجة — لا تقل إن الأنماط «معطّلة».", MAX_PATTERN_PER_TURN)
                                             })
                                             .to_string()
                                         } else if pattern_keywords_seen.iter().any(|k| k == &dedupe_key) {
@@ -3633,26 +3600,11 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                                 .await
                                             {
                                                 let s = func_response_data.to_string();
-                                                if s.contains("\"error\"") {
-                                                    crate::agent_error_log::log_error_background(
-                                                        erp.kind_id(),
-                                                        "run_query_pattern",
-                                                        s.chars().take(500).collect::<String>(),
-                                                        None,
-                                                        Some(serde_json::json!({ "keywords": kw, "pattern_id": pid })),
-                                                    );
-                                                } else {
+                                                if !s.contains("\"error\"") {
                                                     pattern_executed = true;
                                                 }
                                                 s
                                             } else {
-                                                crate::agent_error_log::log_error_background(
-                                                    erp.kind_id(),
-                                                    "run_query_pattern",
-                                                    "dispatch_extended_tool returned None",
-                                                    None,
-                                                    Some(serde_json::json!({ "keywords": kw })),
-                                                );
                                                 "{\"error\": \"فشل تنفيذ النمط.\"}".to_string()
                                             }
                                         }

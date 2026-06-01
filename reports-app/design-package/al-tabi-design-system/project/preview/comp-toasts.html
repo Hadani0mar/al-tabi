@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Toasts & Alerts</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:14px 20px;}
+  .stack{display:flex; flex-direction:column; gap:10px;}
+  .toast{
+    display:flex; gap:12px; align-items:flex-start;
+    padding: 10px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-inline-start: 4px solid var(--brand-primary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    font-size: 13.5px; line-height: 1.4;
+  }
+  .toast--success{ border-inline-start-color: var(--success); background: var(--success-soft);}
+  .toast--warning{ border-inline-start-color: var(--warning); background: var(--warning-soft);}
+  .toast--danger { border-inline-start-color: var(--danger);  background: var(--danger-soft);}
+  .toast__icon{
+    flex-shrink:0; width:18px; height:18px; display:flex; align-items:center; justify-content:center;
+  }
+  .toast__title{ font-weight:600; margin-bottom: 2px; color: var(--fg-1);}
+  .toast__body{ color: var(--fg-2); font-size: 12.5px;}
+  svg{width:18px; height:18px;}
+</style></head>
+<body>
+<div class="stack">
+  <div class="toast toast--success">
+    <div class="toast__icon" style="color:var(--success)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+    </div>
+    <div>
+      <div class="toast__title">تم توليد التقرير</div>
+      <div class="toast__body">47 صفاً · مدّة الاستعلام 0.42 ث</div>
+    </div>
+  </div>
+  <div class="toast toast--warning">
+    <div class="toast__icon" style="color:var(--warning)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+    </div>
+    <div>
+      <div class="toast__title">3 أصناف قاربت على النفاد</div>
+      <div class="toast__body">راجع قائمة المخزون أو فعّل الجدولة اليومية.</div>
+    </div>
+  </div>
+  <div class="toast toast--danger">
+    <div class="toast__icon" style="color:var(--danger)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+    </div>
+    <div>
+      <div class="toast__title">فقد الاتصال بـ SQL Server</div>
+      <div class="toast__body">سنحاول إعادة الاتصال تلقائياً خلال 10 ثوانٍ.</div>
+    </div>
+  </div>
+</div></body></html>

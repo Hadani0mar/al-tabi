@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Bottom Navigation</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:20px 24px; background: var(--bg-canvas);}
+  .nav{
+    display: inline-flex;
+    background: var(--bg-elevated);
+    border:1px solid var(--border-default);
+    border-radius: var(--radius-pill);
+    padding: 6px; gap: 4px;
+    box-shadow: var(--shadow-md);
+  }
+  .tab{
+    display:flex; align-items:center; gap:6px;
+    padding: 8px 14px; border-radius: var(--radius-pill);
+    font-size: 12.5px; font-weight: 600; color: var(--fg-2);
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease-soft);
+  }
+  .tab:hover{ color: var(--fg-1); background: var(--bg-subtle);}
+  .tab svg{ width:16px; height:16px;}
+  .tab.active{
+    background: var(--brand-primary);
+    color: var(--fg-on-brand);
+    box-shadow: 0 4px 12px rgba(15,110,112,0.30), inset 0 1px 0 rgba(255,255,255,0.16);
+  }
+  .center{ display:flex; justify-content:center;}
+</style></head>
+<body>
+<div class="center">
+  <nav class="nav" aria-label="القائمة">
+    <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>التقارير</button>
+    <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>بحث</button>
+    <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>تنبيهات</button>
+    <button class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><circle cx="12" cy="12" r="4"/></svg>الذكاء</button>
+    <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-13"/></svg>المحفوظات</button>
+    <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>الإعدادات</button>
+  </nav>
+</div></body></html>

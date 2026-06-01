@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Spacing — Radii</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:18px 24px;}
+  .row{display:flex; gap:16px; align-items:flex-end;}
+  .r{display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .r b{font-size:11px; font-family:var(--font-mono); color:var(--fg-3);}
+  .r .box{width:64px; height:64px; background:var(--brand-primary); display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; color:#FBF8F0; font-size:10px; font-family:var(--font-mono);}
+</style></head>
+<body>
+<div class="row">
+  <div class="r"><div class="box" style="border-radius:3px">3</div><b>xs</b></div>
+  <div class="r"><div class="box" style="border-radius:6px">6</div><b>sm</b></div>
+  <div class="r"><div class="box" style="border-radius:8px">8</div><b>md</b></div>
+  <div class="r"><div class="box" style="border-radius:10px">10</div><b>lg</b></div>
+  <div class="r"><div class="box" style="border-radius:14px">14</div><b>xl</b></div>
+  <div class="r"><div class="box" style="border-radius:18px">18</div><b>2xl</b></div>
+  <div class="r"><div class="box" style="border-radius:9999px;width:90px">pill</div><b>pill</b></div>
+</div></body></html>

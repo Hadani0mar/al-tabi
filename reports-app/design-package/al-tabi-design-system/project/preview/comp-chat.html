@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Chat Bubbles</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:16px 20px; background: var(--bg-canvas);}
+  .stream{display:flex; flex-direction:column; gap:10px;}
+  .msg{ max-width: 80%; padding: 10px 14px; border-radius: 14px; font-size:14px; line-height: 1.5;}
+  .msg.user{ align-self:flex-start; background: var(--user-bubble-bg); color: var(--user-bubble-fg); border-bottom-right-radius: 4px;}
+  .msg.ai{   align-self:flex-end;  background: var(--ai-bubble-bg); color: var(--ai-bubble-fg); border:1px solid var(--ai-bubble-border); border-bottom-left-radius: 4px;}
+  .tool{ align-self:flex-end; display:flex; gap:8px; align-items:center; font-size: 12px; font-family: var(--font-mono); color: var(--fg-3); padding: 4px 10px; background: var(--bg-subtle); border-radius:99px; border: 1px solid var(--border-subtle);}
+  .tool .dot{ width:6px; height:6px; border-radius:50%; background: var(--brand-accent); animation: pulse 1.4s infinite;}
+  @keyframes pulse { 0%,100%{opacity:.4;} 50%{opacity:1;} }
+  .num{font-family:var(--font-numeric); font-weight:600;}
+</style></head>
+<body>
+<div class="stream">
+  <div class="msg user">كم مبيعات اليوم؟ وحدد لي أكثر 3 أصناف.</div>
+  <div class="tool"><span class="dot"></span>SELECT … FROM Sales WHERE …</div>
+  <div class="msg ai">مبيعات اليوم بلغت <span class="num">42,180</span> د.ل (+8.4% عن أمس). أعلى ثلاثة أصناف: أموكسيسيلين، باراسيتامول، أوميبرازول.</div>
+</div></body></html>

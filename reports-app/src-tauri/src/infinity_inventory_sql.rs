@@ -22,13 +22,7 @@ fn embedded_sql(slug: &str) -> Option<&'static str> {
 
 /// slug يطابق ## PATTERN: في AGENT_InfinityRetailDB.md
 pub fn sql_for_slug(slug: &str) -> Option<Cow<'static, str>> {
-    if let Some(remote) =
-        crate::agent_content_sync::load_cached_pattern_sql(ErpKind::InfinityRetailDb, slug)
-    {
-        if !remote.trim().is_empty() {
-            return Some(Cow::Owned(remote));
-        }
-    }
+    // المصدر الوحيد: ملفات sql-split المضمّنة (تم إلغاء الجلب من Supabase).
     embedded_sql(slug).map(Cow::Borrowed)
 }
 

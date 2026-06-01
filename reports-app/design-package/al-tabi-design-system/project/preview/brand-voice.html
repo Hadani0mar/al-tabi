@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Brand — Voice Do / Don't</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body { background: var(--bg-canvas); padding: 20px 24px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 14px;}
+  .col { padding: 14px 16px; border-radius: var(--radius-lg); border:1px solid var(--border-subtle); background: var(--bg-surface);}
+  .col h4 { margin:0 0 10px; font-size:12px; letter-spacing:0.06em; text-transform: uppercase; }
+  .do  h4 { color: var(--success); }
+  .dont h4 { color: var(--danger); }
+  .col p { margin: 4px 0; font-size: 13.5px; line-height: 1.45; }
+  .col p::before { display:inline-block; width: 14px; }
+  .do p::before  { content:'✓'; color: var(--success); margin-inline-end: 4px;}
+  .dont p::before{ content:'✕'; color: var(--danger);  margin-inline-end: 4px;}
+</style></head>
+<body>
+<div class="grid">
+  <div class="col do">
+    <h4>افعل</h4>
+    <p>تم توليد التقرير — 47 صفاً</p>
+    <p>جارٍ الاتصال بقاعدة البيانات…</p>
+    <p>لا توجد نتائج في هذه الفترة</p>
+  </div>
+  <div class="col dont">
+    <h4>تجنّب</h4>
+    <p>رائع! 🎉 لقد أنشأنا تقريراً مذهلاً!</p>
+    <p>Error 0x80004005</p>
+    <p>عذراً، حدث خطأ غير معروف</p>
+  </div>
+</div></body></html>

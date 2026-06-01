@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Report Cards</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:18px 22px;}
+  .row{display:grid; grid-template-columns: 1fr 1fr; gap:14px;}
+  .card{
+    background: var(--bg-elevated);
+    border:1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-xs);
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .card__head{ display:flex; justify-content:space-between; align-items:center;}
+  .card__title{ font-size:14px; font-weight:600; color:var(--fg-1);}
+  .card__meta{ font-size:11.5px; color:var(--fg-3); display:flex; gap:10px;}
+  .card__num{ font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-size:24px; font-weight:600; color: var(--fg-1);}
+  .delta{font-family:var(--font-numeric); font-size:12px; font-weight:600;}
+  .delta--pos{color:var(--currency-pos);}
+  .delta--neg{color:var(--currency-neg);}
+  .badge{display:inline-flex; gap:6px; align-items:center; font-size:11px; font-weight:600; padding:2px 8px; border-radius:99px; background:var(--brand-primary-soft); color:var(--brand-primary-ink);}
+  .badge .dot{width:5px; height:5px; border-radius:50%; background:var(--brand-primary);}
+</style></head>
+<body>
+<div class="row">
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">مبيعات اليوم</div>
+      <span class="badge"><span class="dot"></span>يومي</span>
+    </div>
+    <div class="card__num">42,180 <span style="font-size:13px; color:var(--fg-3); font-weight:500;">د.ل</span></div>
+    <div class="card__meta"><span class="delta delta--pos">+8.4%</span><span>مقارنة بالأمس</span></div>
+  </div>
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">ديون الموردين</div>
+      <span class="badge" style="background:var(--warning-soft); color:var(--warning-fg);"><span class="dot" style="background:var(--warning)"></span>أسبوعي</span>
+    </div>
+    <div class="card__num">412,830 <span style="font-size:13px; color:var(--fg-3); font-weight:500;">د.ل</span></div>
+    <div class="card__meta"><span class="delta delta--neg">−1.2%</span><span>هذا الأسبوع</span></div>
+  </div>
+</div></body></html>

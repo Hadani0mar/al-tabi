@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Data Table</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:14px 18px;}
+  .tbl{ width:100%; border-collapse:collapse; background: var(--bg-elevated); border:1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow:hidden; font-size: 13.5px;}
+  .tbl th{
+    background: var(--bg-subtle);
+    color: var(--fg-2);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    text-align: start; padding: 8px 12px;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .tbl td{ padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); color: var(--fg-1);}
+  .tbl tr:last-child td{ border-bottom: none;}
+  .tbl tr:hover td{ background: var(--bg-subtle);}
+  .num{ font-family: var(--font-numeric); font-variant-numeric: tabular-nums; text-align:end !important;}
+  .pos{color:var(--currency-pos); font-weight:600;}
+  .neg{color:var(--currency-neg); font-weight:600;}
+  .chip{display:inline-block; font-size:11px; padding:2px 8px; border-radius:99px; background: var(--brand-primary-soft); color: var(--brand-primary-ink); font-weight:600;}
+</style></head>
+<body>
+<table class="tbl">
+  <thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الإجمالي</th><th>الفرق</th><th>الحالة</th></tr></thead>
+  <tbody>
+    <tr><td class="num">1</td><td>أموكسيسيلين 500mg</td><td class="num">1,240</td><td class="num">38,420.00</td><td class="num pos">+12.4%</td><td><span class="chip">رائج</span></td></tr>
+    <tr><td class="num">2</td><td>باراسيتامول 500mg</td><td class="num">890</td><td class="num">14,560.00</td><td class="num neg">−3.2%</td><td><span class="chip">عادي</span></td></tr>
+    <tr><td class="num">3</td><td>أوميبرازول 20mg</td><td class="num">402</td><td class="num">9,840.00</td><td class="num pos">+1.8%</td><td><span class="chip">عادي</span></td></tr>
+  </tbody>
+</table></body></html>

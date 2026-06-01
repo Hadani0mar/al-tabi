@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useCallback } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { SqlLoginPage } from "@/components/ui/sql-login-page";
 import MihbarNav from "@/components/ui/futuristic-nav";
 import { AppShellHeader } from "@/components/ui/app-shell-header";
@@ -6,8 +6,6 @@ import { FIXED_AI_MODEL } from "@/lib/ai-config";
 import { applyTheme, loadActiveTheme } from "@/lib/themes";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
-import { check } from "@tauri-apps/plugin-updater";
-import { X, ArrowUpCircle, Bot } from "lucide-react";
 
 const SchedulerPage = lazy(() =>
   import("@/components/ui/scheduler-page").then((m) => ({ default: m.SchedulerPage })),
@@ -52,38 +50,6 @@ export default function App() {
   const [autoConnecting, setAutoConnecting] = useState(false);
   const [visited, setVisited] = useState({ ai: true, saved: false, addons: false, settings: false });
   const aiModel = FIXED_AI_MODEL;
-
-  // تنبيهات التحديث
-  interface UpdateAlert { id: string; type: "app" | "agent"; message: string; version?: string; }
-  const [updateAlerts, setUpdateAlerts] = useState<UpdateAlert[]>([]);
-  const dismissAlert = useCallback((id: string) => setUpdateAlerts(a => a.filter(x => x.id !== id)), []);
-
-  // فحص التحديثات عند الاتصال
-  useEffect(() => {
-    if (!connected) return;
-    const timer = setTimeout(async () => {
-      const alerts: UpdateAlert[] = [];
-      // 1) فحص تحديث التطبيق
-      try {
-        const update = await check();
-        if (update) {
-          alerts.push({ id: "app", type: "app", message: `يتوفر إصدار جديد للتطبيق`, version: update.version });
-        }
-      } catch { /* صامت */ }
-      // 2) فحص تحديث الوكيل
-      try {
-        const status = await invoke<{ bundles_updated: number; patterns_updated: number; error?: string }>(
-          "refresh_agent_cloud_content", { force: false }
-        );
-        const total = (status.bundles_updated ?? 0) + (status.patterns_updated ?? 0);
-        if (total > 0) {
-          alerts.push({ id: "agent", type: "agent", message: `تم تحديث تعليمات الوكيل الذكي (${total} تغيير)` });
-        }
-      } catch { /* صامت */ }
-      if (alerts.length > 0) setUpdateAlerts(alerts);
-    }, 4000); // بعد 4 ثواني من الاتصال
-    return () => clearTimeout(timer);
-  }, [connected]);
 
   useEffect(() => {
     loadActiveTheme().then(applyTheme).catch(console.error);
@@ -194,42 +160,6 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col" dir="rtl" style={{ background: "var(--bg-canvas)" }}>
       <AppShellHeader businessName={connInfo?.database} connected={connected} />
-
-      {/* تنبيهات التحديث */}
-      {updateAlerts.length > 0 && (
-        <div className="fixed top-16 left-0 right-0 z-50 flex flex-col gap-2 px-4 pt-2 pointer-events-none">
-          {updateAlerts.map(alert => (
-            <div
-              key={alert.id}
-              className="pointer-events-auto flex items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur-md animate-in slide-in-from-top-2 duration-300"
-              style={{
-                background: alert.type === "app"
-                  ? "color-mix(in srgb, var(--bg-canvas) 85%, #10b981)"
-                  : "color-mix(in srgb, var(--bg-canvas) 85%, #7c3aed)",
-                borderColor: alert.type === "app" ? "rgba(16,185,129,0.3)" : "rgba(124,58,237,0.3)",
-                color: "var(--fg-1)",
-              }}
-            >
-              {alert.type === "app"
-                ? <ArrowUpCircle className="w-4 h-4 shrink-0" style={{ color: "#10b981" }} />
-                : <Bot className="w-4 h-4 shrink-0" style={{ color: "#7c3aed" }} />}
-              <span className="flex-1 font-medium">
-                {alert.message}
-                {alert.version && <span className="mr-1 font-bold" dir="ltr">v{alert.version}</span>}
-                {alert.type === "app" && (
-                  <span className="text-xs opacity-70 block mt-0.5">اذهب للإعدادات ← التحديثات لتثبيته</span>
-                )}
-              </span>
-              <button
-                onClick={() => dismissAlert(alert.id)}
-                className="rounded-lg p-1 transition-colors hover:opacity-70"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
       <main className="flex-1 pb-28">
         <Suspense fallback={null}>
           {currentPage === "reports" && (

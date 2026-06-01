@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Brand — Story</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body { background: var(--bg-canvas); padding: 22px 26px; }
+  .story { display: grid; grid-template-columns: 1.2fr 1fr; gap: 28px; align-items: center; }
+  .quote { font-family: var(--font-display); font-size: 22px; line-height: 1.35; color: var(--fg-1); letter-spacing: -0.005em; }
+  .quote::before { content:'«'; color: var(--brand-primary); margin-inline-end: 4px; font-weight: 700;}
+  .quote::after  { content:'»'; color: var(--brand-primary); margin-inline-start: 4px; font-weight: 700;}
+  .pillars { display: grid; gap: 10px; }
+  .pill { display:flex; align-items:center; gap:10px; padding:8px 12px; background: var(--bg-surface); border:1px solid var(--border-subtle); border-radius: var(--radius-pill); font-size: 13px; }
+  .dot { width:8px; height:8px; border-radius:50%; }
+</style></head>
+<body>
+<div class="story">
+  <div class="quote">ذكاء التقارير فوق Marketing2026 — اسأل، واحصل على الجواب.</div>
+  <div class="pillars">
+    <div class="pill"><span class="dot" style="background:var(--brand-primary)"></span><b>موثوق</b> — قراءة فقط، أرقام دقيقة</div>
+    <div class="pill"><span class="dot" style="background:var(--brand-accent)"></span><b>عملي</b> — قرارات يومية، بلا تعقيد</div>
+    <div class="pill"><span class="dot" style="background:var(--success)"></span><b>محلي</b> — عربي أولاً، RTL أصيل</div>
+  </div>
+</div></body></html>

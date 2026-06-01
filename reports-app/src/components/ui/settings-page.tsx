@@ -45,15 +45,6 @@ interface BusinessProfile {
   erp_label?: string | null;
 }
 
-interface AgentCloudSyncStatus {
-  last_check_unix: number;
-  last_success_unix: number;
-  bundles_updated: number;
-  patterns_updated: number;
-  source: string;
-  error?: string | null;
-}
-
 interface PharmacyShareSettings {
   sync_key: string;
   sharing_enabled: boolean;
@@ -198,9 +189,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   const [businessError, setBusinessError] = useState<string | null>(null);
   const [aiAdvancedMode, setAiAdvancedMode] = useState(false);
   const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
-  const [agentCloudSyncing, setAgentCloudSyncing] = useState(false);
-  const [agentCloudStatus, setAgentCloudStatus] = useState<AgentCloudSyncStatus | null>(null);
-  const [agentCloudMessage, setAgentCloudMessage] = useState<string | null>(null);
 
   const [pharmacySyncKey, setPharmacySyncKey] = useState("");
   const [pharmacySharing, setPharmacySharing] = useState(false);
@@ -244,9 +232,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
         const themeId = await loadActiveTheme();
         setActiveTheme(themeId);
         applyTheme(themeId);
-
-        const cloudStatus = await invoke<AgentCloudSyncStatus>("get_agent_cloud_sync_status");
-        setAgentCloudStatus(cloudStatus);
       } catch (err) {
         console.error("Failed to load settings:", err);
       }
@@ -254,47 +239,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
 
     loadSettings();
   }, []);
-
-  useEffect(() => {
-    const unlisten = listen<{ bundles_updated: number; patterns_updated: number; source: string }>(
-      "agent-cloud-sync",
-      (event) => {
-        const { bundles_updated, patterns_updated, source } = event.payload;
-        setAgentCloudMessage(
-          `تم تحديث ${bundles_updated} ملف و${patterns_updated} نمط من ${source}.`
-        );
-        invoke<AgentCloudSyncStatus>("get_agent_cloud_sync_status")
-          .then(setAgentCloudStatus)
-          .catch(console.error);
-      }
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  const handleRefreshAgentCloud = async () => {
-    setAgentCloudSyncing(true);
-    setAgentCloudMessage(null);
-    try {
-      const status = await invoke<AgentCloudSyncStatus>("refresh_agent_cloud_content", {
-        force: true,
-      });
-      setAgentCloudStatus(status);
-      const total = status.bundles_updated + status.patterns_updated;
-      if (status.error) {
-        setAgentCloudMessage(`تعذّر التحديث — يُستخدم المحلي: ${status.error}`);
-      } else if (total > 0) {
-        setAgentCloudMessage(`تم تنزيل ${status.bundles_updated} ملف و${status.patterns_updated} نمط.`);
-      } else {
-        setAgentCloudMessage("الأنماط محدّثة — لا يوجد جديد على السحابة.");
-      }
-    } catch (err) {
-      setAgentCloudMessage(String(err));
-    } finally {
-      setAgentCloudSyncing(false);
-    }
-  };
 
   const loadBusinessProfile = useCallback(async (force = false) => {
     if (!connectionKey) {
@@ -738,79 +682,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                       </p>
                     )}
                   </div>
-
-                  <div className="relative rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-500/[0.04] to-indigo-500/[0.04] p-5 space-y-4 overflow-hidden shadow-[0_4px_30px_rgba(0,0,0,0.03)] backdrop-blur-md">
-                    <div className="absolute -right-10 -top-10 w-32 h-32 bg-violet-500/10 rounded-full blur-2xl pointer-events-none" />
-                    <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
-                    
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-violet-500/15 text-violet-600 flex items-center justify-center shadow-inner">
-                        <Bot className="w-5 h-5 animate-pulse" />
-                      </div>
-                      <div>
-                        <p className="text-[15px] font-bold text-foreground">تحديثات الوكيل الذكي السحابية (OTA Sync)</p>
-                        <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
-                          تتم المزامنة الفورية وتحديث كافة استعلامات وتعاليم الوكيل الذكي مباشرة من قاعدة البيانات.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2">
-                      <Button
-                        onClick={handleRefreshAgentCloud}
-                        disabled={agentCloudSyncing}
-                        className={cn(
-                          "w-full py-6 text-sm font-semibold rounded-xl transition-all duration-300 flex items-center justify-center gap-2.5",
-                          "bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white border-0",
-                          "shadow-[0_4px_20px_rgba(124,58,237,0.25)] hover:shadow-[0_4px_25px_rgba(124,58,237,0.4)]",
-                          "active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
-                        )}
-                      >
-                        {agentCloudSyncing ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin ml-2" />
-                            جاري فحص وتحديث الوكيل الذكي...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="w-4 h-4 ml-2 transition-transform hover:rotate-180 duration-500" />
-                            تحديث الوكيل الذكي الآن
-                          </>
-                        )}
-                      </Button>
-                    </div>
-
-                    {agentCloudStatus?.last_success_unix ? (
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                          آخر مزامنة ناجحة:
-                        </span>
-                        <span className="font-semibold text-foreground bg-muted px-2 py-0.5 rounded-full" dir="ltr">
-                          {new Date(agentCloudStatus.last_success_unix * 1000).toLocaleString("ar-LY")}
-                          {agentCloudStatus.source ? ` (${agentCloudStatus.source})` : ""}
-                        </span>
-                      </div>
-                    ) : null}
-
-                    {agentCloudMessage && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={cn(
-                          "rounded-xl border p-3 text-xs leading-relaxed transition-all",
-                          agentCloudMessage.includes("تعذّر") 
-                            ? "border-red-500/10 bg-red-500/[0.02] text-red-600"
-                            : agentCloudMessage.includes("الأنماط محدّثة")
-                            ? "border-amber-500/10 bg-amber-500/[0.02] text-amber-600"
-                            : "border-green-500/10 bg-green-500/[0.02] text-green-600"
-                        )}
-                      >
-                        {agentCloudMessage}
-                      </motion.div>
-                    )}
-                  </div>
-
                 </div>
               </>
             )}

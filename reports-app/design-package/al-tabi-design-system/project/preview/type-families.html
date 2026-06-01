@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Type — Families</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:20px 24px;}
+  .fam{display:grid; grid-template-columns: 110px 1fr; gap:14px; align-items:baseline; padding:10px 0; border-bottom:1px solid var(--border-subtle);}
+  .fam:last-child{border-bottom:none;}
+  .fam .role{font-family:var(--font-mono); font-size:11px; color:var(--fg-3); letter-spacing:.06em; text-transform:uppercase;}
+  .ui{font-family:var(--font-ui); font-size:22px; font-weight:600;}
+  .display{font-family:var(--font-display); font-size:26px; font-weight:700;}
+  .mono{font-family:var(--font-mono); font-size:18px; font-weight:500; letter-spacing:0.01em;}
+</style></head>
+<body>
+<div class="fam"><span class="role">UI · Plex Arabic</span><span class="ui">واجهة هادئة، أرقام واضحة — 1,234.56 د.ل</span></div>
+<div class="fam"><span class="role">Display · Reem Kufi</span><span class="display">التابي — ذكاء التقارير</span></div>
+<div class="fam"><span class="role">Mono · Plex Mono</span><span class="mono">SELECT SUM(qty) FROM stock;</span></div>
+</body></html>

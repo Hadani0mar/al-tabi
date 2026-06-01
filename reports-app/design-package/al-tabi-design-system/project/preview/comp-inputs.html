@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<title>Components — Inputs</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  body{padding:18px 24px;}
+  .grid{display:grid; grid-template-columns: 1fr 1fr; gap: 14px;}
+  .field{display:flex; flex-direction:column; gap:6px;}
+  .field label{ font-size:12px; font-weight:600; color: var(--fg-2);}
+  .input{
+    font-family:var(--font-ui); font-size:14px; padding:0 12px; height:40px;
+    background: var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm);
+    color: var(--fg-1); transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+  }
+  .input::placeholder{ color: var(--fg-3); }
+  .input:focus{ outline:none; border-color: var(--border-focus); box-shadow: var(--shadow-focus);}
+  .input.input--err{ border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft);}
+  .input.input--ok { border-color: var(--success); box-shadow: 0 0 0 3px var(--success-soft);}
+  .input.input--disabled{ background: var(--bg-subtle); color: var(--fg-muted); border-color: var(--border-subtle);}
+  .hint{ font-size:11.5px; color: var(--fg-3); }
+  .hint.err{ color: var(--danger); }
+  .hint.ok { color: var(--success); }
+</style></head>
+<body>
+<div class="grid">
+  <div class="field">
+    <label>الخادم</label>
+    <input class="input" value="SQLSRV-01\MARKET" />
+    <span class="hint">SQL Server instance</span>
+  </div>
+  <div class="field">
+    <label>قاعدة البيانات</label>
+    <input class="input" placeholder="Marketing2026" />
+    <span class="hint">اسم القاعدة</span>
+  </div>
+  <div class="field">
+    <label>المستخدم</label>
+    <input class="input input--ok" value="sa" />
+    <span class="hint ok">✓ متصل</span>
+  </div>
+  <div class="field">
+    <label>كلمة المرور</label>
+    <input class="input input--err" type="password" value="••••" />
+    <span class="hint err">كلمة مرور غير صحيحة</span>
+  </div>
+</div></body></html>

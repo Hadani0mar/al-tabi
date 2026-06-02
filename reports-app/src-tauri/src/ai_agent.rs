@@ -3533,16 +3533,57 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         // بعد تنفيذ pattern ناجح، iteration التالية هي تلخيص فقط — لا أدوات
         let summarize_after_pattern = pattern_executed && iter_num >= 1;
         let text_only_mode = force_finalize || summarize_fast_path || summarize_after_pattern;
+
+        // ── Slim Summarize History ──────────────────────────────────────────────
+        // في وضع التلخيص بعد pattern، نبني تاريخاً مضغوطاً بدل إرسال السياق كاملاً:
+        //   [system] + [user_original] + [tool_result كـ user message]
+        // هذا يقطع ~40-50% من توكنز iter 1 (نتخلص من tool_call message + nudge + old history)
+        let slim_messages: Option<serde_json::Value> = if summarize_after_pattern && !advanced_mode {
+            // استخرج آخر نتيجة tool من التاريخ (role=tool)
+            let tool_result_content = current_history.iter().rev()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
+                .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                .unwrap_or("")
+                .to_string();
+            // استخرج رسالة المستخدم الأصلية (أول user بعد system)
+            let user_original = current_history.iter()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                .unwrap_or(user_text)
+                .to_string();
+            if !tool_result_content.is_empty() {
+                let system_msg = current_history.first().cloned().unwrap_or(json!({}));
+                Some(json!([
+                    system_msg,
+                    { "role": "user", "content": user_original },
+                    {
+                        "role": "user",
+                        "content": format!(
+                            "نتيجة الاستعلام:\n{}\n\nلخّص النتيجة للمستخدم بالعربية باختصار مع الإجماليات. العملة: د.ل.",
+                            tool_result_content
+                        )
+                    }
+                ]))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let full_history_json = json!(current_history);
+        let messages_to_send = slim_messages.as_ref().unwrap_or(&full_history_json);
+
         let req_body = if text_only_mode {
             json!({
                 "model": DEFAULT_AI_MODEL,
-                "messages": current_history,
+                "messages": messages_to_send,
                 "tool_choice": "none"
             })
         } else {
             json!({
                 "model": DEFAULT_AI_MODEL,
-                "messages": current_history,
+                "messages": messages_to_send,
                 "tools": tools,
                 "tool_choice": "auto"
             })

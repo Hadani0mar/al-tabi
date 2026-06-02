@@ -28,6 +28,7 @@ pub mod erp_profile;
 pub mod erp_adapters;
 pub mod pattern_catalog;
 pub mod pharmacy_share;
+pub mod rig_provider;
 
 pub struct AppState {
     pub conn: Arc<Mutex<Option<SqlConnection>>>,
@@ -1375,6 +1376,8 @@ pub fn run() {
             sync_chat_to_supabase,
             fetch_chats_from_supabase,
             delete_chat_from_supabase,
+            rig_provider::rig_chat,
+            rig_provider::list_rig_providers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

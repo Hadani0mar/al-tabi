@@ -3538,7 +3538,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         // في وضع التلخيص بعد pattern، نبني تاريخاً مضغوطاً بدل إرسال السياق كاملاً:
         //   [system] + [user_original] + [tool_result كـ user message]
         // هذا يقطع ~40-50% من توكنز iter 1 (نتخلص من tool_call message + nudge + old history)
-        let slim_messages: Option<serde_json::Value> = if summarize_after_pattern && !advanced_mode {
+        // slim_messages يُطبَّق على fast path أيضاً (أكثر الحالات شيوعاً)
+        let slim_messages: Option<serde_json::Value> = if (summarize_after_pattern || summarize_fast_path) && !advanced_mode {
             // استخرج آخر نتيجة tool من التاريخ (role=tool)
             let tool_result_content = current_history.iter().rev()
                 .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))

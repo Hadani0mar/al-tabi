@@ -540,7 +540,8 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         .catch(console.error);
     }
 
-    const historyForApi = chatHistory;
+    // أرسل آخر 3 أسئلة فقط (6 رسائل) — التاريخ الأقدم لا يفيد النموذج وفيه توكنز هدر
+    const historyForApi = chatHistory.slice(-6);
 
     // تهيئة streaming لهذا الطلب
     streamingReqIdRef.current = requestId;

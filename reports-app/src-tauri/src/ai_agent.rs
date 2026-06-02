@@ -143,6 +143,30 @@ pub fn search_query_patterns_local(keywords: &str, erp: crate::erp_profile::ErpK
     }
 }
 
+/// تاريخ مضغوط للحقن في system prompt — يُغني عن tool call لـ get_current_datetime
+pub fn compact_date_for_prompt() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let local_secs = secs + 2 * 3600;
+    let days_since_epoch = local_secs / 86400;
+    let mut remaining = days_since_epoch;
+    let mut year: u64 = 1970;
+    loop {
+        let dy = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 366 } else { 365 };
+        if remaining < dy { break; }
+        remaining -= dy;
+        year += 1;
+    }
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let dpm = [31u64, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month: u64 = 1;
+    for &d in &dpm { if remaining < d { break; } remaining -= d; month += 1; }
+    let day = remaining + 1;
+    let dow = (days_since_epoch + 4) % 7;
+    let weekday_ar = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][dow as usize % 7];
+    format!("{weekday_ar} {day}/{month}/{year} | الشهر:{month} | السنة:{year}")
+}
+
 /// يُعيد التاريخ والوقت الحالي كاملاً بصيغة عربية ورقمية
 fn get_current_datetime_info() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -519,31 +543,13 @@ fn slim_domain_facts(erp: crate::erp_profile::ErpKind) -> &'static str {
     }
 }
 
-#[allow(unreachable_code)]
 fn build_fast_system_prompt(
     _schema_extra: &str,
     product_filter: Option<&str>,
     erp: crate::erp_profile::ErpKind,
 ) -> String {
-    return crate::pattern_catalog::build_executor_system_prompt(erp, product_filter);
-
-    let agent_md = crate::erp_profile::load_agent_patterns(erp);
-    format!(
-        "أنت منفّذ تقارير {}. كل SQL جاهز أدناه — انسخه ونفّذه فوراً.\n\n\
-        قواعد:\n\
-        1. اختر النمط المناسب من ## PATTERN أدناه.\n\
-        2. انسخ SQL منه وعدّل فقط: التاريخ أو {{{{PRODUCT_FILTER}}}} أو عدد الأيام.\n\
-        3. نفّذ بـ execute_raw_sql مرة واحدة فقط.\n\
-        4. اعرض النتائج بالعربية باختصار مع إجمالي. العملة: د.ل.\n\
-        5. لا تخترع SQL — انسخ فقط.\n\
-        6. تاريخ صريح من المستخدم → استخدمه مباشرةً. لا تستبدله بـ MAX(S_DATE).\n\
-        7. بعد النتائج: «تبيه إكسل أو PDF؟» واقترح تقريراً مكملاً واحداً فقط.\n\n\
-        {}\n\n\
-        {}",
-        erp.display_name_ar(),
-        agent_md,
-        product_filter.unwrap_or("")
-    )
+    let date_str = compact_date_for_prompt();
+    crate::pattern_catalog::build_executor_system_prompt(erp, product_filter, &date_str)
 }
 
 fn message_text_content(message: &Value) -> Option<String> {

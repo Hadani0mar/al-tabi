@@ -391,34 +391,19 @@ pub fn handle_list_available_patterns(erp: ErpKind) -> serde_json::Value {
 }
 
 pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
+    // أداتان فقط — التاريخ محقون في system prompt مباشرةً بدل tool call
     vec![
         json!({
             "type": "function",
             "function": {
-                "name": "get_current_datetime",
-                "description": "Returns current date/time for month/day filters in patterns.",
-                "parameters": { "type": "object", "properties": {}, "required": [] }
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": "list_available_patterns",
-                "description": "Lists all report patterns available on the currently connected ERP. Call when user asks what you can do.",
-                "parameters": { "type": "object", "properties": {}, "required": [] }
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
                 "name": "run_query_pattern",
-                "description": "Executes a pre-tested SQL pattern. REQUIRED for any data question. Prefer pattern_id over keywords.",
+                "description": "Executes a pre-tested SQL pattern. REQUIRED for any data question. Use pattern_id from the <patterns> table in system prompt.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern_id": { "type": "string", "description": "Stable id from list_available_patterns (preferred)." },
+                        "pattern_id": { "type": "string", "description": "ID from the <patterns> table (e.g. top_sellers, expiry_report)." },
                         "keywords": { "type": "string", "description": "Fallback Arabic keywords if pattern_id unknown." },
-                        "days_recent": { "type": "integer", "description": "Override sales window or expiration days window (default 60)." },
+                        "days_recent": { "type": "integer", "description": "Override sales window in days (default 60)." },
                         "coverage_days": { "type": "integer", "description": "Purchase coverage days (default 30)." },
                         "product_filter": { "type": "string", "description": "Product name/code for patterns that need it." }
                     },
@@ -447,6 +432,7 @@ pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
 pub fn build_executor_system_prompt(
     erp: ErpKind,
     product_filter: Option<&str>,
+    date_str: &str,
 ) -> String {
     let pf_note = product_filter
         .filter(|s| !s.is_empty())
@@ -456,23 +442,22 @@ pub fn build_executor_system_prompt(
     format!(
         "<role>\n\
         منفّذ تقارير {erp} — **لا تكتب SQL** — **لا تخترع أرقاماً**.\n\
+        **اليوم:** {date_str}\n\
         </role>\n\n\
         <tone_and_dialect>\n\
-        - **لهجة ليبية خفيفة وموجزة جداً (لتوفير التوكنز):**\n\
-          - ابدأ بترحيب ليبي خفيف ومختصر للغاية (مثل: 'مرحبتين بيك.' أو 'أهلاً بيك. تفضل النتائج:').\n\
-          - ممنوع نهائياً التملق، التحيات الطويلة، الكلام الفارغ، أو التبجيل والمبالغة (مثل 'يا فندم'، 'يسعدني خدمتكم'، 'بدقة متناهية').\n\
-          - اعرض نتائج البيانات فوراً واختصر قدر الإمكان لتقليل استهلاك التوكنز.\n\
-          - اقترح التصدير أو الخطوة التالية باختصار شديد ودون إطالة (مثل: 'تبيه إكسل أو PDF؟').\n\
+        - لهجة ليبية خفيفة وموجزة — لا تملق ولا تحيات طويلة.\n\
+        - ابدأ بترحيب مختصر (مثل: 'مرحبتين.' أو 'أهلاً. تفضل:').\n\
+        - اعرض النتائج فوراً — اقترح التصدير باختصار ('تبيه إكسل أو PDF؟').\n\
         </tone_and_dialect>\n\n\
         <critical_rules>\n\
-        1. **أي سؤال بيانات** → استدعِ `run_query_pattern` فوراً (pattern_id مفضل).\n\
-        2. **ممنوع** الرد بجدول أو أرقام أو «تم التنفيذ» بدون tool call ناجح.\n\
-        3. **ممنوع** أسئلة توضيحية (أ. ب. ج.) — نفّذ أو قل «غير مدعوم».\n\
-        4. إن لم يوجد pattern → `list_available_patterns` ثم اقترح الأقرب.\n\
+        1. **أي سؤال بيانات** → `run_query_pattern` فوراً بـ pattern_id من الجدول أدناه.\n\
+        2. ممنوع جداول أو أرقام بدون tool call ناجح.\n\
+        3. ممنوع أسئلة توضيحية — نفّذ أو قل «غير مدعوم».\n\
+        4. إن لم يوجد pattern مناسب → اقترح الأقرب من الجدول أدناه.\n\
         5. تصدير → `export_last_result` بعد run_query_pattern.\n\
-        6. التاريخ → `get_current_datetime` عند الحاجة.\n\
-        7. احسب الإجماليات الفرعية والعامة للنتائج واعرضها بوضوح باختصار في نهاية ردك.\n\
-        8. **الأسئلة العامة والاستشارية:** أجب باختصار شديد بلهجة ليبية ودية وموجزة دون أدوات قاعدة البيانات.\n\
+        6. التاريخ محقون أعلاه — استخدمه مباشرةً بدون أي tool call.\n\
+        7. اعرض الإجماليات الفرعية والعامة باختصار في نهاية الرد.\n\
+        8. الأسئلة العامة → أجب باختصار بدون أدوات.\n\
         9. لخّص نتائج الأداة باختصار — العملة: د.ل.\n\
         </critical_rules>\n\n\
         <patterns>\n\
@@ -480,23 +465,23 @@ pub fn build_executor_system_prompt(
         {table}\n\
         </patterns>{pf_note}\n\n\
         <mapping_hints>\n\
-        - «أكثر مبيعاً» → top_sellers SQL-A | «هذا الشهر» → SQL-B | «الشهر السابق» → SQL-C | «توقعات/تنبؤات» → SQL-D\n\
-        - «نواقص / نفاد / شن النواقص» → pattern_id=shortage_supplier\n\
-        - «صلاحية / منتهية / ينتهي» → pattern_id=expiry_report\n\
-        - «مصروفات / مصاريف / كم صرفنا» → monthly_expenses: SQL-A هذا الشهر | SQL-B الشهر السابق | SQL-C مقارنة 6 شهور\n\
-        - «مقارنة أسعار / أرخص مورد / موردي منتج» → pattern_id=supplier_price_compare + product_filter\n\
-        - «آخر سعر شراء / سعر المورد / كم اشترينا» → pattern_id=last_purchase_price + product_filter\n\
-        - «ديون الزباين / ديون الزبائن / اللي لي على الزباين» → pattern_id=customer_debts\n\
-        - «ديون الموردين / ديون مورد / آخر إيصال صرف مورد» → pattern_id=supplier_debts\n\
-        - «مبيعات آخر يوم موظف / إيرادات اليوم» → pattern_id=sales_last_day_employee\n\
-        - «مبيعات يومية موظف / مبيعات الموظفين ليوم X» → pattern_id=sales_daily_employee\n\
-        - «بطل المبيعات / الموظف المنقذ / مبيعات قرب الصلاحية» → pattern_id=near_expiry_sales_hero\n\
-        - ⚠️ عند طلب تاريخ صريح (مثل «ليوم 21/5/2026»): استخدم sales_daily_employee وضع التاريخ في @TargetDate.\n\
-        - ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE) — استخدمه مباشرةً.\n\
+        - «أكثر مبيعاً» → top_sellers SQL-A | «هذا الشهر» → SQL-B | «الشهر السابق» → SQL-C | «توقعات» → SQL-D\n\
+        - «نواقص / نفاد / شن النواقص» → shortage_supplier\n\
+        - «صلاحية / منتهية / ينتهي» → expiry_report\n\
+        - «مصروفات / مصاريف / كم صرفنا» → monthly_expenses (SQL-A هذا الشهر | SQL-B السابق | SQL-C مقارنة)\n\
+        - «مقارنة أسعار / أرخص مورد» → supplier_price_compare + product_filter\n\
+        - «آخر سعر شراء / سعر المورد» → last_purchase_price + product_filter\n\
+        - «ديون الزباين / اللي لي» → customer_debts\n\
+        - «ديون الموردين / اللي علي» → supplier_debts\n\
+        - «مبيعات آخر يوم موظف» → sales_last_day_employee\n\
+        - «مبيعات يومية موظف / ليوم X» → sales_daily_employee (تاريخ صريح → @TargetDate مباشرةً)\n\
+        - «بطل المبيعات / الموظف المنقذ» → near_expiry_sales_hero\n\
+        - ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE).\n\
         </mapping_hints>",
         erp = erp.display_name_ar(),
         agent_file = erp.agent_file_label(),
         table = prompt_table(erp),
+        date_str = date_str,
         pf_note = pf_note,
     )
 }

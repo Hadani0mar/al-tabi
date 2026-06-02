@@ -5,17 +5,16 @@ use crate::{AppState, execute_sql_query};
 use crate::telegram::{send_message, send_html, send_pdf, send_excel, SupabaseReport, search_schema};
 use crate::excel_generator::generate_report_excel;
 use crate::pdf_generator::generate_report_pdf;
+use tauri::Emitter;
 use tauri_plugin_store::StoreExt;
 
 /// النموذج الثابت — لا يُقرأ من الإعدادات
 /// النموذج الافتراضي — مدفوع على OpenRouter (أدوات + SQL + عربية)
-pub const DEFAULT_AI_MODEL: &str = "google/gemini-3.5-flash";
+pub const DEFAULT_AI_MODEL: &str = "minimax/minimax-m3";
 
 /// احتياطي مدفوع عند تعذّر النموذج أو rate limit
 pub const OPENROUTER_PAID_MODEL_FALLBACKS: &[&str] = &[
-    "google/gemini-3.5-flash",
-    "google/gemini-3.1-flash-lite",
-    "openai/gpt-4o-mini",
+    "minimax/minimax-m3",
 ];
 const RATE_LIMIT_RETRIES_PER_MODEL: u8 = 2;
 const RATE_LIMIT_BASE_DELAY_MS: u64 = 2000;
@@ -283,6 +282,58 @@ fn prepare_schema_for_system_prompt(rag_schema: &str) -> String {
     truncate_prompt_text(rag_schema.trim(), PROMPT_SCHEMA_CHAR_LIMIT)
 }
 
+fn read_u64_path(value: &Value, path: &str) -> Option<u64> {
+    value.pointer(path).and_then(|v| v.as_u64())
+}
+
+fn openrouter_usage_payload(request_id: &str, res_json: &Value) -> Value {
+    let generation = res_json.get("openrouter_generation").unwrap_or(&Value::Null);
+    let usage = res_json.get("usage").unwrap_or(&Value::Null);
+    let model = res_json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .or_else(|| generation.get("model").and_then(|v| v.as_str()))
+        .unwrap_or(DEFAULT_AI_MODEL);
+
+    let prompt_tokens = read_u64_path(generation, "/native_tokens_prompt")
+        .or_else(|| read_u64_path(generation, "/tokens_prompt"))
+        .or_else(|| usage.get("prompt_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+    let completion_tokens = read_u64_path(generation, "/native_tokens_completion")
+        .or_else(|| read_u64_path(generation, "/tokens_completion"))
+        .or_else(|| usage.get("completion_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(prompt_tokens + completion_tokens);
+    let usage_source = if generation.is_object() {
+        "openrouter_generation"
+    } else {
+        "chat_completion_usage"
+    };
+
+    json!({
+        "requestId": request_id,
+        "model": model,
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        "totalTokens": total_tokens,
+        "usageSource": usage_source,
+        "generationId": res_json.get("id").and_then(|v| v.as_str()),
+        "cost": generation.get("total_cost").or_else(|| generation.get("usage")),
+    })
+}
+
+fn emit_openrouter_usage(app_handle: &tauri::AppHandle, request_id: &str, res_json: &Value) {
+    let payload = openrouter_usage_payload(request_id, res_json);
+
+    let _ = app_handle.emit(
+        "ai-usage",
+        payload,
+    );
+}
+
 fn trim_message_content(content: &str, max_chars: usize) -> String {
     truncate_prompt_text(content, max_chars)
 }
@@ -357,14 +408,6 @@ fn sql_semantic_fingerprint(sql: &str) -> String {
 
     format!("T:{}|F:{}", tables.join(","), filter_keys.join(","))
 }
-
-/// أدوات سطح المكتب — منفّذ أنماط فقط
-const DESKTOP_EXECUTOR_TOOL_NAMES: &[&str] = &[
-    "get_current_datetime",
-    "list_available_patterns",
-    "run_query_pattern",
-    "export_last_result",
-];
 
 const SLIM_DOMAIN_CRITICAL_FACTS: &str = r#"<DOMAIN_CRITICAL_FACTS>
 ### جداول أساسية (أعمدة حرجة)
@@ -476,28 +519,14 @@ fn slim_domain_facts(erp: crate::erp_profile::ErpKind) -> &'static str {
     }
 }
 
-fn tool_name_from_def(tool: &Value) -> Option<&str> {
-    tool.get("function")
-        .and_then(|f| f.get("name"))
-        .and_then(|n| n.as_str())
-}
-
-fn filter_tools_by_names(tools: Vec<Value>, allowed: &[&str]) -> Vec<Value> {
-    tools
-        .into_iter()
-        .filter(|t| {
-            tool_name_from_def(t)
-                .map(|n| allowed.contains(&n))
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
+#[allow(unreachable_code)]
 fn build_fast_system_prompt(
     _schema_extra: &str,
-    product_note: &str,
+    product_filter: Option<&str>,
     erp: crate::erp_profile::ErpKind,
 ) -> String {
+    return crate::pattern_catalog::build_executor_system_prompt(erp, product_filter);
+
     let agent_md = crate::erp_profile::load_agent_patterns(erp);
     format!(
         "أنت منفّذ تقارير {}. كل SQL جاهز أدناه — انسخه ونفّذه فوراً.\n\n\
@@ -513,7 +542,7 @@ fn build_fast_system_prompt(
         {}",
         erp.display_name_ar(),
         agent_md,
-        product_note
+        product_filter.unwrap_or("")
     )
 }
 
@@ -735,7 +764,14 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
             }
 
             eprintln!("[OpenRouter] success with model: {}", model);
-            let json_res: Value = res.json().await.map_err(|e| e.to_string())?;
+            let mut json_res: Value = res.json().await.map_err(|e| e.to_string())?;
+            if let Some(generation_id) = json_res.get("id").and_then(|v| v.as_str()) {
+                if let Some(generation) =
+                    fetch_openrouter_generation_usage(&client, clean_key, generation_id).await
+                {
+                    json_res["openrouter_generation"] = generation;
+                }
+            }
             return Ok(json_res);
         }
     }
@@ -748,6 +784,46 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
             &last_error
         }
     ))
+}
+
+async fn fetch_openrouter_generation_usage(
+    client: &reqwest::Client,
+    api_key: &str,
+    generation_id: &str,
+) -> Option<Value> {
+    if generation_id.trim().is_empty() {
+        return None;
+    }
+
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+        }
+        let res = client
+            .get("https://openrouter.ai/api/v1/generation")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .query(&[("id", generation_id)])
+            .send()
+            .await;
+
+        let Ok(res) = res else {
+            continue;
+        };
+        if !res.status().is_success() {
+            continue;
+        }
+        let parsed: Value = match res.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(data) = parsed.get("data") {
+            eprintln!("[OpenRouter] generation usage loaded id={}", generation_id);
+            return Some(data.clone());
+        }
+    }
+
+    eprintln!("[OpenRouter] generation usage unavailable id={}", generation_id);
+    None
 }
 
 fn parse_retry_after_secs(res: &reqwest::Response) -> Option<u64> {
@@ -2412,8 +2488,6 @@ async fn generate_excel_report_from_sql_for_agent(
     }
 }
 
-use tauri::Emitter;
-
 fn ai_cancelled(cancel_rx: &mut Option<tokio::sync::oneshot::Receiver<()>>) -> bool {
     if let Some(rx) = cancel_rx {
         match rx.try_recv() {
@@ -2484,6 +2558,7 @@ pub async fn handle_with_groq_local(
     app_state: &Arc<AppState>,
     reports_cache: &[SupabaseReport],
     app_handle: tauri::AppHandle,
+    request_id: &str,
     openai_key: &str,
     mut cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     advanced_mode: bool,
@@ -2849,7 +2924,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         )
         }
     } else {
-        build_fast_system_prompt(&schema_info, &product_note, erp)
+        build_fast_system_prompt(&schema_info, active_pf.as_deref(), erp)
     };
 
     let tools_json = json!([
@@ -3129,6 +3204,10 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
             tools.len()
         );
     }
+    eprintln!(
+        "[Desktop Agent] system prompt chars: {}",
+        system_instruction.chars().count()
+    );
 
     // Check if system prompt exists in history
     if chat_history.is_empty() || chat_history[0].get("role").and_then(|r| r.as_str()) != Some("system") {
@@ -3168,6 +3247,121 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
     let mut empty_response_retries: u8 = 0;
     let mut pattern_executed = false;
     let mut meta_tool_only = false;
+    let mut fast_path_summarize_only = false;
+
+    if !advanced_mode {
+        match crate::agent_memory::fetch_agent_tool_recipes(&access_token, erp, user_text, 1).await {
+            Ok(recipes) => {
+                if let Some(recipe) = recipes.first() {
+                    eprintln!(
+                        "[agent_memory] recipe candidate id={} tool={} score={:.3}",
+                        recipe.id, recipe.tool_name, recipe.score
+                    );
+                    if recipe.score >= 0.30 && recipe.tool_name == "run_query_pattern" {
+                        let requires_product_filter = recipe
+                            .slots
+                            .get("requires_product_filter")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if requires_product_filter && active_pf.as_deref().unwrap_or("").trim().is_empty() {
+                            eprintln!(
+                                "[agent_memory] recipe skipped id={} reason=missing_product_filter",
+                                recipe.id
+                            );
+                        } else {
+                            let mut args = recipe.tool_args_template.clone();
+                            if requires_product_filter {
+                                if let Some(pf) = active_pf.as_deref() {
+                                    args["product_filter"] = json!(pf);
+                                }
+                            }
+                            let args_str = args.to_string();
+                            let fast_tool_call_id = format!("fast_path_{}", request_id);
+                            let pattern_id = args
+                                .get("pattern_id")
+                                .and_then(|v| v.as_str())
+                                .or(recipe.pattern_id.as_deref())
+                                .unwrap_or("")
+                                .to_string();
+
+                            eprintln!(
+                                "[agent_memory] fast recipe hit id={} tool={} pattern={} score={:.3}",
+                                recipe.id, recipe.tool_name, pattern_id, recipe.score
+                            );
+
+                            current_history.push(json!({
+                                "role": "assistant",
+                                "content": Value::Null,
+                                "tool_calls": [{
+                                    "id": fast_tool_call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": recipe.tool_name,
+                                        "arguments": args_str
+                                    }
+                                }]
+                            }));
+
+                            let tool_content = match crate::agent_tools::dispatch_extended_tool(
+                                &recipe.tool_name,
+                                &args_str,
+                                app_state,
+                                crate::agent_tools::ExportDelivery::Local,
+                            )
+                            .await
+                            {
+                                Some(value) => value.to_string(),
+                                None => "{\"error\":\"fast_path_tool_failed\"}".to_string(),
+                            };
+                            let success = !tool_content.contains("\"error\"");
+                            if success {
+                                pattern_executed = true;
+                                fast_path_summarize_only = true;
+                                pattern_call_count = 1;
+                                if !pattern_id.is_empty() {
+                                    pattern_keywords_seen.push(pattern_id.clone());
+                                }
+                            }
+
+                            if let Err(e) = crate::agent_memory::record_agent_tool_result(
+                                &access_token,
+                                Some(recipe.id),
+                                request_id,
+                                erp,
+                                user_text,
+                                &recipe.tool_name,
+                                if pattern_id.is_empty() { None } else { Some(pattern_id.as_str()) },
+                                success,
+                                if success { None } else { Some(tool_content.as_str()) },
+                            )
+                            .await
+                            {
+                                eprintln!("[agent_memory] record fast recipe: {}", e);
+                            }
+
+                            current_history.push(json!({
+                                "role": "tool",
+                                "tool_call_id": fast_tool_call_id,
+                                "content": tool_content
+                            }));
+                            current_history.push(json!({
+                                "role": "user",
+                                "content": "لخّص نتيجة الأداة السابقة مباشرة بالعربية. لا تستدعِ أي أداة أخرى إلا إذا كانت النتيجة تحتوي خطأ واضحاً."
+                            }));
+                        }
+                    } else {
+                        eprintln!(
+                            "[agent_memory] recipe skipped tool={} score={:.3}",
+                            recipe.tool_name, recipe.score
+                        );
+                    }
+                } else {
+                    eprintln!("[agent_memory] no fast recipe matched");
+                }
+            }
+            Err(e) => eprintln!("[agent_memory] fast recipe search: {}", e),
+        }
+    }
 
     // 3. Agent Loop (multi-step function calling)
     for iter_num in 0..20 {
@@ -3188,7 +3382,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                 إن لم تكن البيانات كافية، اشرح للمستخدم ما وجدته وما ينقصه — دون استدعاء أي أداة."
             }));
         }
-        let req_body = if force_finalize {
+        let summarize_fast_path = fast_path_summarize_only && iter_num == 0;
+        let req_body = if force_finalize || summarize_fast_path {
             json!({
                 "model": DEFAULT_AI_MODEL,
                 "messages": current_history,
@@ -3210,6 +3405,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                         let empty_json = json!({});
                         let message = choice.get("message").unwrap_or(&empty_json);
 
+                        emit_openrouter_usage(&app_handle, request_id, &res_json);
                         current_history.push(message.clone());
 
                         if let Some(tool_calls) = message_tool_calls(message) {
@@ -3491,7 +3687,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     *fp_count += 1;
                                     let fp_hits = *fp_count;
 
-                                    let resp_content = if sql_call_count > MAX_SQL_PER_TURN {
+                                    let resp_content = if !advanced_mode {
+                                        "{\"error\":\"الوضع السريع لا يسمح بـ execute_raw_sql. استخدم run_query_pattern(pattern_id=...) فقط.\"}".to_string()
+                                    } else if sql_call_count > MAX_SQL_PER_TURN {
                                         "{\"error\": \"تجاوزت الحد الأقصى للاستعلامات في هذا الدور. توقف عن المحاولة وقدّم إجابة نهائية بالعربية بناءً على النتائج التي حصلت عليها بالفعل، أو اشرح للمستخدم ما ينقصك.\"}".to_string()
                                     } else if recent_sql.iter().any(|s| s == &sql_norm) {
                                         "{\"error\": \"هذا الاستعلام تم تنفيذه للتو بنفس الصيغة. النتيجة لن تتغير. استخدم النتيجة السابقة وقدّم الإجابة النهائية الآن.\"}".to_string()

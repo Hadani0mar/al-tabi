@@ -35,6 +35,21 @@ export interface ChatSession {
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
+  aiUsage?: AiTokenUsage;
+}
+
+interface AiTokenUsage {
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  usageSource?: string;
+  generationId?: string;
+  cost?: number;
+}
+
+interface AiUsagePayload extends AiTokenUsage {
+  requestId: string;
 }
 
 interface ProductMention {
@@ -92,6 +107,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const sendLockRef = useRef(false);
   const activeChatIdRef = useRef<string | null>(null);
   const mentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const usageByRequestRef = useRef<Record<string, AiTokenUsage>>({});
 
   const [productSuggestions, setProductSuggestions] = useState<ProductMention[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -183,6 +199,26 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         unlisten.then(f => f());
     };
   }, []);
+
+  useEffect(() => {
+    const unlisten = listen<AiUsagePayload>("ai-usage", (event) => {
+      const payload = event.payload;
+      if (!payload.requestId) return;
+      const prev = usageByRequestRef.current[payload.requestId];
+      usageByRequestRef.current[payload.requestId] = {
+        model: payload.model || prev?.model || aiModel,
+        promptTokens: (prev?.promptTokens ?? 0) + (payload.promptTokens ?? 0),
+        completionTokens: (prev?.completionTokens ?? 0) + (payload.completionTokens ?? 0),
+        totalTokens: (prev?.totalTokens ?? 0) + (payload.totalTokens ?? 0),
+        usageSource: payload.usageSource || prev?.usageSource,
+        generationId: payload.generationId || prev?.generationId,
+        cost: (prev?.cost ?? 0) + (payload.cost ?? 0),
+      };
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [aiModel]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -459,7 +495,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
+          model: aiModel,
           messages: [{ role: "user", content: `لخص هذه الجملة في 3 كلمات كحد أقصى لتكون عنواناً لمحادثة بدون أي مقدمات أو علامات تنصيص: "${userMessage}"` }]
         })
       }).then(res => res.json()).then(data => {
@@ -495,7 +531,9 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
           throw new Error("رد فارغ من الوكيل — أعد المحاولة.");
         }
 
-        const assistMsg: Message = { role: "assistant", content: text };
+        const usage = usageByRequestRef.current[requestId];
+        delete usageByRequestRef.current[requestId];
+        const assistMsg: Message = { role: "assistant", content: text, aiUsage: usage };
         const finalHistory = [...newHistory, assistMsg];
         setChats((prev) => {
            const newC = prev.map((c) =>
@@ -511,12 +549,15 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         if (pendingByChatRef.current[currentChatId] !== requestId) return;
         console.error(e);
         const errText = String(e);
+        const usage = usageByRequestRef.current[requestId];
+        delete usageByRequestRef.current[requestId];
         const errMsg: Message = {
           role: "assistant",
           content: errText.includes("إيقاف")
             ? "⏹ تم إيقاف الرد. يمكنك إرسال رسالة جديدة."
             : `❌ عذراً، حدث خطأ: ${errText}`,
         };
+        errMsg.aiUsage = usage;
         const finalHistory = [...newHistory, errMsg];
         setChats((prev) => {
            const newC = prev.map((c) =>
@@ -617,6 +658,14 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             <Menu className="w-5 h-5" />
             <span className="text-sm font-medium">سجل المحادثات</span>
           </button>
+          <div
+            className="hidden sm:flex items-center gap-2 rounded-md border px-3 py-2 text-xs shadow-sm bg-card"
+            style={{ color: "var(--fg-2)", borderColor: "var(--border-subtle)" }}
+            dir="ltr"
+          >
+            <Sparkles className="w-3.5 h-3.5" style={{ color: "var(--brand-accent)" }} />
+            <span className="font-mono">{aiModel}</span>
+          </div>
           {activeChatId && (
             <button onClick={handleNewChat} className="p-2 hover:bg-muted rounded-md border shadow-sm bg-card transition-colors flex items-center gap-2">
               <Plus className="w-5 h-5" />
@@ -790,6 +839,31 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                   {content}
                                </ReactMarkdown>
                             </div>
+                            {msg.aiUsage && (
+                              <div
+                                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 text-[11px]"
+                                style={{
+                                  background: "var(--bg-muted)",
+                                  borderColor: "var(--border-subtle)",
+                                  color: "var(--fg-2)",
+                                }}
+                                dir="ltr"
+                              >
+                                <span className="font-mono">{msg.aiUsage.model}</span>
+                                <span className="font-mono">
+                                  tokens: {String(msg.aiUsage.totalTokens)}
+                                </span>
+                                <span className="font-mono">
+                                  in: {String(msg.aiUsage.promptTokens)}
+                                </span>
+                                <span className="font-mono">
+                                  out: {String(msg.aiUsage.completionTokens)}
+                                </span>
+                                <span className="font-mono">
+                                  source: {msg.aiUsage.usageSource || "usage"}
+                                </span>
+                              </div>
+                            )}
                             {filePath && (
                                 <button
                                     onClick={() => invoke("open_local_file", { path: filePath }).catch(err => alert("فشل فتح الملف: " + err))}

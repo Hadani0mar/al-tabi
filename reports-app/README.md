@@ -28,6 +28,7 @@ cd src-tauri && cargo check
 |----------|--------|
 | [`ERP_ARCHITECTURE.md`](./ERP_ARCHITECTURE.md) | معمارية النظامين |
 | [`AGENTS.md`](./AGENTS.md) | دليل Cursor / تطوير |
+| [`AGENT_FAST_MEMORY.md`](./AGENT_FAST_MEMORY.md) | ذاكرة الوكيل السريعة، جداول Supabase، تقليل التوكنز |
 | [`AGENT_Marketing2026.md`](./AGENT_Marketing2026.md) | أنماط SQL Marketing |
 | [`AGENT_InfinityRetailDB.md`](./AGENT_InfinityRetailDB.md) | أنماط SQL Infinity |
 

@@ -202,14 +202,6 @@ async fn get_business_profile(
         .map_err(|_| "انتهت مهلة قراءة بيانات النشاط التجاري (8 ثوانٍ).".to_string())?
 }
 
-fn non_empty(value: Option<&String>) -> Option<String> {
-    value
-        .map(String::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
 #[derive(Debug, Serialize)]
 pub struct TelegramSettingsLocal {
     pub bot_token: String,
@@ -918,6 +910,7 @@ async fn ask_local_ai(
             &state_arc,
             &reports_cache,
             app_handle.clone(),
+            &request_id,
             &dec_openai_key,
             Some(cancel_rx),
             advanced_mode,

@@ -192,6 +192,26 @@ pub const CATALOG: &[PatternEntry] = &[
         ],
     },
     PatternEntry {
+        id: "near_expiry_sales_hero",
+        name_ar: "بطل بيع المنتجات القريبة من الصلاحية",
+        section_marketing: "بطل-بيع-قرب-الصلاحية",
+        section_infinity: "بطل-بيع-قرب-الصلاحية",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "بطل المبيعات",
+            "الموظف المنقذ",
+            "مبيعات قرب الصلاحية",
+            "منتجات قرب الصلاحية",
+            "خسارة تم تداركها",
+            "بطل بيع الصلاحية",
+            "near expiry sales hero",
+            "saved expiry sales",
+            "expiry sales by employee",
+        ],
+    },
+    PatternEntry {
         id: "customer_debts",
         name_ar: "ديون الزبائن (+ آخر إيصال قبض)",
         section_marketing: "ديون-الزبائن",
@@ -289,41 +309,6 @@ impl PatternEntry {
 pub fn find_by_id(id: &str) -> Option<&'static PatternEntry> {
     let key = id.trim().to_lowercase();
     CATALOG.iter().find(|p| p.id == key)
-}
-
-fn is_bare_barcode(text: &str) -> bool {
-    text.split_whitespace().any(|word| {
-        let digits: String = word.chars().filter(|c| c.is_ascii_digit()).collect();
-        (8..=14).contains(&digits.len())
-    })
-}
-
-/// رسالة قصيرة = اسم/باركود منتج (بدون طلب تقرير عام)
-fn looks_like_bare_product_query(h: &str) -> bool {
-    let t = h.trim();
-    if t.is_empty() {
-        return false;
-    }
-    let lower = t.to_lowercase();
-    const BLOCK: &[&str] = &[
-        "ديون", "مبيعات", "موظف", "مورد", "ملخص", "نواقص", "طلبية", "عملاء", "مصاريف",
-        "تقرير", "أعلى", "أكثر", "financial", "كم منتج", "عدد المنتجات", "best seller",
-    ];
-    if BLOCK.iter().any(|k| lower.contains(k)) {
-        return false;
-    }
-    if is_bare_barcode(t) {
-        return true;
-    }
-    const INFO: &[&str] = &[
-        "معلومات", "تفاصيل", "اعرض", "اعرضلي", "عرض", "المنتج", "باركود", "product info",
-        "about product", "هذا المنتج", "عن هذا",
-    ];
-    if INFO.iter().any(|k| lower.contains(k)) {
-        return true;
-    }
-    let wc = t.split_whitespace().count();
-    wc >= 1 && wc <= 6 && (4..=60).contains(&t.len())
 }
 
 pub fn resolve_pattern_id(hint: &str, erp: ErpKind) -> Option<&'static PatternEntry> {
@@ -444,20 +429,6 @@ pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
         json!({
             "type": "function",
             "function": {
-                "name": "execute_raw_sql",
-                "description": "Executes a T-SQL SELECT/WITH query. Copy SQL from patterns in your system prompt, adjust dates/filters, then call this. No DECLARE — start with WITH or SELECT only.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql_query": { "type": "string", "description": "The T-SQL query." }
-                    },
-                    "required": ["sql_query"]
-                }
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
                 "name": "export_last_result",
                 "description": "Export last query result as PDF or Excel when user asks for export/اكسل/pdf.",
                 "parameters": {
@@ -519,6 +490,7 @@ pub fn build_executor_system_prompt(
         - «ديون الموردين / ديون مورد / آخر إيصال صرف مورد» → pattern_id=supplier_debts\n\
         - «مبيعات آخر يوم موظف / إيرادات اليوم» → pattern_id=sales_last_day_employee\n\
         - «مبيعات يومية موظف / مبيعات الموظفين ليوم X» → pattern_id=sales_daily_employee\n\
+        - «بطل المبيعات / الموظف المنقذ / مبيعات قرب الصلاحية» → pattern_id=near_expiry_sales_hero\n\
         - ⚠️ عند طلب تاريخ صريح (مثل «ليوم 21/5/2026»): استخدم sales_daily_employee وضع التاريخ في @TargetDate.\n\
         - ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE) — استخدمه مباشرةً.\n\
         </mapping_hints>",
@@ -576,14 +548,20 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_ten_entries() {
-        assert_eq!(CATALOG.len(), 12);
+    fn catalog_has_thirteen_entries() {
+        assert_eq!(CATALOG.len(), 13);
     }
 
     #[test]
     fn resolve_customer_debts() {
         let p = resolve_pattern_id("ديون الزبائن", ErpKind::Marketing2026);
         assert_eq!(p.map(|x| x.id), Some("customer_debts"));
+    }
+
+    #[test]
+    fn resolve_near_expiry_sales_hero() {
+        let p = resolve_pattern_id("بطل المبيعات قرب الصلاحية", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("near_expiry_sales_hero"));
     }
 
     #[test]

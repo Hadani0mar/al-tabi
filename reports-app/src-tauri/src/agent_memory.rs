@@ -1,16 +1,13 @@
 //! ذاكرة الوكيل — محلي (SQLite) + مشترك (Supabase db_facts)
 //! المشترك: أعمدة، جداول، علاقات، وتسميات schema فقط — لا بيانات تشغيلية متغيرة.
 
-use crate::agent_tools::app_data_dir;
 use crate::erp_profile::ErpKind;
 use crate::supabase_config::{SUPABASE_ANON_KEY, SUPABASE_URL};
 use reqwest::Client;
-use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
 
 pub const EMBEDDING_DIM: usize = 1536;
 const LOCAL_MATCH_K: usize = 3;
@@ -18,8 +15,6 @@ const SHARED_MATCH_K: i32 = 4;
 const SHARED_DEDUP_SIMILARITY: f32 = 0.82;
 const LOCAL_DEDUP_SIMILARITY: f32 = 0.88;
 const RECALL_MIN_SIMILARITY: f32 = 0.38;
-
-static LOCAL_DB: OnceLock<Mutex<Connection>> = OnceLock::new();
 
 const SCHEMA_TOOLS: &[&str] = &[
     "search_schema",
@@ -115,27 +110,14 @@ struct SharedFactRow {
     similarity: Option<f32>,
 }
 
-fn local_db() -> &'static Mutex<Connection> {
-    LOCAL_DB.get_or_init(|| {
-        let dir = app_data_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("agent_memory.db");
-        let conn = Connection::open(path).expect("open agent_memory.db");
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS local_memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,
-                content TEXT NOT NULL,
-                content_hash TEXT NOT NULL UNIQUE,
-                embedding BLOB NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            "#,
-        )
-        .expect("init local memory schema");
-        Mutex::new(conn)
-    })
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentToolRecipe {
+    pub id: i64,
+    pub pattern_id: Option<String>,
+    pub tool_name: String,
+    pub tool_args_template: Value,
+    pub slots: Value,
+    pub score: f64,
 }
 
 fn content_fingerprint(text: &str) -> String {
@@ -143,39 +125,6 @@ fn content_fingerprint(text: &str) -> String {
     let mut hasher = DefaultHasher::new();
     normalized.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-fn f32_vec_to_blob(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-fn blob_to_f32_vec(blob: &[u8]) -> Option<Vec<f32>> {
-    if blob.len() % 4 != 0 {
-        return None;
-    }
-    Some(
-        blob.chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect(),
-    )
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let mut dot = 0.0f32;
-    let mut na = 0.0f32;
-    let mut nb = 0.0f32;
-    for i in 0..a.len() {
-        dot += a[i] * b[i];
-        na += a[i] * a[i];
-        nb += b[i] * b[i];
-    }
-    if na <= 0.0 || nb <= 0.0 {
-        return 0.0;
-    }
-    dot / (na.sqrt() * nb.sqrt())
 }
 
 fn http_client() -> Client {
@@ -362,6 +311,88 @@ async fn search_user_memories(
             Some((cat, content, sim))
         })
         .collect())
+}
+
+pub async fn fetch_agent_tool_recipes(
+    access_token: &str,
+    erp: ErpKind,
+    user_message: &str,
+    limit: i32,
+) -> Result<Vec<AgentToolRecipe>, String> {
+    if access_token.trim().is_empty() || user_message.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = http_client();
+    let rpc = json!({
+        "p_token": access_token.trim(),
+        "p_erp_kind": erp.display_name_ar(),
+        "p_user_message": user_message,
+        "p_limit": limit.max(1),
+    });
+    let url = format!("{}/rest/v1/rpc/get_agent_tool_recipes", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("get_agent_tool_recipes failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("get_agent_tool_recipes") || body.contains("does not exist") {
+            return Ok(Vec::new());
+        }
+        return Err(format!("get_agent_tool_recipes HTTP: {}", body));
+    }
+    Ok(res.json::<Vec<AgentToolRecipe>>().await.unwrap_or_default())
+}
+
+pub async fn record_agent_tool_result(
+    access_token: &str,
+    recipe_id: Option<i64>,
+    request_id: &str,
+    erp: ErpKind,
+    user_message: &str,
+    tool_name: &str,
+    pattern_id: Option<&str>,
+    success: bool,
+    error_message: Option<&str>,
+) -> Result<(), String> {
+    if access_token.trim().is_empty() {
+        return Ok(());
+    }
+    let client = http_client();
+    let rpc = json!({
+        "p_token": access_token.trim(),
+        "p_recipe_id": recipe_id,
+        "p_request_id": request_id,
+        "p_erp_kind": erp.display_name_ar(),
+        "p_message": user_message,
+        "p_tool_name": tool_name,
+        "p_pattern_id": pattern_id,
+        "p_success": success,
+        "p_prompt_tokens": Value::Null,
+        "p_completion_tokens": Value::Null,
+        "p_error_message": error_message,
+    });
+    let url = format!("{}/rest/v1/rpc/record_agent_tool_result", SUPABASE_URL);
+    let res = client
+        .post(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .json(&rpc)
+        .send()
+        .await
+        .map_err(|e| format!("record_agent_tool_result failed: {}", e))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("record_agent_tool_result") || body.contains("does not exist") {
+            return Ok(());
+        }
+        return Err(format!("record_agent_tool_result HTTP: {}", body));
+    }
+    Ok(())
 }
 
 async fn is_near_duplicate_user(access_token: &str, embedding: &[f32]) -> Result<bool, String> {

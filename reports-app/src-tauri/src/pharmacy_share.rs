@@ -156,7 +156,7 @@ fn parse_f64(s: &str) -> Option<f64> {
     t.parse().ok()
 }
 
-pub async fn fetch_shareable_products(
+async fn fetch_shareable_products(
     conn: &SqlConnection,
     erp: ErpKind,
 ) -> Result<Vec<ShareProductRow>, String> {
@@ -289,7 +289,7 @@ pub async fn clear_remote_products(sync_key: &str) -> Result<u32, String> {
         .unwrap_or(0) as u32)
 }
 
-pub async fn push_products(
+async fn push_products(
     sync_key: &str,
     products: &[ShareProductRow],
     show_prices: bool,

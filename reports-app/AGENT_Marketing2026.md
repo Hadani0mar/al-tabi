@@ -424,6 +424,98 @@ ORDER BY S.CATEOGRY3 ASC;
 
 ---
 
+## PATTERN: بطل-بيع-قرب-الصلاحية
+TRIGGERS: بطل المبيعات, الموظف المنقذ, المنتجات قرب الصلاحية المباعة, مبيعات قرب الصلاحية, خسارة تم تداركها, بطل بيع الصلاحية, near expiry sales hero, saved expiry sales, expiry sales by employee
+TABLES: SALE_INVOICE, SALE_ITEMS, USERS, SITTEINGS
+NOTES:
+  - يرتب الموظفين حسب قيمة المنتجات التي بيعت وهي داخل فترة خطر الصلاحية.
+  - فترة الخطر = `SITTEINGS.EXPIRY_WORRNING`، والافتراضي 60 يوماً إذا لم توجد قيمة.
+  - SQL-A: شهر محدد. غيّر `TargetMonth=5` و `TargetYear=2026` حسب طلب المستخدم.
+  - SQL-B: شهر آخر فاتورة مبيعات تلقائياً.
+  - لا يستخدم `CAST(x AS date)` حتى يبقى متوافقاً مع SQL Server 2005.
+  - قيمة الخسارة المتداركة = `SUM(SALE_ITEMS.QTY * SALE_ITEMS.PRICE)`.
+---
+
+```sql
+-- [A] بطل بيع المنتجات القريبة من الصلاحية لشهر محدد
+-- غيّر TargetMonth و TargetYear حسب الشهر المطلوب
+;WITH Params AS (
+  SELECT 5 AS TargetMonth, 2026 AS TargetYear
+),
+SystemSettings AS (
+  SELECT ISNULL(MAX(EXPIRY_WORRNING), 60) AS WarningDays
+  FROM dbo.SITTEINGS
+),
+NearExpirySales AS (
+  SELECT
+    ISNULL(U.FULL_NAME, N'غير محدد') AS UserName,
+    INV.S_ID,
+    SI.QTY,
+    SI.QTY * SI.PRICE AS TotalItemValue,
+    DATEDIFF(day, CONVERT(varchar(10), INV.S_DATE, 120), SI.CATEOGRY3) AS DaysToExpiry
+  FROM dbo.SALE_INVOICE INV
+  INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+  LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
+  CROSS JOIN SystemSettings SS
+  CROSS JOIN Params P
+  WHERE SI.CATEOGRY3 IS NOT NULL
+    AND CONVERT(varchar(10), SI.CATEOGRY3, 120) >= CONVERT(varchar(10), INV.S_DATE, 120)
+    AND DATEDIFF(day, CONVERT(varchar(10), INV.S_DATE, 120), SI.CATEOGRY3) <= SS.WarningDays
+    AND MONTH(INV.S_DATE) = P.TargetMonth
+    AND YEAR(INV.S_DATE) = P.TargetYear
+)
+SELECT
+  UserName AS [الموظف_المنقذ],
+  COUNT(DISTINCT S_ID) AS [عدد_الفواتير_المنقذة],
+  CAST(SUM(QTY) AS decimal(18,2)) AS [الكمية_المباعة_فترة_الخطر],
+  CAST(SUM(TotalItemValue) AS decimal(18,2)) AS [إجمالي_الخسارة_التي_تم_تداركها],
+  MIN(DaysToExpiry) AS [أكثر_منتج_حرج_أيام_قبل_التلف]
+FROM NearExpirySales
+GROUP BY UserName
+ORDER BY [إجمالي_الخسارة_التي_تم_تداركها] DESC;
+```
+
+```sql
+-- [B] بطل بيع المنتجات القريبة من الصلاحية في شهر آخر فاتورة مبيعات
+;WITH AsOf AS (
+  SELECT MAX(S_DATE) AS d FROM dbo.SALE_INVOICE
+),
+SystemSettings AS (
+  SELECT ISNULL(MAX(EXPIRY_WORRNING), 60) AS WarningDays
+  FROM dbo.SITTEINGS
+),
+NearExpirySales AS (
+  SELECT
+    ISNULL(U.FULL_NAME, N'غير محدد') AS UserName,
+    INV.S_ID,
+    SI.QTY,
+    SI.QTY * SI.PRICE AS TotalItemValue,
+    DATEDIFF(day, CONVERT(varchar(10), INV.S_DATE, 120), SI.CATEOGRY3) AS DaysToExpiry
+  FROM dbo.SALE_INVOICE INV
+  INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
+  LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
+  CROSS JOIN SystemSettings SS
+  WHERE SI.CATEOGRY3 IS NOT NULL
+    AND CONVERT(varchar(10), SI.CATEOGRY3, 120) >= CONVERT(varchar(10), INV.S_DATE, 120)
+    AND DATEDIFF(day, CONVERT(varchar(10), INV.S_DATE, 120), SI.CATEOGRY3) <= SS.WarningDays
+    AND MONTH(INV.S_DATE) = MONTH((SELECT d FROM AsOf))
+    AND YEAR(INV.S_DATE) = YEAR((SELECT d FROM AsOf))
+)
+SELECT
+  UserName AS [الموظف_المنقذ],
+  COUNT(DISTINCT S_ID) AS [عدد_الفواتير_المنقذة],
+  CAST(SUM(QTY) AS decimal(18,2)) AS [الكمية_المباعة_فترة_الخطر],
+  CAST(SUM(TotalItemValue) AS decimal(18,2)) AS [إجمالي_الخسارة_التي_تم_تداركها],
+  MIN(DaysToExpiry) AS [أكثر_منتج_حرج_أيام_قبل_التلف]
+FROM NearExpirySales
+GROUP BY UserName
+ORDER BY [إجمالي_الخسارة_التي_تم_تداركها] DESC;
+```
+
+---
+
+---
+
 ## PATTERN: آخر-سعر-شراء-مورد
 TRIGGERS: آخر سعر شراء, سعر شراء, last purchase price, buy price history, آخر مشتريات صنف, كم آخر مرة اشترينا, من أين اشترينا, كمية المنتج الآن, مورد المنتج
 TABLES: BUY_ITEMS, BUY_INVOICE, CUSTOMERS, ITEMS, ITEMS_SUB

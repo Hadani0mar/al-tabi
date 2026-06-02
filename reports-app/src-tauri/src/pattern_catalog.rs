@@ -355,6 +355,7 @@ pub fn list_for_erp(erp: ErpKind) -> Vec<&'static PatternEntry> {
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn prompt_table(erp: ErpKind) -> String {
     let mut lines = vec![
         "| pattern_id | التقرير | product_filter |".to_string(),
@@ -434,56 +435,49 @@ pub fn build_executor_system_prompt(
     product_filter: Option<&str>,
     date_str: &str,
 ) -> String {
-    let pf_note = product_filter
+    let pf_line = product_filter
         .filter(|s| !s.is_empty())
-        .map(|pf| format!("\n\n**product_filter نشط:** `{pf}` — مرّره لـ run_query_pattern.\n"))
+        .map(|pf| format!("\nproduct_filter نشط: \"{pf}\" — مرّره لـ run_query_pattern."))
         .unwrap_or_default();
 
     format!(
-        "<role>\n\
-        منفّذ تقارير {erp} — **لا تكتب SQL** — **لا تخترع أرقاماً**.\n\
-        **اليوم:** {date_str}\n\
-        </role>\n\n\
-        <tone_and_dialect>\n\
-        - لهجة ليبية خفيفة وموجزة — لا تملق ولا تحيات طويلة.\n\
-        - ابدأ بترحيب مختصر (مثل: 'مرحبتين.' أو 'أهلاً. تفضل:').\n\
-        - اعرض النتائج فوراً — اقترح التصدير باختصار ('تبيه إكسل أو PDF؟').\n\
-        </tone_and_dialect>\n\n\
-        <critical_rules>\n\
-        1. **أي سؤال بيانات** → `run_query_pattern` فوراً بـ pattern_id من الجدول أدناه.\n\
-        2. ممنوع جداول أو أرقام بدون tool call ناجح.\n\
-        3. ممنوع أسئلة توضيحية — نفّذ أو قل «غير مدعوم».\n\
-        4. إن لم يوجد pattern مناسب → اقترح الأقرب من الجدول أدناه.\n\
-        5. تصدير → `export_last_result` بعد run_query_pattern.\n\
-        6. التاريخ محقون أعلاه — استخدمه مباشرةً بدون أي tool call.\n\
-        7. اعرض الإجماليات الفرعية والعامة باختصار في نهاية الرد.\n\
-        8. الأسئلة العامة → أجب باختصار بدون أدوات.\n\
-        9. لخّص نتائج الأداة باختصار — العملة: د.ل.\n\
-        </critical_rules>\n\n\
-        <patterns>\n\
-        ERP: **{erp}** | ملف SQL: `{agent_file}`\n\n\
-        {table}\n\
-        </patterns>{pf_note}\n\n\
-        <mapping_hints>\n\
-        - «أكثر مبيعاً» → top_sellers SQL-A | «هذا الشهر» → SQL-B | «الشهر السابق» → SQL-C | «توقعات» → SQL-D\n\
-        - «نواقص / نفاد / شن النواقص» → shortage_supplier\n\
-        - «صلاحية / منتهية / ينتهي» → expiry_report\n\
-        - «مصروفات / مصاريف / كم صرفنا» → monthly_expenses (SQL-A هذا الشهر | SQL-B السابق | SQL-C مقارنة)\n\
-        - «مقارنة أسعار / أرخص مورد» → supplier_price_compare + product_filter\n\
-        - «آخر سعر شراء / سعر المورد» → last_purchase_price + product_filter\n\
-        - «ديون الزباين / اللي لي» → customer_debts\n\
-        - «ديون الموردين / اللي علي» → supplier_debts\n\
-        - «مبيعات آخر يوم موظف» → sales_last_day_employee\n\
-        - «مبيعات يومية موظف / ليوم X» → sales_daily_employee (تاريخ صريح → @TargetDate مباشرةً)\n\
-        - «بطل المبيعات / الموظف المنقذ» → near_expiry_sales_hero\n\
-        - ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE).\n\
-        </mapping_hints>",
+        "منفّذ تقارير {erp} | لا SQL حر | لا أرقام مخترعة | اليوم: {date_str}\n\
+        لهجة ليبية قصيرة — لا تملق — ابدأ بالنتائج فوراً — اقترح ('إكسل أو PDF؟').\n\
+        \n\
+        ## القواعد\n\
+        1. أي سؤال بيانات → run_query_pattern بـ pattern_id فوراً (لا تتردد ولا تسأل).\n\
+        2. ممنوع جداول/أرقام بدون tool call ناجح.\n\
+        3. تصدير → export_last_result بعد run_query_pattern.\n\
+        4. إجماليات في نهاية الرد | العملة: د.ل.\n\
+        5. أسئلة عامة → أجب باختصار بدون أدوات.\n\
+        \n\
+        ## الأنماط المتاحة — {erp}\n\
+        {compact_list}{pf_line}\n\
+        \n\
+        ## مطابقة\n\
+        top_sellers: أكثر مبيعاً | days_recent=N للتاريخ القديم | B=هذا الشهر | C=السابق | D=توقعات\n\
+        shortage_supplier: نواقص/نفاد/شن النواقص | expiry_report: صلاحية/منتهية\n\
+        monthly_expenses: مصروفات/مصاريف | A=هذا | B=السابق | C=مقارنة 6 شهور\n\
+        supplier_price_compare+pf: مقارنة أسعار/أرخص مورد | last_purchase_price+pf: آخر سعر شراء\n\
+        customer_debts: ديون الزباين/اللي لي | supplier_debts: اللي علي/ديون الموردين\n\
+        sales_last_day_employee: مبيعات آخر يوم (بدون تحديد)\n\
+        sales_daily_employee: تاريخ محدد أو قديم → days_recent=N أو @TargetDate مباشرةً\n\
+        employee_ranking: ترتيب/أداء الموظفين | near_expiry_sales_hero: بطل المبيعات\n\
+        ⚠️ تاريخ صريح → استخدمه كما هو، لا تستبدله بـ MAX(S_DATE).",
         erp = erp.display_name_ar(),
-        agent_file = erp.agent_file_label(),
-        table = prompt_table(erp),
         date_str = date_str,
-        pf_note = pf_note,
+        compact_list = compact_pattern_list(erp),
+        pf_line = pf_line,
     )
+}
+
+fn compact_pattern_list(erp: ErpKind) -> String {
+    let mut lines = Vec::new();
+    for p in list_for_erp(erp) {
+        let pf = if p.needs_product_filter { " [product_filter]" } else { "" };
+        lines.push(format!("- {}: {}{}", p.id, p.name_ar, pf));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -625,5 +619,28 @@ mod tests {
     fn resolve_shortage_dialect() {
         let p = resolve_pattern_id("شن النواقص", ErpKind::Marketing2026);
         assert_eq!(p.map(|x| x.id), Some("shortage_supplier"));
+    }
+
+    #[test]
+    fn system_prompt_under_2000_chars() {
+        let prompt = build_executor_system_prompt(ErpKind::Marketing2026, None, "الاثنين 2/6/2026 | الشهر:6 | السنة:2026");
+        assert!(
+            prompt.chars().count() < 2000,
+            "system prompt too long: {} chars",
+            prompt.chars().count()
+        );
+    }
+
+    #[test]
+    fn system_prompt_contains_date() {
+        let prompt = build_executor_system_prompt(ErpKind::Marketing2026, None, "الاثنين 2/6/2026 | الشهر:6 | السنة:2026");
+        assert!(prompt.contains("2026"), "date not injected into prompt");
+    }
+
+    #[test]
+    fn system_prompt_daily_employee_hint_present() {
+        let prompt = build_executor_system_prompt(ErpKind::Marketing2026, None, "test");
+        assert!(prompt.contains("sales_daily_employee"), "sales_daily_employee hint missing");
+        assert!(prompt.contains("تاريخ قديم") || prompt.contains("تاريخ صريح"), "historical date hint missing");
     }
 }

@@ -92,6 +92,9 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [loadingChatIds, setLoadingChatIds] = useState<Set<string>>(new Set());
   const [toolProgress, setToolProgress] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState<string>("");
+  const streamingReqIdRef = useRef<string | null>(null);
+  const streamingBufferRef = useRef<string>("");
 
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -219,6 +222,40 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
       unlisten.then((f) => f());
     };
   }, [aiModel]);
+
+  // ─── Streaming listeners ───────────────────────────────────────────────────
+  useEffect(() => {
+    let rafId: number | null = null;
+
+    const unlistenChunk = listen<{ requestId: string; delta: string }>(
+      "ai-stream-chunk",
+      (event) => {
+        const { requestId, delta } = event.payload;
+        if (streamingReqIdRef.current !== requestId) return;
+        streamingBufferRef.current += delta;
+        // batch updates via requestAnimationFrame لتجنب re-render على كل حرف
+        if (rafId === null) {
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            setStreamingText(streamingBufferRef.current);
+          });
+        }
+      }
+    );
+
+    const unlistenDone = listen<{ requestId: string }>("ai-stream-done", (event) => {
+      if (streamingReqIdRef.current === event.payload.requestId) {
+        if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+        setStreamingText(streamingBufferRef.current);
+      }
+    });
+
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      unlistenChunk.then((f) => f());
+      unlistenDone.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -512,6 +549,11 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
     const historyForApi = chatHistory;
 
+    // تهيئة streaming لهذا الطلب
+    streamingReqIdRef.current = requestId;
+    streamingBufferRef.current = "";
+    setStreamingText("");
+
     try {
         const response = await invoke<string>("ask_local_ai", {
             message: userMessage,
@@ -520,6 +562,11 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             aiModel: aiModel,
             requestId,
         });
+
+        // تنظيف streaming
+        streamingReqIdRef.current = null;
+        streamingBufferRef.current = "";
+        setStreamingText("");
 
         if (pendingByChatRef.current[currentChatId] !== requestId) {
           console.warn("[AI] ignored stale response", { currentChatId, requestId });
@@ -546,6 +593,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         });
         syncVisibleHistory(currentChatId, finalHistory);
     } catch (e) {
+        // تنظيف streaming عند الخطأ
+        streamingReqIdRef.current = null;
+        streamingBufferRef.current = "";
+        setStreamingText("");
         if (pendingByChatRef.current[currentChatId] !== requestId) return;
         console.error(e);
         const errText = String(e);
@@ -886,12 +937,23 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
              })}
              {isActiveChatLoading && (
                  <div className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl p-4 rounded-bl-sm flex items-center gap-3 border" style={{ background: 'var(--ai-bubble-bg)', borderColor: 'var(--ai-bubble-border)', color: 'var(--ai-bubble-fg)' }}>
-                       <Loader2 className="w-5 h-5 animate-spin shrink-0" style={{ color: 'var(--brand-accent)' }} />
-                       {toolProgress ? (
-                           <span className="text-sm font-medium animate-pulse" style={{ color: 'var(--ai-bubble-fg)' }}>{toolProgress}</span>
+                    <div className="max-w-[85%] rounded-2xl p-4 rounded-bl-sm border" style={{ background: 'var(--ai-bubble-bg)', borderColor: 'var(--ai-bubble-border)', color: 'var(--ai-bubble-fg)' }}>
+                       {streamingText ? (
+                           /* نص يتدفق — يُعرض مباشرةً مع cursor وامض */
+                           <div className="text-sm leading-relaxed" dir="rtl">
+                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
+                             <span className="inline-block w-[2px] h-[1em] bg-current align-middle ml-0.5 animate-pulse" />
+                           </div>
                        ) : (
-                           <span className="text-sm animate-pulse" style={{ color: 'var(--ai-bubble-fg)' }}>جاري التفكير...</span>
+                           /* مرحلة قبل الـ streaming — أدوات أو تفكير */
+                           <div className="flex items-center gap-3">
+                             <Loader2 className="w-5 h-5 animate-spin shrink-0" style={{ color: 'var(--brand-accent)' }} />
+                             {toolProgress ? (
+                                 <span className="text-sm font-medium animate-pulse">{toolProgress}</span>
+                             ) : (
+                                 <span className="text-sm animate-pulse">جاري التفكير...</span>
+                             )}
+                           </div>
                        )}
                     </div>
                  </div>

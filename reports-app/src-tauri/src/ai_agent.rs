@@ -711,6 +711,92 @@ async fn explore_local_schema_for_agent(table_hint: &str, app_state: &Arc<AppSta
     }
 }
 
+/// Streaming API call — يبعث chunks عبر Tauri events ويرجع النص الكامل كـ Value.
+/// يُستخدم فقط لـ iterations التلخيص (tool_choice: none).
+async fn call_api_streaming(
+    api_key: &str,
+    req_body: &Value,
+    app_handle: &tauri::AppHandle,
+    request_id: &str,
+) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap();
+
+    let mut body = req_body.clone();
+    body["stream"] = json!(true);
+    // streaming لا يحتاج max_tokens عالياً — النموذج يوقف عند الانتهاء
+    if body.get("max_tokens").is_none() {
+        body["max_tokens"] = json!(DEFAULT_MAX_TOKENS);
+    }
+
+    let clean_key = api_key.trim();
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or(DEFAULT_AI_MODEL).to_string();
+
+    let mut response = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", clean_key))
+        .header("HTTP-Referer", "http://localhost:1420")
+        .header("X-Title", "Reports App")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let err = response.text().await.unwrap_or_default();
+        // للرسائل القصيرة نرجع الخطأ كاملاً
+        let short_err = if err.len() > 300 { &err[..300] } else { &err };
+        return Err(format!("HTTP {}: {}", status, short_err));
+    }
+
+    let mut buf = String::new();
+    let mut full_text = String::new();
+
+    // نقرأ الـ SSE stream chunk بـ chunk
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        // نعالج كل السطور الكاملة في الـ buffer
+        loop {
+            let Some(nl) = buf.find('\n') else { break };
+            let line = buf[..nl].trim_end_matches('\r').to_string();
+            buf.drain(..=nl);
+
+            let data = match line.strip_prefix("data: ") {
+                Some(d) if d != "[DONE]" && !d.is_empty() => d.to_string(),
+                _ => continue,
+            };
+
+            let Ok(v) = serde_json::from_str::<Value>(&data) else { continue };
+
+            if let Some(t) = v.pointer("/choices/0/delta/content").and_then(|v| v.as_str()) {
+                if !t.is_empty() {
+                    full_text.push_str(t);
+                    let _ = app_handle.emit("ai-stream-chunk", json!({
+                        "requestId": request_id,
+                        "delta": t
+                    }));
+                }
+            }
+        }
+    }
+
+    // أبلغ الواجهة بانتهاء الـ stream
+    let _ = app_handle.emit("ai-stream-done", json!({ "requestId": request_id }));
+
+    // أرجع استجابة بنفس صيغة call_groq_api لتسهيل التكامل
+    Ok(json!({
+        "choices": [{
+            "message": { "role": "assistant", "content": full_text },
+            "finish_reason": "stop"
+        }],
+        "model": model,
+        "usage": null
+    }))
+}
+
 async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Result<Value, String> {
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
     let url = "https://openrouter.ai/api/v1/chat/completions";
@@ -3429,7 +3515,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         let summarize_fast_path = fast_path_summarize_only && iter_num == 0;
         // بعد تنفيذ pattern ناجح، iteration التالية هي تلخيص فقط — لا أدوات
         let summarize_after_pattern = pattern_executed && iter_num >= 1;
-        let req_body = if force_finalize || summarize_fast_path || summarize_after_pattern {
+        let text_only_mode = force_finalize || summarize_fast_path || summarize_after_pattern;
+        let req_body = if text_only_mode {
             json!({
                 "model": DEFAULT_AI_MODEL,
                 "messages": current_history,
@@ -3444,7 +3531,20 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
             })
         };
 
-        match call_groq_api(groq_key, ai_model, &req_body).await {
+        // في وضع التلخيص (text-only)، نستخدم streaming لعرض النص فوراً
+        let api_result = if text_only_mode && !advanced_mode {
+            match call_api_streaming(groq_key, &req_body, &app_handle, request_id).await {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    eprintln!("[Streaming] failed ({}) — fallback to blocking", e);
+                    call_groq_api(groq_key, ai_model, &req_body).await
+                }
+            }
+        } else {
+            call_groq_api(groq_key, ai_model, &req_body).await
+        };
+
+        match api_result {
             Ok(res_json) => {
                 if let Some(choices) = res_json.get("choices").and_then(|c| c.as_array()) {
                     if let Some(choice) = choices.get(0) {

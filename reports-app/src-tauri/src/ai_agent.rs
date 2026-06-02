@@ -22,7 +22,8 @@ const RATE_LIMIT_BASE_DELAY_MS: u64 = 2000;
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// حد أقصى لحجم مخطط RAG داخل system prompt (تجنب تجاوز حد OpenRouter)
 const PROMPT_SCHEMA_CHAR_LIMIT: usize = 2000;
-const HISTORY_MSG_CHAR_LIMIT: usize = 1500;
+const HISTORY_MSG_CHAR_LIMIT: usize = 800;
+const TOOL_RESULT_ROW_LIMIT: usize = 8;
 #[allow(dead_code)]
 const RAG_MATCH_COUNT: u32 = 5;
 #[allow(dead_code)]
@@ -373,6 +374,43 @@ fn trim_history_for_api(history: &mut [Value]) {
                 msg["content"] = json!(trimmed);
             }
         }
+    }
+}
+
+/// يضغط نتيجة tool قبل حفظها في التاريخ — يحتفظ بأول TOOL_RESULT_ROW_LIMIT صف فقط.
+/// النتيجة الكاملة محفوظة في AppState.agent_session.last_result للتصدير.
+fn compress_tool_result(tool_content: &str) -> String {
+    if tool_content.len() <= 800 {
+        return tool_content.to_string();
+    }
+    let Ok(mut v) = serde_json::from_str::<Value>(tool_content) else {
+        // ليس JSON — اقتطع مباشرةً
+        let s: String = tool_content.chars().take(800).collect();
+        return format!("{}…", s);
+    };
+    // أخطاء → أعد كما هي (قصيرة عادةً)
+    if v.get("error").is_some() {
+        return tool_content.to_string();
+    }
+    // اقتطع الصفوف مع الإبقاء على row_count الحقيقي
+    if let Some(rows) = v.get("rows").and_then(|r| r.as_array()) {
+        let total = rows.len();
+        if total > TOOL_RESULT_ROW_LIMIT {
+            let kept: Vec<_> = rows.iter().take(TOOL_RESULT_ROW_LIMIT).cloned().collect();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("rows".into(), serde_json::Value::Array(kept));
+                obj.insert("row_count".into(), json!(total));
+                obj.insert("rows_shown".into(), json!(TOOL_RESULT_ROW_LIMIT));
+                obj.remove("sql"); // لا داعي لإرسال SQL للنموذج ثانيةً
+            }
+        }
+    }
+    let s = v.to_string();
+    if s.chars().count() > 900 {
+        let cap: String = s.chars().take(900).collect();
+        format!("{}…", cap)
+    } else {
+        s
     }
 }
 
@@ -3348,7 +3386,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                             current_history.push(json!({
                                 "role": "tool",
                                 "tool_call_id": fast_tool_call_id,
-                                "content": tool_content
+                                "content": compress_tool_result(&tool_content)
                             }));
                             current_history.push(json!({
                                 "role": "user",
@@ -3389,7 +3427,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
             }));
         }
         let summarize_fast_path = fast_path_summarize_only && iter_num == 0;
-        let req_body = if force_finalize || summarize_fast_path {
+        // بعد تنفيذ pattern ناجح، iteration التالية هي تلخيص فقط — لا أدوات
+        let summarize_after_pattern = pattern_executed && iter_num >= 1;
+        let req_body = if force_finalize || summarize_fast_path || summarize_after_pattern {
             json!({
                 "model": DEFAULT_AI_MODEL,
                 "messages": current_history,
@@ -3870,7 +3910,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
-                                        "content": tool_content
+                                        "content": compress_tool_result(&tool_content)
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 }

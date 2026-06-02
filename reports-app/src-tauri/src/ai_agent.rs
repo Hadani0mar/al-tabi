@@ -3371,11 +3371,20 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
 
     trim_chat_history_vec(&mut chat_history, 9);
 
-    let mut current_history = chat_history.clone();
-    current_history.push(json!({
-        "role": "user",
-        "content": user_text
-    }));
+    // ── Executor Mode: current_history مضغوط ────────────────────────────────
+    // في الوضع السريع (ليس advanced_mode)، النموذج يحتاج فقط:
+    //   [system] + [السؤال الحالي]
+    // لا يحتاج تاريخ المحادثات السابقة لاتخاذ قرار أي pattern يستدعي.
+    // هذا يوفر ~1200-1500 توكن لكل استعلام بدلاً من إرسال 6-8 رسائل قديمة.
+    let mut current_history: Vec<Value> = if !advanced_mode {
+        let system_msg = chat_history.first().cloned()
+            .unwrap_or_else(|| json!({"role": "system", "content": ""}));
+        vec![system_msg, json!({"role": "user", "content": user_text})]
+    } else {
+        let mut h = chat_history.clone();
+        h.push(json!({"role": "user", "content": user_text}));
+        h
+    };
 
     // Per-conversation guards (Desktop)
     let mut recent_sql: Vec<String> = Vec::new();
@@ -3546,12 +3555,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                 .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                 .unwrap_or("")
                 .to_string();
-            // استخرج رسالة المستخدم الأصلية (أول user بعد system)
-            let user_original = current_history.iter()
-                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-                .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                .unwrap_or(user_text)
-                .to_string();
+            // السؤال الحالي — user_text مباشرةً (لا نبحث في التاريخ لتجنب أسئلة قديمة)
+            let user_original = user_text.to_string();
             if !tool_result_content.is_empty() {
                 let system_msg = current_history.first().cloned().unwrap_or(json!({}));
                 Some(json!([

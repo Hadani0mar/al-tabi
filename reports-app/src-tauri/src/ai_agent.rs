@@ -2664,6 +2664,15 @@ pub fn replace_file_path_tags(content: &str, path: &str) -> String {
 }
 
 async fn sanitize_response_file_paths(content: &str, app_state: &Arc<AppState>) -> String {
+    sanitize_response_file_paths_ex(content, app_state, false).await
+}
+
+/// نسخة موسّعة — force=true تضيف المسار دائماً بعد عمليات التصدير
+async fn sanitize_response_file_paths_ex(
+    content: &str,
+    app_state: &Arc<AppState>,
+    force: bool,
+) -> String {
     let valid_path = {
         let session = app_state.agent_session.lock().await;
         session.last_file_path.clone()
@@ -2672,8 +2681,16 @@ async fn sanitize_response_file_paths(content: &str, app_state: &Arc<AppState>) 
         return content.to_string();
     };
     if content.contains("[FILE_PATH:") {
-        replace_file_path_tags(content, &vp)
-    } else if content.contains("xlsx") || content.contains("Excel") || content.contains("اكسل") || content.contains("PDF") || content.contains("pdf") {
+        return replace_file_path_tags(content, &vp);
+    }
+    // كلمات مفتاحية تدل على ملف تصدير
+    let export_keywords = [
+        "xlsx", "Excel", "اكسل", "إكسل", "PDF", "pdf",
+        "تصدير", "تم التصدير", "تم إنشاء", "تم حفظ", "الملف",
+        "ملف التقرير", "جاهز", "حُفظ",
+    ];
+    let has_keyword = export_keywords.iter().any(|k| content.contains(k));
+    if force || has_keyword {
         format!("{}\n\n[FILE_PATH:{}]", content.trim_end(), vp)
     } else {
         content.to_string()
@@ -4028,8 +4045,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     }));
                                     continue;
                                 }
+                                // meta_tool_only = export — أضف المسار دائماً حتى لو لم يذكره النموذج
                                 let final_content =
-                                    sanitize_response_file_paths(&content, app_state).await;
+                                    sanitize_response_file_paths_ex(&content, app_state, meta_tool_only).await;
                                 if !advanced_mode {
                                     if !pattern_executed
                                         && !meta_tool_only

@@ -24,6 +24,7 @@ import { load } from "@tauri-apps/plugin-store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import { generateChatTitle } from "@/lib/openrouter";
 
 export interface ChatSession {
   id: string;
@@ -525,26 +526,18 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     saveChatsToStore(updatedChats);
 
     if (isNewChat && groqKey.trim()) {
-      fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${groqKey.trim()}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: aiModel,
-          messages: [{ role: "user", content: `لخص هذه الجملة في 3 كلمات كحد أقصى لتكون عنواناً لمحادثة بدون أي مقدمات أو علامات تنصيص: "${userMessage}"` }]
-        })
-      }).then(res => res.json()).then(data => {
-        if (data.choices && data.choices[0]) {
-          const title = data.choices[0].message.content.replace(/["']/g, "").trim();
-          setChats(prev => {
-            const newC = prev.map(c => c.id === currentChatId ? { ...c, title } : c);
+      generateChatTitle(groqKey.trim(), aiModel, userMessage)
+        .then((title) => {
+          if (!title) return;
+          setChats((prev) => {
+            const newC = prev.map((c) =>
+              c.id === currentChatId ? { ...c, title } : c
+            );
             saveChatsToStore(newC);
             return newC;
           });
-        }
-      }).catch(console.error);
+        })
+        .catch(console.error);
     }
 
     const historyForApi = chatHistory;

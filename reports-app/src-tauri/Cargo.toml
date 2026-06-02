@@ -39,4 +39,3 @@ printpdf = "0.5"
 unicode-bidi = "0.3"
 rust_xlsxwriter = "0.95.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
-rig-core = { version = "0.5", features = ["derive"] }

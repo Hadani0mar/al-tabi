@@ -205,9 +205,9 @@ git push origin vX.Y.Z
 |--------|-------|---------|
 | `ITEMS` | منتجات | `ITEM_INVISIBLE=0` للنشط |
 | `ITEMS_SUB` | مخزون | `QTY`, `CATEOGRY3`=صلاحية |
-| `SALE_INVOICE` | فواتير بيع | `S_DATE`, `CUST_ID`, `USERS_ID` |
+| `SALE_INVOICE` | فواتير بيع | `S_DATE`, `CUST_ID`, `USERS_ID`, **`S_DISCOUNT`** |
 | `SALE_ITEMS` | بنود بيع | **لا يحتوي S_DATE** — JOIN مع SALE_INVOICE |
-| `BUY_INVOICE` | فواتير شراء | `B_DATE`, `CUST_ID` |
+| `BUY_INVOICE` | فواتير شراء | `B_DATE`, `CUST_ID`, **`B_DISCOUNT`** |
 | `BUY_ITEMS` | بنود شراء | `PRICE`, فلتر `PRICE>0` |
 | `CUSTOMERS` | زبون/مورد/موظف | `CUST_CUSTOM=1`=زبون, `CUST_VENDOR=1`=مورد, `CUST_EMP=1`=موظف |
 | `USERS` | مستخدمو النظام | `FULL_NAME` — ربطهم بـ CUSTOMERS عبر الاسم |
@@ -233,10 +233,12 @@ git push origin vX.Y.Z
 | `CROSS JOIN` يُرجع 0 صف | أحد CTEs فارغ | استخدم `LEFT JOIN` أو تحقق مسبقاً |
 | `PRICE=0` في BUY_ITEMS | سجلات خاطئة | فلتر `BI.PRICE > 0` دائماً |
 | `Cargo.lock out of date` على CI | نسيت `cargo check` | اعمل `cargo check` قبل commit |
+| `Type date is not a defined system type` | SQL Server 2005 لا يدعم `date` | استخدم `CONVERT(varchar(10), x, 120)` |
+| ديون غير دقيقة | لم تُطرح `S_DISCOUNT` أو `B_DISCOUNT` | الدين = مبيعات − خصم − مردودات − مقبوضات + تسوية |
 
 ---
 
-## 8. الكتالوج الحالي (11 نمط)
+## 8. الكتالوج الحالي (12 نمط)
 
 | pattern_id | الوصف | product_filter |
 |---|---|---|
@@ -246,11 +248,33 @@ git push origin vX.Y.Z
 | `monthly_expenses` | مصروفات شهرية (3 أوضاع) | لا |
 | `supplier_price_compare` | مقارنة أسعار موردين | **نعم** |
 | `shortage_supplier` | نواقص نشطة + مورد | لا |
-| `employee_debts` | ديون وسلف الموظفين | لا |
-| `customer_debts` | ديون الزبائن + آخر إيصال قبض | لا |
-| `supplier_debts` | ديون الموردين + آخر إيصال صرف | لا |
+| `employee_ranking` | ترتيب الموظفين (3 أوضاع: أيام/شهر/سابق) | لا |
+| `employee_debts` | ديون الموظفين (مع S_DISCOUNT) | لا |
+| `customer_debts` | ديون الزبائن (مع S_DISCOUNT) | لا |
+| `supplier_debts` | ديون الموردين (مع B_DISCOUNT) | لا |
 | `sales_last_day_employee` | مبيعات آخر يوم لكل موظف | لا |
 | `sales_daily_employee` | مبيعات يومية (يدعم تاريخ محدد) | لا |
+
+## 9. توافقية SQL Server 2005 (قاعدة حرجة)
+
+المستخدمون يشغلون SQL Server 2005 Express. **الممنوعات:**
+
+| ممنوع (2008+) | البديل (2005+) |
+|---|---|
+| `CAST(x AS date)` | `CONVERT(varchar(10), x, 120)` |
+| `STRING_AGG()` | `STUFF(... FOR XML PATH)` |
+| `IIF(cond, a, b)` | `CASE WHEN cond THEN a ELSE b END` |
+| `TRY_CONVERT()` | `CASE WHEN ISDATE(x)=1 THEN CONVERT(...) END` |
+| `FORMAT()` | `CONVERT()` مع أنماط |
+| `OFFSET/FETCH` | `TOP N` + `ROW_NUMBER()` |
+
+## 10. صيغة الديون الدقيقة
+
+```
+ديون الزبائن = SUM(QTY*PRICE) − SUM(S_DISCOUNT) − مردودات − مقبوضات(TAKE) + تسوية(BALANCE_EDIT)
+ديون الموردين = SUM(QTY*PRICE) − SUM(B_DISCOUNT) − مردودات شراء − مدفوعات(GIVE EXPENCES_ID=0) + تسوية
+ديون الموظفين = نفس صيغة الزبائن لكن بفلتر CUST_EMP=1 + ربط USERS.FULL_NAME
+```
 
 ---
 

@@ -155,6 +155,25 @@ pub const CATALOG: &[PatternEntry] = &[
         ],
     },
     PatternEntry {
+        id: "employee_ranking",
+        name_ar: "ترتيب الموظفين (دخل + فواتير + معدل يومي)",
+        section_marketing: "ترتيب-الموظفين",
+        section_infinity: "ترتيب-الموظفين",
+        marketing: true,
+        infinity: false,
+        needs_product_filter: false,
+        triggers: &[
+            "ترتيب الموظفين",
+            "أفضل موظف",
+            "أعلى دخل",
+            "أداء الموظفين",
+            "موظف الشهر",
+            "employee ranking",
+            "معدل الدخل",
+            "متوسط الفاتورة",
+        ],
+    },
+    PatternEntry {
         id: "employee_debts",
         name_ar: "ديون وسلف الموظفين",
         section_marketing: "ديون-الموظفين",
@@ -558,7 +577,7 @@ mod tests {
 
     #[test]
     fn catalog_has_ten_entries() {
-        assert_eq!(CATALOG.len(), 11);
+        assert_eq!(CATALOG.len(), 12);
     }
 
     #[test]

@@ -440,7 +440,7 @@ SELECT TOP 30
     WHERE pi.ProductID_FK = p.ProductID_PK
     ORDER BY inv.InvoiceDate DESC
   ) AS [آخر مورد],
-  CAST(b.ModifiedDate AS date) AS [تاريخ التعديل]
+  CONVERT(varchar(10), b.ModifiedDate, 120) AS [تاريخ التعديل]
 FROM Inventory.Data_Products p
 INNER JOIN Inventory.Data_View_ProductUOMBarcodes b ON p.ProductID_PK = b.ProductID_FK
 WHERE p.IsInActive = 0 AND ({condition})
@@ -468,7 +468,7 @@ SELECT TOP 50
   p.ProductName AS [اسم المنتج],
   ISNULL(lb.SupplierName, N'—') AS [المورد],
   CAST(lb.LastCost AS decimal(18,3)) AS [آخر سعر شراء],
-  CAST(lb.LastDate AS date) AS [تاريخ الشراء]
+  CONVERT(varchar(10), lb.LastDate, 120) AS [تاريخ الشراء]
 FROM LastBuy lb
 INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = lb.ProductID_FK
 WHERE lb.rn = 1 AND p.IsInActive = 0 AND ({condition})

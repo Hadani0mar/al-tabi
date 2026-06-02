@@ -96,7 +96,9 @@ Secrets (OpenRouter key, Telegram token) stored encrypted in `tauri-plugin-store
 
 ## Important Constraints
 
+- **SQL Server 2005+ compatibility** — users run SQL Server 2005 Express. **Never use:** `CAST(x AS date)`, `STRING_AGG()`, `IIF()`, `TRY_CONVERT()`, `FORMAT()`, `OFFSET/FETCH`. **Use instead:** `CONVERT(varchar(10), x, 120)` for dates, `ISNULL()`, `CASE WHEN`, `ROW_NUMBER()`. Dev server is 2022 — always test compatibility mentally.
 - **SQL Server dialect only** — all queries are T-SQL (`SELECT/WITH`, `TOP N`, `GETDATE()`). Never use PostgreSQL syntax in agent-generated SQL.
+- **Debt formula (Marketing2026)** — Debt = SUM(SALE_ITEMS.QTY*PRICE) - SUM(S_DISCOUNT) - SUM(R_S_ITEMS returns) - SUM(TAKE payments) + SUM(BALANCE_EDIT adjustments). S_DISCOUNT on SALE_INVOICE and B_DISCOUNT on BUY_INVOICE must be included.
 - **`sql-split/*.sql` must have NO BOM** — SQL Server rejects UTF-8 BOM (`\xEF\xBB\xBF`) and throws `Token error: Incorrect syntax near ';'`.
 - **Agent MD files must exist at compile time** — `include_str!` in `erp_profile.rs` and `infinity_inventory_sql.rs` will fail the build if files are missing.
 - **`[FILE_PATH:...]` protocol** — tool results embed this marker; `ai-assistant-interface.tsx` parses it to show the download button (only on the last message containing a file).

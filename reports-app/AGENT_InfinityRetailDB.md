@@ -157,7 +157,13 @@ WHERE p.IsInActive = 0
   AND i.ExpiryDate IS NOT NULL
   AND CAST(i.ExpiryDate AS date) < CAST(GETDATE() AS date)
 GROUP BY p.ProductName, i.ExpiryDate
-ORDER BY i.ExpiryDate ASC;
+ORDER BY
+  CASE
+    WHEN YEAR(i.ExpiryDate) = YEAR(GETDATE()) THEN 0
+    WHEN YEAR(i.ExpiryDate) < YEAR(GETDATE()) THEN 1
+    ELSE 2
+  END,
+  i.ExpiryDate ASC;
 ```
 
 ```sql
@@ -167,7 +173,7 @@ SELECT TOP 100
   p.ProductName AS [اسم المنتج],
   CAST(SUM(i.StockOnHand) AS decimal(18,2)) AS [الكمية],
   CAST(i.ExpiryDate AS date) AS [تاريخ الانتهاء],
-  DATEDIFF(day, GETDATE(), i.ExpiryDate) AS [الايام المتبقية]
+  DATEDIFF(day, CAST(GETDATE() AS date), CAST(i.ExpiryDate AS date)) AS [الايام المتبقية]
 FROM Inventory.Data_ProductInventories i
 INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = i.ProductID_FK
 WHERE p.IsInActive = 0
@@ -176,7 +182,13 @@ WHERE p.IsInActive = 0
   AND YEAR(i.ExpiryDate) = YEAR(GETDATE())
   AND MONTH(i.ExpiryDate) = MONTH(GETDATE())
 GROUP BY p.ProductName, i.ExpiryDate
-ORDER BY i.ExpiryDate ASC;
+ORDER BY
+  CASE
+    WHEN YEAR(i.ExpiryDate) = YEAR(GETDATE()) THEN 0
+    WHEN YEAR(i.ExpiryDate) < YEAR(GETDATE()) THEN 1
+    ELSE 2
+  END,
+  i.ExpiryDate ASC;
 ```
 
 ```sql
@@ -187,7 +199,7 @@ SELECT TOP 100
   p.ProductName AS [اسم المنتج],
   CAST(SUM(i.StockOnHand) AS decimal(18,2)) AS [الكمية],
   CAST(i.ExpiryDate AS date) AS [تاريخ الانتهاء],
-  DATEDIFF(day, GETDATE(), i.ExpiryDate) AS [الايام المتبقية]
+  DATEDIFF(day, CAST(GETDATE() AS date), CAST(i.ExpiryDate AS date)) AS [الايام المتبقية]
 FROM Inventory.Data_ProductInventories i
 INNER JOIN Inventory.Data_Products p ON p.ProductID_PK = i.ProductID_FK
 WHERE p.IsInActive = 0
@@ -196,7 +208,13 @@ WHERE p.IsInActive = 0
   AND CAST(i.ExpiryDate AS date) >= CAST(GETDATE() AS date)
   AND CAST(i.ExpiryDate AS date) <= DATEADD(day, @DaysThreshold, CAST(GETDATE() AS date))
 GROUP BY p.ProductName, i.ExpiryDate
-ORDER BY i.ExpiryDate ASC;
+ORDER BY
+  CASE
+    WHEN YEAR(i.ExpiryDate) = YEAR(GETDATE()) THEN 0
+    WHEN YEAR(i.ExpiryDate) < YEAR(GETDATE()) THEN 1
+    ELSE 2
+  END,
+  i.ExpiryDate ASC;
 ```
 
 ---

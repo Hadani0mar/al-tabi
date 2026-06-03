@@ -25,6 +25,9 @@ struct TelegramUpdate {
 #[derive(Deserialize)]
 struct Message {
     text: Option<String>,
+    caption: Option<String>,
+    document: Option<serde_json::Value>,
+    photo: Option<Vec<serde_json::Value>>,
     chat: Chat,
 }
 
@@ -360,12 +363,30 @@ pub async fn start_polling(
                                 offset = update.update_id + 1;
                                 if let Some(msg) = update.message {
                                     if msg.chat.id.to_string() == expected_chat_id {
-                                        if let Some(text) = msg.text {
+                                        if let Some(text) = msg.text.as_deref().or(msg.caption.as_deref()) {
                                             handle_message(
-                                                &client, &token, msg.chat.id, text, &groq_key, &ai_model,
+                                                &client, &token, msg.chat.id, text.to_string(), &groq_key, &ai_model,
                                                 &app_state, &mut reports_cache,
                                                 &mut chat_history, &openai_key
                                             ).await;
+                                        } else if msg.document.is_some() || msg.photo.as_ref().map(|p| !p.is_empty()).unwrap_or(false) {
+                                            let _ = send_chat_action(&client, &token, msg.chat.id, "typing").await;
+                                            let _ = send_html(
+                                                &client,
+                                                &token,
+                                                msg.chat.id,
+                                                "استلمت الملف، لكن تحليل الملفات من تليجرام غير مفعل حالياً. اكتب طلبك كنص أو أرسل رقم تقرير محفوظ.".to_string(),
+                                            )
+                                            .await;
+                                        } else {
+                                            let _ = send_chat_action(&client, &token, msg.chat.id, "typing").await;
+                                            let _ = send_html(
+                                                &client,
+                                                &token,
+                                                msg.chat.id,
+                                                "استلمت رسالة غير نصية. اكتب الطلب كنص واضح حتى أقدر أنفذه.".to_string(),
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
@@ -394,6 +415,88 @@ async fn handle_message(
     openai_key: &str,
 ) {
     let text_trim = text.trim();
+    let normalized = text_trim.to_lowercase();
+    let _ = send_chat_action(client, token, chat_id, "typing").await;
+    let requested_report_id = if normalized.contains("تقرير") || normalized.contains("report") {
+        normalized
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|part| !part.is_empty())
+            .and_then(|part| part.parse::<u32>().ok())
+    } else {
+        None
+    };
+    let wants_last_report = [
+        "ارسل آخر تقرير",
+        "أرسل آخر تقرير",
+        "ابعث آخر تقرير",
+        "ابعت آخر تقرير",
+        "send last report",
+        "last report",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(&needle.to_lowercase()));
+
+    if wants_last_report || requested_report_id.is_some() {
+        let _ = send_chat_action(client, token, chat_id, "upload_document").await;
+        let selected_result = {
+            let session = app_state.agent_session.lock().await;
+            if let Some(report_id) = requested_report_id {
+                session
+                    .recent_reports
+                    .iter()
+                    .find(|report| report.report_id == report_id)
+                    .cloned()
+            } else {
+                session.last_result.clone()
+            }
+        };
+        let Some(result) = selected_result else {
+            let _ = send_message(
+                client,
+                token,
+                chat_id,
+                if let Some(report_id) = requested_report_id {
+                    format!("لم أجد تقريراً محفوظاً برقم {}.", report_id)
+                } else {
+                    "لا يوجد تقرير محفوظ حالياً. نفّذ تقريراً من التطبيق أو تليجرام أولاً.".to_string()
+                },
+            )
+            .await;
+            return;
+        };
+        let title = format!("تقرير رقم {}", result.report_id);
+        let business_name = crate::resolve_report_business_name(app_state).await;
+        let html = crate::html_report_document(
+            &title,
+            &result.columns,
+            &result.rows,
+            &business_name,
+        );
+        match crate::gotenberg::html_to_pdf(&html).await {
+            Ok(bytes) => {
+                let filename = format!("report_{}.pdf", result.report_id);
+                let _ = send_pdf(
+                    client,
+                    token,
+                    chat_id,
+                    &filename,
+                    bytes,
+                    &format!("تقرير رقم {}", result.report_id),
+                )
+                .await;
+            }
+            Err(e) => {
+                let _ = send_message(
+                    client,
+                    token,
+                    chat_id,
+                    format!("فشل تجهيز آخر تقرير: {}", e),
+                )
+                .await;
+            }
+        }
+        return;
+    }
 
     // شات حر بالكامل: كل رسالة تذهب للوكيل الذكي
     if groq_key.is_empty() {
@@ -433,6 +536,24 @@ pub async fn send_message(
 }
 
 // ─── إرسال رسالة HTML منسّقة ─────────────────────────────────────
+pub async fn send_chat_action(
+    client: &Client,
+    token: &str,
+    chat_id: i64,
+    action: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("https://api.telegram.org/bot{}/sendChatAction", token);
+    client
+        .post(&url)
+        .json(&serde_json::json!({
+            "chat_id": chat_id,
+            "action": action
+        }))
+        .send()
+        .await?;
+    Ok(())
+}
+
 pub async fn send_html(
     client: &Client, token: &str, chat_id: i64, html: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -452,6 +573,7 @@ pub async fn send_pdf(
     client: &Client, token: &str, chat_id: i64,
     filename: &str, content: Vec<u8>, caption: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = send_chat_action(client, token, chat_id, "upload_document").await;
     let url = format!("https://api.telegram.org/bot{}/sendDocument", token);
     let part = reqwest::multipart::Part::bytes(content)
         .file_name(filename.to_string())
@@ -474,6 +596,7 @@ pub async fn send_excel(
     content: Vec<u8>,
     caption: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = send_chat_action(client, token, chat_id, "upload_document").await;
     let url = format!("https://api.telegram.org/bot{}/sendDocument", token);
     let part = reqwest::multipart::Part::bytes(content)
         .file_name(filename.to_string())

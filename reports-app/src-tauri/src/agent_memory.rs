@@ -682,7 +682,7 @@ Assistant: {assistant}"#,
     );
 
     let body = json!({
-        "model": "google/gemini-2.0-flash-001",
+        "model": crate::ai_agent::DEFAULT_AI_MODEL,
         "messages": [{ "role": "user", "content": prompt }],
         "max_tokens": 400,
         "temperature": 0.0,

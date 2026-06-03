@@ -9,6 +9,7 @@ import {
   Loader2,
   Trash2,
   Download,
+  Printer,
   Menu,
   MessageSquare,
   PlusCircle,
@@ -37,6 +38,7 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   aiUsage?: AiTokenUsage;
+  reports?: HtmlReport[];
 }
 
 interface AiTokenUsage {
@@ -51,6 +53,26 @@ interface AiTokenUsage {
 
 interface AiUsagePayload extends AiTokenUsage {
   requestId: string;
+}
+
+interface HtmlReport {
+  id: string;
+  reportId?: number;
+  title: string;
+  toolName: string;
+  columns: string[];
+  rows: string[][];
+  rowCount: number;
+}
+
+interface HtmlReportPayload {
+  requestId: string;
+  reportId?: number;
+  title: string;
+  toolName: string;
+  columns: unknown[];
+  rows: unknown[][];
+  rowCount: number;
 }
 
 interface ProductMention {
@@ -71,6 +93,150 @@ function formatProductMention(hit: ProductMention): string {
     return `@${name} (${code})`;
   }
   return `@${name}`;
+}
+
+function normalizeHtmlReport(payload: HtmlReportPayload): HtmlReport {
+  return {
+    id: `${payload.requestId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    reportId: Number(payload.reportId || 0) || undefined,
+    title: String(payload.title || "تقرير"),
+    toolName: String(payload.toolName || ""),
+    columns: (payload.columns || []).map((c) => String(c ?? "")),
+    rows: (payload.rows || []).map((row) => (Array.isArray(row) ? row.map((c) => String(c ?? "")) : [])),
+    rowCount: Number(payload.rowCount || payload.rows?.length || 0),
+  };
+}
+
+async function printAiResponseBundleWithGotenberg(title: string, contentHtml: string, reports?: HtmlReport[]) {
+  try {
+    const path = await invoke<string>("print_ai_response_bundle_with_gotenberg", {
+      title,
+      contentHtml,
+      reports: (reports ?? []).map((report) => ({
+        title: report.title,
+        report_id: report.reportId,
+        columns: report.columns,
+        rows: report.rows,
+      })),
+    });
+    await invoke("open_local_file", { path });
+  } catch (err) {
+    console.error("AI response bundle print failed:", err);
+    alert("فشل تجهيز التقرير عبر Gotenberg: " + String(err));
+  }
+}
+
+function resolveAssistantMessageTitle(root: Element | null) {
+  const contentRoot = root?.querySelector("[data-ai-markdown-content]");
+  const heading = contentRoot?.querySelector("h1,h2,h3");
+  const headingText = heading?.textContent?.replace(/\s+/g, " ").trim();
+  if (headingText) return headingText.slice(0, 90);
+  const paragraph = contentRoot?.querySelector("p,strong");
+  const paragraphText = paragraph?.textContent?.replace(/\s+/g, " ").trim();
+  if (paragraphText) return paragraphText.slice(0, 90);
+  return "تقرير";
+}
+
+async function printAssistantMessageReport(button: HTMLButtonElement, reports?: HtmlReport[]) {
+  const root = button.closest("[data-assistant-message]");
+  const contentRoot = root?.querySelector("[data-ai-markdown-content]");
+  if (!contentRoot) return;
+  const clone = contentRoot.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("[data-print-control]").forEach((node) => node.remove());
+  clone.querySelectorAll("[data-printable-table]").forEach((node) => node.remove());
+  await printAiResponseBundleWithGotenberg(
+    resolveAssistantMessageTitle(root),
+    clone.innerHTML,
+    reports,
+  );
+}
+
+function HtmlReportCard({ report }: { report: HtmlReport }) {
+  const previewRows = report.rows.slice(0, 40);
+
+  return (
+    <div
+      className="overflow-hidden rounded-xl border"
+      style={{
+        background: "var(--bg-elevated)",
+        borderColor: "var(--border-default)",
+      }}
+      dir="rtl"
+    >
+      <div
+        className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2"
+        style={{ borderColor: "var(--border-subtle)" }}
+      >
+        <div className="min-w-0">
+          <div className="truncate text-sm font-bold" style={{ color: "var(--fg-1)" }}>
+            {report.title || "تقرير"}
+          </div>
+          <div className="text-[11px]" style={{ color: "var(--fg-2)" }}>
+            عدد الصفوف: {report.rowCount}
+            {report.reportId ? ` · رقم التقرير: ${report.reportId}` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-h-80 overflow-auto">
+        <table className="w-full min-w-[520px] border-collapse text-right text-[12px]">
+          <thead className="sticky top-0 z-10" style={{ background: "var(--bg-subtle)" }}>
+            <tr>
+              {report.columns.map((column, index) => (
+                <th
+                  key={`${column}-${index}`}
+                  className="border-b px-3 py-2 font-bold whitespace-nowrap"
+                  style={{ borderColor: "var(--border-default)", color: "var(--fg-1)" }}
+                >
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="hover:opacity-90">
+                {report.columns.map((_, columnIndex) => (
+                  <td
+                    key={columnIndex}
+                    className="border-b px-3 py-2 align-top leading-relaxed"
+                    style={{ borderColor: "var(--border-subtle)", color: "var(--ai-bubble-fg)" }}
+                  >
+                    {row[columnIndex] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {report.rows.length > previewRows.length && (
+        <div className="border-t px-3 py-2 text-[11px]" style={{ borderColor: "var(--border-subtle)", color: "var(--fg-2)" }}>
+          المعروض هنا أول {previewRows.length} صف، والطباعة تستخدم كل الصفوف.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarkdownPrintableTable({ children }: { children: React.ReactNode }) {
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  return (
+    <div
+      data-printable-table
+      className="my-5 overflow-hidden rounded-xl border shadow-sm"
+      style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
+      dir="rtl"
+    >
+      <div className="w-full overflow-x-auto">
+        <table ref={tableRef} className="w-full text-[15px] text-right border-collapse">
+          {children}
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function getMentionContext(text: string, caret: number): MentionContext | null {
@@ -112,6 +278,8 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
   const activeChatIdRef = useRef<string | null>(null);
   const mentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const usageByRequestRef = useRef<Record<string, AiTokenUsage>>({});
+  const reportsByRequestRef = useRef<Record<string, HtmlReport[]>>({});
+  const chatByRequestRef = useRef<Record<string, string>>({});
 
   const [productSuggestions, setProductSuggestions] = useState<ProductMention[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -223,6 +391,49 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
       unlisten.then((f) => f());
     };
   }, [aiModel]);
+
+  useEffect(() => {
+    const unlisten = listen<HtmlReportPayload>("ai-html-report", (event) => {
+      const payload = event.payload;
+      if (!payload.requestId) return;
+      const report = normalizeHtmlReport(payload);
+      const current = reportsByRequestRef.current[payload.requestId] ?? [];
+      reportsByRequestRef.current[payload.requestId] = [...current, report];
+      const chatId = chatByRequestRef.current[payload.requestId];
+      if (!chatId) return;
+
+      const appendReport = (messages: Message[]) => {
+        const lastAssistantIndex = [...messages].reverse().findIndex((m) => m.role === "assistant");
+        if (lastAssistantIndex === -1) return messages;
+        const index = messages.length - 1 - lastAssistantIndex;
+        const next = [...messages];
+        const existing = next[index].reports ?? [];
+        if (existing.some((r) => r.id === report.id)) return messages;
+        next[index] = { ...next[index], reports: [...existing, report] };
+        return next;
+      };
+
+      setChats((prev) => {
+        let changed = false;
+        const nextChats = prev.map((chat) => {
+          if (chat.id !== chatId) return chat;
+          const messages = appendReport(chat.messages);
+          if (messages === chat.messages) return chat;
+          changed = true;
+          return { ...chat, messages, updatedAt: Date.now() };
+        });
+        if (changed) saveChatsToStore(nextChats);
+        return nextChats;
+      });
+
+      if (activeChatIdRef.current === chatId) {
+        setChatHistory((hist) => appendReport(hist));
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
 
   // ─── Streaming listeners ───────────────────────────────────────────────────
   useEffect(() => {
@@ -508,6 +719,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
     const requestId = crypto.randomUUID();
     pendingByChatRef.current[currentChatId] = requestId;
+    chatByRequestRef.current[requestId] = currentChatId;
     loadingChatIdsRef.current.add(currentChatId);
     setLoadingChatIds((prev) => new Set(prev).add(currentChatId));
     
@@ -574,7 +786,9 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
 
         const usage = usageByRequestRef.current[requestId];
         delete usageByRequestRef.current[requestId];
-        const assistMsg: Message = { role: "assistant", content: text, aiUsage: usage };
+        const reports = reportsByRequestRef.current[requestId];
+        delete reportsByRequestRef.current[requestId];
+        const assistMsg: Message = { role: "assistant", content: text, aiUsage: usage, reports };
         const finalHistory = [...newHistory, assistMsg];
         setChats((prev) => {
            const newC = prev.map((c) =>
@@ -770,9 +984,16 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                     filePath = fileMatch[1].trim();
                     content = content.replace(/\[FILE_PATH:.*?\]/g, "");
                 }
+                const hasPrintableReport =
+                  msg.role === "assistant" &&
+                  ((msg.reports?.length ?? 0) > 0 || /\|.*\|/.test(content));
                 
                 return (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
+                <div
+                  key={i}
+                  data-assistant-message={msg.role === "assistant" ? "true" : undefined}
+                  className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}
+                >
                    <div
                      className={`max-w-[88%] rounded-2xl px-5 py-4 shadow-sm ${msg.role === 'user' ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
                      style={
@@ -785,7 +1006,25 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                           <div className="text-[15px] whitespace-pre-wrap leading-relaxed">{content}</div>
                       ) : (
                           <div className="flex flex-col gap-3">
+                            {hasPrintableReport && (
+                            <div className="flex justify-end" data-print-control>
+                              <button
+                                type="button"
+                                onClick={(event) => void printAssistantMessageReport(event.currentTarget, msg.reports)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:opacity-90"
+                                style={{
+                                  background: "var(--brand-accent-soft)",
+                                  borderColor: "var(--ai-bubble-border)",
+                                  color: "var(--brand-accent-ink)",
+                                }}
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                                طباعة التقرير الكامل
+                              </button>
+                            </div>
+                            )}
                             <div
+                              data-ai-markdown-content
                               className="max-w-none text-[15px] leading-relaxed [&_p]:my-2 [&_p]:leading-relaxed [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_strong]:font-bold [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-[15px] [&_h1]:font-bold [&_h2]:font-bold [&_h3]:font-semibold [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[13px] [&_code]:font-mono [&_pre]:rounded-xl [&_pre]:border [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-[13px] [&_pre]:font-mono [&_table]:w-full [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2"
                               style={{
                                 color: "var(--ai-bubble-fg)",
@@ -817,13 +1056,8 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                         {...props}
                                       />
                                     ),
-                                    table: ({ node, ...props }) => (
-                                      <div
-                                        className="w-full overflow-x-auto my-5 rounded-xl border shadow-sm"
-                                        style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
-                                      >
-                                        <table className="w-full text-[15px] text-right border-collapse" {...props} />
-                                      </div>
+                                    table: ({ children }) => (
+                                      <MarkdownPrintableTable>{children}</MarkdownPrintableTable>
                                     ),
                                     thead: ({ node, ...props }) => (
                                       <thead
@@ -884,6 +1118,13 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
                                   {content}
                                </ReactMarkdown>
                             </div>
+                            {msg.reports?.length ? (
+                              <div className="flex flex-col gap-3">
+                                {msg.reports.map((report) => (
+                                  <HtmlReportCard key={report.id} report={report} />
+                                ))}
+                              </div>
+                            ) : null}
                             {msg.aiUsage && (
                               <div
                                 className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 text-[11px]"

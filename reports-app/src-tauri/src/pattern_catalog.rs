@@ -416,12 +416,12 @@ pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
             "type": "function",
             "function": {
                 "name": "export_last_result",
-                "description": "Export last query result as PDF or Excel when user asks for export/اكسل/pdf.",
+                "description": "Export last query result as Excel when user asks for export/اكسل/xlsx. Printing/PDF is handled by the app from the saved full result, not by the model.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "title": { "type": "string", "description": "Arabic report title." },
-                        "format": { "type": "string", "enum": ["pdf", "excel"], "description": "pdf or excel." }
+                        "format": { "type": "string", "enum": ["excel"], "description": "excel only." }
                     },
                     "required": ["title", "format"]
                 }
@@ -442,12 +442,12 @@ pub fn build_executor_system_prompt(
 
     format!(
         "منفّذ تقارير {erp} | لا SQL حر | لا أرقام مخترعة | اليوم: {date_str}\n\
-        لهجة ليبية قصيرة — لا تملق — ابدأ بالنتائج فوراً — اقترح ('إكسل أو PDF؟').\n\
+        لهجة ليبية قصيرة — لا تملق — ابدأ بالنتائج فوراً — اقترح إكسل فقط عند الحاجة. الطباعة/PDF يتولاها التطبيق من النتيجة المحفوظة.\n\
         \n\
         ## القواعد\n\
         1. أي سؤال بيانات → run_query_pattern بـ pattern_id فوراً (لا تتردد ولا تسأل).\n\
         2. ممنوع جداول/أرقام بدون tool call ناجح.\n\
-        3. تصدير → export_last_result بعد run_query_pattern.\n\
+        3. تصدير → export_last_result(format=excel) بعد run_query_pattern. لا تولّد HTML/CSS ولا PDF.\n\
         4. إجماليات في نهاية الرد | العملة: د.ل.\n\
         5. أسئلة عامة → أجب باختصار بدون أدوات.\n\
         \n\

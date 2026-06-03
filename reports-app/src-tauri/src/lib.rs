@@ -28,6 +28,7 @@ pub mod erp_profile;
 pub mod erp_adapters;
 pub mod pattern_catalog;
 pub mod pharmacy_share;
+pub mod gotenberg;
 
 pub struct AppState {
     pub conn: Arc<Mutex<Option<SqlConnection>>>,
@@ -99,6 +100,14 @@ pub struct BusinessProfile {
     /// marketing2026 | infinity_retail_db
     pub erp_kind: Option<String>,
     pub erp_label: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PrintableReportPayload {
+    pub report_id: Option<u32>,
+    pub title: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
 }
 
 /// بيانات النشاط التجاري من dbo.SITTEINGS (صف الإعدادات العامة)
@@ -816,7 +825,7 @@ async fn test_telegram_bot(token: String, chat_id: String) -> Result<String, Str
     let res = client.post(&url)
         .json(&serde_json::json!({
             "chat_id": chat_id,
-            "text": "تم اختبار الاتصال بنجاح من نظام التقارير! ✅"
+            "text": "تم اختبار الاتصال بنجاح من نظام المتمكن! ✅"
         }))
         .send()
         .await
@@ -1018,6 +1027,563 @@ async fn open_local_file(path: String) -> Result<(), String> {
 }
 
 // ─── دوال مساعدة ──────────────────────────────────────────────
+
+fn escape_report_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+pub(crate) async fn resolve_report_business_name(app_state: &AppState) -> String {
+    let conn_opt = app_state.conn.lock().await.clone();
+    let Some(conn) = conn_opt else {
+        return "نظام المتمكن".to_string();
+    };
+    let erp = erp_profile::resolve_erp_kind(app_state, &conn).await;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        erp_adapters::fetch_business_profile(&conn, erp),
+    )
+    .await
+    {
+        Ok(Ok(profile)) => profile
+            .company_name
+            .filter(|v| !v.trim().is_empty())
+            .or(profile.activity_name.filter(|v| !v.trim().is_empty()))
+            .unwrap_or_else(|| "نظام المتمكن".to_string()),
+        _ => "نظام المتمكن".to_string(),
+    }
+}
+
+pub(crate) fn html_report_document(
+    title: &str,
+    columns: &[String],
+    rows: &[Vec<String>],
+    business_name: &str,
+) -> String {
+    let generated_at = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let headers = columns
+        .iter()
+        .map(|c| format!("<th><span>{}</span></th>", escape_report_html(c)))
+        .collect::<Vec<_>>()
+        .join("");
+    let body = rows
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let row_class = if row_index % 2 == 0 { "even" } else { "odd" };
+            let row_number = row_index + 1;
+            let cells = std::iter::once(format!("<td class=\"row-index\">{}</td>", row_number))
+                .chain(columns.iter().enumerate().map(|(i, _)| {
+                    format!(
+                        "<td>{}</td>",
+                        escape_report_html(row.get(i).map(String::as_str).unwrap_or(""))
+                    )
+                }))
+                .collect::<Vec<_>>()
+                .join("");
+            format!("<tr class=\"{}\">{}</tr>", row_class, cells)
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let header_count = format!("<th class=\"row-index-head\">#</th>{}", headers);
+    let visible_title = if title.trim().is_empty() { "تقرير" } else { title.trim() };
+    let row_count = rows.len();
+    let summary_cards = format!(
+        r#"<section class="summary">
+  <div class="metric"><span>عدد الصفوف</span><strong>{}</strong></div>
+  <div class="metric"><span>عنوان التقرير</span><strong>{}</strong></div>
+  <div class="metric"><span>تاريخ الإنشاء</span><strong>{}</strong></div>
+</section>"#,
+        row_count,
+        escape_report_html(visible_title),
+        escape_report_html(&generated_at)
+    );
+    let empty_state = if rows.is_empty() {
+        "<div class=\"empty\">لا توجد بيانات للعرض.</div>".to_string()
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<style>
+@page {{ size: A4 landscape; margin: 9mm; }}
+* {{ box-sizing: border-box; }}
+html {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+body {{
+  margin: 0;
+  font-family: Arial, Tahoma, "Segoe UI", sans-serif;
+  direction: rtl;
+  color: #172033;
+  background: #f6f7fb;
+}}
+.page {{
+  background: #ffffff;
+  border: 1px solid #d9dfeb;
+}}
+.hero {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, #10243f 0%, #1d4f72 58%, #2b7a78 100%);
+  color: #fff;
+}}
+.brand {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: .95;
+}}
+.mark {{
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(255,255,255,.18);
+  border: 1px solid rgba(255,255,255,.28);
+}}
+h1 {{
+  margin: 12px 0 0;
+  font-size: 25px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}}
+.subtitle {{
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(255,255,255,.78);
+}}
+.badge {{
+  white-space: nowrap;
+  border: 1px solid rgba(255,255,255,.32);
+  background: rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}}
+.summary {{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 14px 22px 4px;
+}}
+.metric {{
+  border: 1px solid #dde5f1;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 10px 12px;
+}}
+.metric span {{
+  display: block;
+  color: #607086;
+  font-size: 11px;
+  margin-bottom: 5px;
+}}
+.metric strong {{
+  color: #10243f;
+  font-size: 15px;
+}}
+.table-wrap {{
+  padding: 14px 22px 18px;
+}}
+table {{
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  border: 1px solid #cfd8e7;
+  border-radius: 10px;
+  overflow: hidden;
+  page-break-inside: auto;
+}}
+thead {{ display: table-header-group; }}
+tfoot {{ display: table-footer-group; }}
+tr {{ page-break-inside: avoid; break-inside: avoid; }}
+thead th {{
+  background: #eaf0f7;
+  color: #10243f;
+  font-weight: 800;
+  text-align: center;
+  border-bottom: 1px solid #c5d0df;
+  padding: 8px 7px;
+  font-size: 11.5px;
+  vertical-align: middle;
+}}
+tbody td {{
+  color: #182338;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 1px solid #e2e8f0;
+  padding: 7px 7px;
+  font-size: 10.7px;
+  line-height: 1.45;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}}
+tbody tr.even td {{ background: #ffffff; }}
+tbody tr.odd td {{ background: #f8fbff; }}
+tbody tr:last-child td {{ border-bottom: 0; }}
+.row-index, .row-index-head {{
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  text-align: center;
+  color: #617087;
+  font-weight: 700;
+}}
+.empty {{
+  margin: 18px 22px;
+  border: 1px dashed #b8c4d6;
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+  color: #607086;
+}}
+.footer {{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 22px 14px;
+  color: #64748b;
+  font-size: 10px;
+}}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <div>
+      <div class="brand"><span class="mark">R</span><span>نظام المتمكن</span></div>
+      <h1>{}</h1>
+      <div class="subtitle">تقرير منسق للطباعة والمراجعة</div>
+    </div>
+    <div class="badge">{}</div>
+  </section>
+  {}
+  {}
+  <section class="table-wrap">
+    <table>
+      <thead><tr>{}</tr></thead>
+      <tbody>{}</tbody>
+    </table>
+  </section>
+  <footer class="footer">
+    <span>نظام المتمكن</span>
+    <span>تم الإنشاء: {}</span>
+  </footer>
+</main>
+</body>
+</html>"#,
+        escape_report_html(visible_title),
+        escape_report_html(if business_name.trim().is_empty() { "نظام المتمكن" } else { business_name.trim() }),
+        summary_cards,
+        empty_state,
+        header_count,
+        body,
+        escape_report_html(&generated_at)
+    )
+}
+
+fn safe_report_filename(title: &str, prefix: &str) -> String {
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let safe_title = title
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .chars()
+        .take(40)
+        .collect::<String>();
+    if safe_title.is_empty() {
+        format!("{}_{}.pdf", prefix, stamp)
+    } else {
+        format!("{}_{}_{}.pdf", prefix, safe_title, stamp)
+    }
+}
+
+fn html_ai_response_document(title: &str, content_html: &str) -> String {
+    let generated_at = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let visible_title = if title.trim().is_empty() { "تقرير" } else { title.trim() };
+    format!(
+        r#"<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<style>
+@page {{ size: A4 landscape; margin: 9mm; }}
+* {{ box-sizing: border-box; }}
+html {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+body {{
+  margin: 0;
+  font-family: Arial, Tahoma, "Segoe UI", sans-serif;
+  direction: rtl;
+  color: #172033;
+  background: #f6f7fb;
+}}
+.page {{
+  min-height: 100vh;
+  background: #fff;
+  border: 1px solid #d9dfeb;
+}}
+.hero {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, #10243f 0%, #1d4f72 58%, #2b7a78 100%);
+  color: #fff;
+}}
+.brand {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}}
+.mark {{
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(255,255,255,.18);
+  border: 1px solid rgba(255,255,255,.28);
+}}
+h1 {{
+  margin: 12px 0 0;
+  font-size: 25px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}}
+.subtitle {{
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(255,255,255,.78);
+}}
+.badge {{
+  white-space: nowrap;
+  border: 1px solid rgba(255,255,255,.32);
+  background: rgba(255,255,255,.14);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}}
+.content {{
+  padding: 18px 22px 20px;
+  font-size: 12.5px;
+  line-height: 1.75;
+}}
+.content > *:first-child {{ margin-top: 0; }}
+.content p {{ margin: 8px 0; }}
+.content h1, .content h2, .content h3 {{
+  color: #10243f;
+  margin: 14px 0 8px;
+  line-height: 1.35;
+}}
+.content h1 {{ font-size: 20px; }}
+.content h2 {{ font-size: 17px; }}
+.content h3 {{ font-size: 15px; }}
+.content ul, .content ol {{ margin: 8px 20px; padding: 0; }}
+.content li {{ margin: 4px 0; }}
+.content strong {{ color: #10243f; }}
+.content code {{
+  background: #eef3f8;
+  border: 1px solid #d9e3ef;
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}}
+.content pre {{
+  background: #111827;
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  direction: ltr;
+  text-align: left;
+}}
+.content [data-printable-table] {{
+  margin: 12px 0 14px;
+  border: 0 !important;
+  box-shadow: none !important;
+}}
+.content [data-print-control] {{ display: none !important; }}
+.content table {{
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  border: 1px solid #cfd8e7;
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 10px 0 12px;
+}}
+.content thead th {{
+  background: #eaf0f7;
+  color: #10243f;
+  font-weight: 800;
+  text-align: center;
+  border-bottom: 1px solid #c5d0df;
+  padding: 8px 7px;
+  font-size: 11.5px;
+  vertical-align: middle;
+}}
+.content tbody td {{
+  color: #182338;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 1px solid #e2e8f0;
+  padding: 7px 7px;
+  font-size: 10.7px;
+  line-height: 1.45;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}}
+.content tbody tr:nth-child(odd) td {{ background: #fff; }}
+.content tbody tr:nth-child(even) td {{ background: #f8fbff; }}
+.footer {{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 22px 14px;
+  color: #64748b;
+  font-size: 10px;
+}}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <div>
+      <div class="brand"><span class="mark">R</span><span>نظام المتمكن</span></div>
+      <h1>{}</h1>
+      <div class="subtitle">محتوى رد الوكيل الذكي مع الجداول والملاحظات</div>
+    </div>
+    <div class="badge">نظام المتمكن</div>
+  </section>
+  <section class="content">{}</section>
+  <footer class="footer">
+    <span>نظام المتمكن</span>
+    <span>تم الإنشاء: {}</span>
+  </footer>
+</main>
+</body>
+</html>"#,
+        escape_report_html(visible_title),
+        content_html,
+        escape_report_html(&generated_at)
+    )
+}
+
+#[tauri::command]
+async fn print_html_report_with_gotenberg(
+    title: String,
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    if columns.is_empty() {
+        return Err("لا توجد أعمدة للطباعة.".to_string());
+    }
+    let business_name = resolve_report_business_name(&state).await;
+    let html = html_report_document(&title, &columns, &rows, &business_name);
+    let pdf_bytes = gotenberg::html_to_pdf(&html).await?;
+    let filename = safe_report_filename(&title, "html_report");
+    let path = std::env::temp_dir().join(filename);
+    std::fs::write(&path, pdf_bytes).map_err(|e| format!("فشل حفظ التقرير: {}", e))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+async fn print_ai_response_with_gotenberg(
+    title: String,
+    content_html: String,
+) -> Result<String, String> {
+    if content_html.trim().is_empty() {
+        return Err("لا يوجد محتوى للطباعة.".to_string());
+    }
+    let html = html_ai_response_document(&title, &content_html);
+    let pdf_bytes = gotenberg::html_to_pdf(&html).await?;
+    let filename = safe_report_filename(&title, "ai_report");
+    let path = std::env::temp_dir().join(filename);
+    std::fs::write(&path, pdf_bytes).map_err(|e| format!("فشل حفظ التقرير: {}", e))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+async fn print_ai_response_bundle_with_gotenberg(
+    title: String,
+    content_html: String,
+    mut reports: Vec<PrintableReportPayload>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let last_result = {
+        let session = state.agent_session.lock().await;
+        session.last_result.clone()
+    };
+    if let Some(result) = last_result {
+        let already_has_full_result = reports.iter().any(|report| {
+            report.columns == result.columns && report.rows.len() >= result.rows.len()
+        });
+        if !already_has_full_result && !result.columns.is_empty() && !result.rows.is_empty() {
+            reports.push(PrintableReportPayload {
+                report_id: Some(result.report_id),
+                title: if title.trim().is_empty() {
+                    "البيانات الكاملة".to_string()
+                } else {
+                    format!("{} - البيانات الكاملة", title.trim())
+                },
+                columns: result.columns,
+                rows: result.rows,
+            });
+        }
+    }
+
+    if reports.is_empty() {
+        let _ = content_html;
+        return Err("لا يوجد محتوى للطباعة.".to_string());
+    }
+    let selected = reports
+        .iter()
+        .max_by_key(|report| report.rows.len())
+        .ok_or_else(|| "لا يوجد تقرير كامل للطباعة.".to_string())?;
+    let report_title = if let Some(id) = selected.report_id {
+        format!("تقرير رقم {}", id)
+    } else if selected.title.trim().is_empty() {
+        title.clone()
+    } else {
+        selected.title.clone()
+    };
+    let business_name = resolve_report_business_name(&state).await;
+    let html = html_report_document(
+        &report_title,
+        &selected.columns,
+        &selected.rows,
+        &business_name,
+    );
+    let pdf_bytes = gotenberg::html_to_pdf(&html).await?;
+    let filename = safe_report_filename(&report_title, "report");
+    let path = std::env::temp_dir().join(filename);
+    std::fs::write(&path, pdf_bytes).map_err(|e| format!("فشل حفظ التقرير: {}", e))?;
+    Ok(path.display().to_string())
+}
 
 pub(crate) fn build_config(conn: &SqlConnection) -> Config {
     let mut config = Config::new();
@@ -1352,6 +1918,9 @@ pub fn run() {
             ai_agent::generate_ai_suggestions,
             cancel_local_ai,
             open_local_file,
+            print_html_report_with_gotenberg,
+            print_ai_response_with_gotenberg,
+            print_ai_response_bundle_with_gotenberg,
             get_scheduled_reports,
             add_scheduled_report,
             delete_scheduled_report,

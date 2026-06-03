@@ -1,8 +1,7 @@
 //! أدوات الوكيل المتقدمة — SQL، أنماط، مفضلة، تصدير آخر نتيجة
 
 use crate::excel_generator::generate_report_excel;
-use crate::pdf_generator::generate_report_pdf;
-use crate::telegram::{send_excel, send_pdf};
+use crate::telegram::send_excel;
 use crate::{execute_sql_query, AppState};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -14,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct StoredQueryResult {
+    pub report_id: u32,
     pub sql: String,
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
@@ -43,6 +43,8 @@ pub struct QueryPlan {
 #[derive(Default)]
 pub struct AgentSessionState {
     pub last_result: Option<StoredQueryResult>,
+    pub recent_reports: Vec<StoredQueryResult>,
+    pub next_report_id: u32,
     pub last_plan: Option<QueryPlan>,
     /// آخر ملف PDF/Excel حُفظ فعلياً على القرص (مسار Windows كامل)
     pub last_file_path: Option<String>,
@@ -520,8 +522,6 @@ pub struct FavoriteQuery {
     pub created_at_unix: u64,
 }
 
-/// فوق هذا العدد: حفظ كامل + إنشاء PDF تلقائياً + معاينة مختصرة للمحادثة
-pub const AUTO_PDF_ROW_THRESHOLD: usize = 25;
 pub const CHAT_PREVIEW_MAX_ROWS: usize = 20;
 pub const MAX_QUERY_ROWS: usize = 5000;
 
@@ -530,77 +530,41 @@ pub async fn set_last_result(
     sql: &str,
     columns: &[String],
     rows: &[Vec<String>],
-) {
+) -> u32 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let mut s = state.agent_session.lock().await;
-    s.last_result = Some(StoredQueryResult {
+    if s.next_report_id < 1000 {
+        s.next_report_id = 1000;
+    }
+    let report_id = s.next_report_id;
+    s.next_report_id = s.next_report_id.saturating_add(1);
+    let result = StoredQueryResult {
+        report_id,
         sql: sql.to_string(),
         columns: columns.to_vec(),
         rows: rows.to_vec(),
         saved_at_unix: now,
-    });
-}
-
-async fn save_pdf_export(
-    app_state: &Arc<AppState>,
-    delivery: &ExportDelivery,
-    title: &str,
-    columns: &[String],
-    rows: &[Vec<String>],
-) -> Value {
-    match generate_report_pdf(title, columns, rows) {
-        Ok(bytes) => match delivery {
-            ExportDelivery::Local => {
-                let filename = safe_export_filename(title, "pdf");
-                let path = std::env::temp_dir().join(&filename);
-                if std::fs::write(&path, &bytes).is_ok() {
-                    record_exported_file(app_state, &path).await;
-                    json!({
-                        "auto_pdf": true,
-                        "file_path": path.display().to_string(),
-                    })
-                } else {
-                    json!({ "auto_pdf": false, "pdf_error": "فشل حفظ PDF محلياً." })
-                }
-            }
-            ExportDelivery::Telegram {
-                client,
-                token,
-                chat_id,
-            } => {
-                let filename = safe_export_filename(title, "pdf");
-                let caption = format!("📊 {} ({} صف)", title, rows.len());
-                if send_pdf(client, token, *chat_id, &filename, bytes, &caption)
-                    .await
-                    .is_ok()
-                {
-                    json!({
-                        "auto_pdf": true,
-                        "message": format!(
-                            "تم إرسال PDF تلقائياً إلى Telegram ({} صف).",
-                            rows.len()
-                        ),
-                    })
-                } else {
-                    json!({ "auto_pdf": false, "pdf_error": "فشل إرسال PDF إلى Telegram." })
-                }
-            }
-        },
-        Err(e) => json!({ "auto_pdf": false, "pdf_error": e }),
+    };
+    s.last_result = Some(result.clone());
+    s.recent_reports.push(result);
+    if s.recent_reports.len() > 50 {
+        let overflow = s.recent_reports.len() - 50;
+        s.recent_reports.drain(0..overflow);
     }
+    report_id
 }
 
-/// يحفظ النتيجة كاملة في الجلسة؛ إن كانت كبيرة يُصدّر PDF تلقائياً ويُرجع معاينة مختصرة.
+/// يحفظ النتيجة كاملة في الجلسة ويعيد بيانات منظمة للواجهة كتقرير HTML قابل للطباعة.
 pub async fn package_query_result(
     app_state: &Arc<AppState>,
-    delivery: &ExportDelivery,
+    _delivery: &ExportDelivery,
     sql: &str,
     columns: &[String],
     rows: &[Vec<String>],
-    title: &str,
+    _title: &str,
 ) -> Value {
     if rows.len() > MAX_QUERY_ROWS {
         return json!({
@@ -612,50 +576,39 @@ pub async fn package_query_result(
         });
     }
 
-    set_last_result(app_state, sql, columns, rows).await;
+    let report_id = set_last_result(app_state, sql, columns, rows).await;
     let row_count = rows.len();
 
-    if row_count > AUTO_PDF_ROW_THRESHOLD {
+    if row_count > CHAT_PREVIEW_MAX_ROWS {
         let preview: Vec<Vec<String>> = rows
             .iter()
             .take(CHAT_PREVIEW_MAX_ROWS)
             .cloned()
             .collect();
-        let pdf_meta = save_pdf_export(app_state, delivery, title, columns, rows).await;
-        let file_path = pdf_meta
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let mut out = json!({
+        return json!({
             "columns": columns,
+            "report_id": report_id,
             "rows": preview,
+            "all_rows": rows,
             "row_count": row_count,
             "preview_only": true,
             "preview_rows_shown": preview.len(),
             "message": format!(
-                "النتيجة {} صفاً — تم إنشاء PDF تلقائياً. اعرض ملخصاً لأول {} صف وأخبر المستخدم أن التقرير الكامل في PDF{}.",
+                "رقم التقرير: {}. النتيجة {} صفاً — اعرض ملخصاً قصيراً فقط لأول {} صف. البيانات الكاملة محفوظة داخل التطبيق للطباعة أو الإرسال لاحقاً بدون إعادة توليد ودون إدخال الصفوف كلها في سياق النموذج.",
+                report_id,
                 row_count,
-                preview.len(),
-                if file_path.is_empty() {
-                    ".".to_string()
-                } else {
-                    format!(": [FILE_PATH:{}]", file_path)
-                }
+                preview.len()
             ),
         });
-        if let (Some(base), Some(extra)) = (out.as_object_mut(), pdf_meta.as_object()) {
-            for (k, v) in extra {
-                base.insert(k.clone(), v.clone());
-            }
-        }
-        return out;
     }
 
     json!({
         "columns": columns,
+        "report_id": report_id,
         "rows": rows,
+        "all_rows": rows,
         "row_count": row_count,
-        "agent_hint": "قدّم الإجابة للمستخدم بالعربية الآن. لا تكرر execute_raw_sql بنفس المنطق — إن كانت النتيجة فارغة فاذكر ذلك صراحة."
+        "agent_hint": format!("رقم التقرير: {}. قدّم الإجابة للمستخدم بالعربية الآن. لا تولّد HTML/CSS ولا تكرر execute_raw_sql. التطبيق يحفظ البيانات الكاملة ويجهز الطباعة والإرسال.", report_id)
     })
 }
 
@@ -1010,12 +963,12 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "export_last_result",
-                "description": "Exports the last successful execute_raw_sql / run_query_pattern result as PDF or Excel. Requires a prior query in this session.",
+                "description": "Exports the last successful execute_raw_sql / run_query_pattern result as Excel only. Printing is handled from the HTML report card in the desktop UI.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "title": { "type": "string", "description": "Report title in Arabic." },
-                        "format": { "type": "string", "description": "'pdf' or 'excel'." }
+                        "format": { "type": "string", "description": "Must be 'excel'." }
                     },
                     "required": ["title", "format"]
                 }
@@ -1999,7 +1952,6 @@ pub async fn handle_execute_query_plan(
                     "columns": packaged.get("columns").cloned().unwrap_or(json!(result.columns)),
                     "rows": packaged.get("rows").cloned().unwrap_or(json!(result.rows)),
                     "preview_only": packaged.get("preview_only"),
-                    "auto_pdf": packaged.get("auto_pdf"),
                     "file_path": packaged.get("file_path"),
                 }));
             }
@@ -2099,12 +2051,26 @@ pub async fn handle_run_query_pattern(
         .next()
         .unwrap_or(&section);
 
-    let sql_blocks = extract_all_sql_from_pattern_section(section_body);
+    let mut sql_blocks = extract_all_sql_from_pattern_section(section_body);
     if sql_blocks.is_empty() {
         return json!({
             "error": "وُجد النمط لكن لم تُستخرج كتلة SQL. استخدم search_query_patterns ثم انسخ SQL يدوياً.",
             "pattern_excerpt": section.lines().take(15).collect::<Vec<_>>().join("\n")
         });
+    }
+    if pattern_label == "expiry_report" && sql_blocks.len() > 1 {
+        let hint = keywords.to_lowercase();
+        let wants_expired = ["منتهية", "منتهي", "المنتهية", "expired"]
+            .iter()
+            .any(|needle| hint.contains(needle));
+        let wants_near = ["قريب", "قريبة", "سينتهي", "ستنتهي", "ينتهي", "expiring", "soon"]
+            .iter()
+            .any(|needle| hint.contains(needle));
+        if wants_expired && !wants_near {
+            sql_blocks.truncate(1);
+        } else if wants_near && !wants_expired {
+            sql_blocks = sql_blocks.into_iter().skip(1).take(1).collect();
+        }
     }
 
     let dr = days_recent.filter(|d| *d > 0).unwrap_or(60);
@@ -2118,9 +2084,6 @@ pub async fn handle_run_query_pattern(
 
     let mut parts: Vec<Value> = Vec::new();
     let mut total_rows = 0usize;
-    let mut last_sql = String::new();
-    let mut last_columns: Vec<String> = Vec::new();
-    let mut last_rows: Vec<Vec<String>> = Vec::new();
     for (idx, block) in sql_blocks.iter().enumerate() {
         let mut sql = apply_pattern_sql_params(block, dr, cov);
         let pf_val = product_filter.unwrap_or("");
@@ -2162,9 +2125,6 @@ pub async fn handle_run_query_pattern(
                     });
                 }
                 total_rows += result.row_count;
-                last_sql = sql;
-                last_columns = result.columns.clone();
-                last_rows = result.rows.clone();
                 let mut part_obj = packaged.as_object().cloned().unwrap_or_default();
                 part_obj.insert("part".to_string(), json!(idx + 1));
                 parts.push(Value::Object(part_obj));
@@ -2178,8 +2138,6 @@ pub async fn handle_run_query_pattern(
             }
         }
     }
-
-    set_last_result(app_state, &last_sql, &last_columns, &last_rows).await;
 
     if let Some(pf) = product_filter.filter(|s| !s.trim().is_empty()) {
         let clean = sanitize_product_filter(pf);
@@ -2422,34 +2380,6 @@ pub async fn handle_export_last_result(
 
     let fmt = format.to_lowercase();
     match fmt.as_str() {
-        "pdf" => {
-            match generate_report_pdf(title, &data.columns, &data.rows) {
-                Ok(bytes) => match delivery {
-                    ExportDelivery::Local => {
-                        let filename = safe_export_filename(title, "pdf");
-                        let path = std::env::temp_dir().join(&filename);
-                        if std::fs::write(&path, &bytes).is_ok() {
-                            record_exported_file(app_state, &path).await;
-                            json!({
-                                "result": format!("تم حفظ PDF. أخبر المستخدم وأضف: [FILE_PATH:{}]", path.display())
-                            })
-                        } else {
-                            json!({ "error": "فشل حفظ PDF محلياً." })
-                        }
-                    }
-                    ExportDelivery::Telegram { client, token, chat_id } => {
-                        let filename = format!("{}.pdf", title.chars().take(25).collect::<String>().replace(' ', "_"));
-                        let caption = format!("📊 {}", title);
-                        if let Err(e) = send_pdf(&client, &token, chat_id, &filename, bytes, &caption).await {
-                            json!({ "error": format!("{}", e) })
-                        } else {
-                            json!({ "result": "تم إرسال PDF من آخر نتيجة إلى Telegram." })
-                        }
-                    }
-                },
-                Err(e) => json!({ "error": e }),
-            }
-        }
         "excel" | "xlsx" => {
             match generate_report_excel(title, &data.columns, &data.rows) {
                 Ok(bytes) => match delivery {
@@ -2478,7 +2408,7 @@ pub async fn handle_export_last_result(
                 Err(e) => json!({ "error": e }),
             }
         }
-        _ => json!({ "error": "format يجب أن يكون pdf أو excel." }),
+        _ => json!({ "error": "استخدم excel فقط، أو زر الطباعة من بطاقة HTML في الواجهة." }),
     }
 }
 

@@ -1,15 +1,57 @@
 //! عميل Gotenberg لتحويل HTML إلى PDF عبر Chromium.
 
 use base64::Engine;
+use std::path::PathBuf;
 
-const GOTENBERG_URL: &str = "http://187.127.111.243:32768";
-const GOTENBERG_USER: &str = "admin";
-const GOTENBERG_PASS: &str = "Flashdb@3200";
+fn read_dotenv_value(key: &str) -> Option<String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::current_dir() {
+        candidates.push(dir.join(".env"));
+        candidates.push(dir.join("..").join(".env"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(".env"));
+            candidates.push(dir.join("..").join(".env"));
+            candidates.push(dir.join("..").join("..").join(".env"));
+            candidates.push(dir.join("..").join("..").join("..").join(".env"));
+        }
+    }
 
-fn basic_auth_header() -> String {
-    let raw = format!("{}:{}", GOTENBERG_USER, GOTENBERG_PASS);
+    for path in candidates {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let Some((k, v)) = trimmed.split_once('=') else {
+                continue;
+            };
+            if k.trim() == key {
+                return Some(v.trim().trim_matches('"').trim_matches('\'').to_string());
+            }
+        }
+    }
+    None
+}
+
+fn gotenberg_env(key: &str) -> Result<String, String> {
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| read_dotenv_value(key))
+        .ok_or_else(|| format!("متغير البيئة {} غير موجود.", key))
+}
+
+fn basic_auth_header() -> Result<String, String> {
+    let user = gotenberg_env("GOTENBERG_USERNAME")?;
+    let pass = gotenberg_env("GOTENBERG_PASSWORD")?;
+    let raw = format!("{}:{}", user, pass);
     let encoded = base64::engine::general_purpose::STANDARD.encode(raw.as_bytes());
-    format!("Basic {}", encoded)
+    Ok(format!("Basic {}", encoded))
 }
 
 /// يرسل HTML إلى Gotenberg ويعيد بايتات PDF.
@@ -19,7 +61,8 @@ pub async fn html_to_pdf(html: &str) -> Result<Vec<u8>, String> {
         .build()
         .map_err(|e| format!("فشل بناء HTTP client: {e}"))?;
 
-    let url = format!("{}/forms/chromium/convert/html", GOTENBERG_URL);
+    let base_url = gotenberg_env("GOTENBERG_URL")?.trim_end_matches('/').to_string();
+    let url = format!("{}/forms/chromium/convert/html", base_url);
 
     let part = reqwest::multipart::Part::bytes(html.as_bytes().to_vec())
         .file_name("index.html")
@@ -39,7 +82,7 @@ pub async fn html_to_pdf(html: &str) -> Result<Vec<u8>, String> {
 
     let resp = client
         .post(&url)
-        .header("Authorization", basic_auth_header())
+        .header("Authorization", basic_auth_header()?)
         .multipart(form)
         .send()
         .await

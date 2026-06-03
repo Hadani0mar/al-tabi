@@ -39,7 +39,6 @@ reports-app/
     ├── lib.rs                  # All Tauri commands + AppState + SQL connection logic
     ├── ai_agent.rs             # AI agent loop (OpenRouter API, tool dispatch, Telegram bot)
     ├── agent_tools.rs          # Tool implementations: SQL execution, export, patterns, favorites
-    ├── agent_content_sync.rs   # OTA sync: Supabase → disk cache → memory
     ├── agent_error_log.rs      # Silent background error logging to Supabase
     ├── agent_memory.rs         # Vector-based memory (Supabase pgvector)
     ├── erp_profile.rs          # ERP type detection + agent prompt loading
@@ -63,14 +62,9 @@ reports-app/
 ### ERP Detection
 On connection, `erp_profile::detect_erp_kind()` probes SQL Server schema: checks for `Inventory.Data_Products` (→ InfinityRetailDB) or `dbo.ITEMS` (→ Marketing2026). Result stored in `AppState.erp_kind`.
 
-### Agent System Prompt & Patterns — OTA Priority
-`erp_profile::load_agent_patterns(erp)` loads in this order:
-1. **Memory cache** (`agent_content_sync` static `RwLock<HashMap>`)
-2. **Disk cache** (`AppData/.../agent_cloud_cache/{bundle_key}.json`)
-3. **Supabase** via `get_agent_bundle` RPC (auth: token hash in `app_access` table)
-4. **Embedded binary** (`include_str!("../../AGENT_*.md")`) — compile-time fallback
-
-Sync runs every 15 min via `refresh_agent_cloud_content`. **The AGENT_*.md files must exist at compile time** (they're `include_str!`-embedded), but at runtime the Supabase version takes precedence.
+### Agent System Prompt & Patterns — Embedded Only
+`erp_profile::load_agent_patterns(erp)` returns `include_str!`-embedded content directly.
+Any new pattern requires a new release. No OTA, no disk cache, no Supabase fetch.
 
 ### Agent Tool Dispatch
 `ai_agent.rs` runs an agentic loop calling OpenRouter (model: `google/gemini-3.1-pro-preview`). Tools split into:

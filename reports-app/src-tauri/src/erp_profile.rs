@@ -2,8 +2,7 @@
 
 use crate::{execute_sql_query, AppState, SqlConnection};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,12 +53,8 @@ impl ErpKind {
     }
 }
 
-static AGENT_MARKETING_CACHE: OnceLock<String> = OnceLock::new();
-static AGENT_INFINITY_CACHE: OnceLock<String> = OnceLock::new();
-
 const AGENT_MARKETING_EMBED: &str = include_str!("../../AGENT_Marketing2026.md");
 const AGENT_INFINITY_EMBED: &str = include_str!("../../AGENT_InfinityRetailDB.md");
-const QUERY_PATTERNS_LEGACY_EMBED: &str = include_str!("../../QUERY_PATTERNS.md");
 
 const INFINITY_PROBE: &str = r#"
 SELECT TOP 1 1 AS ok
@@ -126,69 +121,10 @@ pub async fn current_erp_kind(app_state: &AppState) -> ErpKind {
     ErpKind::Unknown
 }
 
-fn candidate_paths(file_name: &str) -> Vec<PathBuf> {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default();
-
-    vec![
-        exe_dir.join(file_name),
-        exe_dir.join("..").join(file_name),
-        exe_dir.join("../..").join(file_name),
-        exe_dir.join("../../..").join(file_name),
-        exe_dir.join("../../../..").join(file_name),
-        PathBuf::from(r"C:\Users\DELL\Desktop\al-tabi\reports-app").join(file_name),
-    ]
-}
-
-fn load_file_from_disk(file_name: &str) -> Option<String> {
-    for path in candidate_paths(file_name) {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if content.contains("## PATTERN:") {
-                return Some(content);
-            }
-        }
-    }
-    None
-}
-
-fn load_marketing_agent_content() -> String {
-    AGENT_MARKETING_CACHE
-        .get_or_init(|| {
-            load_file_from_disk("AGENT_Marketing2026.md")
-                .or_else(|| load_file_from_disk("QUERY_PATTERNS.md"))
-                .unwrap_or_else(|| {
-                    if AGENT_MARKETING_EMBED.contains("## PATTERN:") {
-                        AGENT_MARKETING_EMBED.to_string()
-                    } else if QUERY_PATTERNS_LEGACY_EMBED.contains("## PATTERN:") {
-                        QUERY_PATTERNS_LEGACY_EMBED.to_string()
-                    } else {
-                        "# AGENT_Marketing2026 not found\n".to_string()
-                    }
-                })
-        })
-        .clone()
-}
-
-fn load_infinity_agent_content() -> String {
-    AGENT_INFINITY_CACHE
-        .get_or_init(|| {
-            load_file_from_disk("AGENT_InfinityRetailDB.md").unwrap_or_else(|| {
-                if AGENT_INFINITY_EMBED.contains("## PATTERN:") {
-                    AGENT_INFINITY_EMBED.to_string()
-                } else {
-                    "# AGENT_InfinityRetailDB not found\n".to_string()
-                }
-            })
-        })
-        .clone()
-}
-
-pub fn load_agent_patterns(erp: ErpKind) -> String {
+pub fn load_agent_patterns(erp: ErpKind) -> &'static str {
     match erp {
-        ErpKind::InfinityRetailDb => load_infinity_agent_content(),
-        ErpKind::Marketing2026 | ErpKind::Unknown => load_marketing_agent_content(),
+        ErpKind::InfinityRetailDb => AGENT_INFINITY_EMBED,
+        _ => AGENT_MARKETING_EMBED,
     }
 }
 

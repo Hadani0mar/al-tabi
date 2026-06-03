@@ -283,7 +283,203 @@ fn write_receipt_pdf(meta: &PosReceiptMeta, lines: &[PosReceiptLine], filename: 
     let bytes = generate_pos_receipt_pdf(meta, lines)?;
     let path = std::env::temp_dir().join(filename);
     std::fs::write(&path, &bytes).map_err(|e| format!("فشل حفظ PDF: {}", e))?;
+    print_receipt_to_default_printer(meta, lines, filename)?;
     Ok(path.display().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn print_receipt_to_default_printer(meta: &PosReceiptMeta, lines: &[PosReceiptLine], filename: &str) -> Result<(), String> {
+    let html_filename = filename.trim_end_matches(".pdf").to_string() + ".html";
+    let html_path = std::env::temp_dir().join(html_filename);
+    std::fs::write(&html_path, receipt_print_html(meta, lines))
+        .map_err(|e| format!("فشل تجهيز ملف الطباعة: {}", e))?;
+
+    let browser = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    .iter()
+    .find(|p| std::path::Path::new(p).exists())
+    .ok_or("تعذر العثور على Microsoft Edge أو Google Chrome للطباعة الصامتة.".to_string())?;
+
+    let url = file_url(&html_path)?;
+    let profile_dir = std::env::temp_dir().join(format!(
+        "reports_app_print_profile_{}",
+        filename
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+    ));
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|e| format!("فشل تجهيز ملف الطباعة المؤقت: {}", e))?;
+
+    let user_data_arg = format!("--user-data-dir={}", profile_dir.display());
+    let app_arg = format!("--app={}", url);
+
+    std::process::Command::new(browser)
+        .arg("--kiosk-printing")
+        .arg("--disable-print-preview")
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-extensions")
+        .arg(user_data_arg)
+        .arg(app_arg)
+        .spawn()
+        .map_err(|e| format!("فشل إرسال الإيصال للطابعة: {}", e))?;
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn print_receipt_to_default_printer(_meta: &PosReceiptMeta, _lines: &[PosReceiptLine], _filename: &str) -> Result<(), String> {
+    Err("الطباعة المباشرة مدعومة حالياً على Windows فقط.".to_string())
+}
+
+fn file_url(path: &std::path::Path) -> Result<String, String> {
+    let raw = path
+        .to_str()
+        .ok_or("مسار ملف الطباعة يحتوي على أحرف غير مدعومة.".to_string())?
+        .replace('\\', "/")
+        .replace(' ', "%20")
+        .replace('#', "%23");
+    Ok(format!("file:///{}", raw))
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn money(value: f64) -> String {
+    format!("{:.2}", value)
+}
+
+fn receipt_print_html(meta: &PosReceiptMeta, lines: &[PosReceiptLine]) -> String {
+    let rows = lines
+        .iter()
+        .map(|line| {
+            format!(
+                "<tr><td class=\"item\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num total-cell\">{}</td></tr>",
+                html_escape(&line.name),
+                money(line.qty),
+                money(line.price),
+                money(line.qty * line.price)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let total = lines.iter().map(|line| line.qty * line.price).sum::<f64>();
+    let draft = if meta.is_draft { "<div class=\"draft\">مسودة</div>" } else { "" };
+
+    format!(
+        r#"<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>receipt</title>
+<style>
+@page {{ size: 72.1mm 297mm; margin: 0; }}
+* {{ box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+html, body {{ margin: 0; padding: 0; background: #fff; color: #000; overflow: hidden; }}
+body {{ width: 72.1mm; max-width: 72.1mm; padding: 1.2mm 1.05mm; font-family: Arial, Tahoma, sans-serif; font-size: 11.8px; line-height: 1.28; font-weight: 600; }}
+.receipt {{ width: 70mm; max-width: 70mm; margin: 0 auto; overflow: hidden; }}
+.center {{ text-align: center; }}
+.company {{ font-size: 13.8px; font-weight: 700; margin-bottom: 2px; overflow-wrap: anywhere; }}
+.muted {{ font-size: 10.9px; }}
+.draft {{ margin: 4px 0; padding: 2px; border: 1px solid #000; text-align: center; font-weight: 700; }}
+.sep {{ border-top: 0.3mm dashed #000; margin: 4px 0; }}
+.meta {{ display: grid; gap: 2px; margin: 4px 0; overflow-wrap: anywhere; }}
+table {{ width: 100%; max-width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; direction: rtl; }}
+col.item-col {{ width: 39%; }}
+col.qty-col {{ width: 12%; }}
+col.price-col {{ width: 22%; }}
+col.total-col {{ width: 27%; }}
+th, td {{ border-right: 0.25mm solid #000; border-bottom: 0.25mm solid #000; padding: 2.6px 0.8px; vertical-align: middle; min-width: 0; overflow: hidden; }}
+tr > :first-child {{ border-right: 0.25mm solid #000; }}
+tr > :last-child {{ border-left: 0.25mm solid #000; }}
+thead tr:first-child > * {{ border-top: 0.25mm solid #000; }}
+th {{ font-size: 9.7px; font-weight: 700; text-align: center; white-space: nowrap; }}
+td {{ font-size: 10.8px; font-weight: 700; }}
+.item {{ text-align: right; overflow-wrap: anywhere; word-break: break-word; hyphens: auto; }}
+.num {{ direction: ltr; unicode-bidi: isolate; text-align: center; white-space: nowrap; font-family: Arial, sans-serif; letter-spacing: 0; font-weight: 600; }}
+.total-cell {{ font-weight: 700; }}
+.grand-label {{ text-align: right; font-size: 13.8px; font-weight: 700; }}
+.grand-total {{ direction: ltr; unicode-bidi: isolate; text-align: center; font-size: 13.8px; font-weight: 700; font-family: Arial, sans-serif; }}
+@media screen {{ body {{ padding: 4mm 1.05mm; }} }}
+</style>
+<script>
+function fitReceipt() {{
+  const table = document.querySelector('table');
+  let size = 8;
+  while (table && table.scrollWidth > document.body.clientWidth && size > 6.5) {{
+    size -= 0.5;
+    document.querySelectorAll('td, th').forEach((el) => el.style.fontSize = size + 'px');
+  }}
+}}
+window.addEventListener('load', () => {{
+  fitReceipt();
+  setTimeout(() => window.print(), 450);
+  setTimeout(() => window.close(), 2500);
+}});
+</script>
+</head>
+<body>
+<div class="receipt">
+  <div class="center company">{company}</div>
+  <div class="center muted">{address}</div>
+  <div class="center muted">{phone}</div>
+  {draft}
+  <div class="sep"></div>
+  <div class="meta">
+    <div>رقم الإيصال: {invoice_no}</div>
+    <div>التاريخ: {invoice_time}</div>
+    <div>العميل: {customer_name}</div>
+  </div>
+  <div class="sep"></div>
+  <table>
+    <colgroup>
+      <col class="item-col">
+      <col class="qty-col">
+      <col class="price-col">
+      <col class="total-col">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="item">الصنف</th>
+        <th>كم</th>
+        <th>سعر</th>
+        <th>إج.</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+    <tfoot>
+      <tr>
+        <td class="grand-label" colspan="3">الإجمالي</td>
+        <td class="grand-total">{total}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <div class="sep"></div>
+  <div class="center muted">شكراً لزيارتكم</div>
+</div>
+</body>
+</html>"#,
+        company = html_escape(&meta.company_name),
+        address = html_escape(&meta.address),
+        phone = html_escape(&meta.phone),
+        draft = draft,
+        invoice_no = html_escape(&meta.invoice_no),
+        invoice_time = html_escape(&meta.invoice_time),
+        customer_name = html_escape(&meta.customer_name),
+        rows = rows,
+        total = money(total),
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]

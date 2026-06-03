@@ -50,10 +50,16 @@ interface CartLine {
 }
 
 interface SavedReceipt {
+  id: string;
   custName: string;
   note: string;
   lines: { name: string; unit: string; qty: number; price: number }[];
+  printedAt: string;
+  total: number;
 }
+
+const RECEIPT_ARCHIVE_KEY = "quick-sale-receipts-v1";
+const MAX_ARCHIVED_RECEIPTS = 200;
 
 function productLabel(p: PosProduct): string {
   const code = p.item_model.trim();
@@ -92,6 +98,7 @@ export function QuickSaleAddon() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastReceipt, setLastReceipt] = useState<SavedReceipt | null>(null);
+  const [receiptArchive, setReceiptArchive] = useState<SavedReceipt[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -100,6 +107,38 @@ export function QuickSaleAddon() {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RECEIPT_ARCHIVE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const receipts = parsed
+        .filter((r): r is SavedReceipt => (
+          r &&
+          typeof r.id === "string" &&
+          typeof r.custName === "string" &&
+          typeof r.note === "string" &&
+          typeof r.printedAt === "string" &&
+          typeof r.total === "number" &&
+          Array.isArray(r.lines)
+        ))
+        .slice(0, MAX_ARCHIVED_RECEIPTS);
+      setReceiptArchive(receipts);
+      setLastReceipt(receipts[0] ?? null);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RECEIPT_ARCHIVE_KEY, JSON.stringify(receiptArchive));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [receiptArchive]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -141,12 +180,28 @@ export function QuickSaleAddon() {
   }, [showDrop, suggestions.length, sugLoading, updateDropPosition]);
 
   const addProduct = useCallback((product: PosProduct, qty = 1) => {
+    if (product.stock_qty <= 0) {
+      setError("لا يمكن إضافة هذا الصنف لأن مخزونه صفر.");
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+
     const key = `${product.item_id}-${product.bar_id}-${product.unit_id}`;
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.key === key);
       if (idx >= 0) {
+        const requestedQty = prev[idx].qty + qty;
+        if (requestedQty > product.stock_qty) {
+          setError("لا يمكن زيادة الكمية فوق المخزون المتاح.");
+          return prev;
+        }
         const next = [...prev];
-        next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+        next[idx] = { ...next[idx], qty: requestedQty };
         return next;
       }
       return [
@@ -220,6 +275,10 @@ export function QuickSaleAddon() {
     }
     if (e.key === "Enter") {
       e.preventDefault();
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
       if (focusedIdx >= 0 && suggestions[focusedIdx]) {
         addProduct(suggestions[focusedIdx]);
         return;
@@ -239,7 +298,15 @@ export function QuickSaleAddon() {
   const updateLineQty = (key: string, delta: number) => {
     setCart((prev) =>
       prev
-        .map((l) => (l.key === key ? { ...l, qty: Math.max(0, l.qty + delta) } : l))
+        .map((l) => {
+          if (l.key !== key) return l;
+          const qty = Math.max(0, l.qty + delta);
+          if (qty > l.product.stock_qty) {
+            setError("لا يمكن زيادة الكمية فوق المخزون المتاح.");
+            return l;
+          }
+          return { ...l, qty };
+        })
         .filter((l) => l.qty > 0),
     );
   };
@@ -259,6 +326,22 @@ export function QuickSaleAddon() {
     [cart],
   );
 
+  const saveReceiptToArchive = (receipt: SavedReceipt) => {
+    setReceiptArchive((prev) => {
+      const next = [receipt, ...prev.filter((r) => r.id !== receipt.id)];
+      return next.slice(0, MAX_ARCHIVED_RECEIPTS);
+    });
+    setLastReceipt(receipt);
+  };
+
+  const removeArchivedReceipt = (id: string) => {
+    setReceiptArchive((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      setLastReceipt(next[0] ?? null);
+      return next;
+    });
+  };
+
   const buildReceiptLines = (items: CartLine[]) =>
     items.map((l) => ({
       name: productReceiptName(l.product),
@@ -267,17 +350,12 @@ export function QuickSaleAddon() {
       price: l.price,
     }));
 
-  const openPdf = async (path: string) => {
-    await invoke("open_local_file", { path });
-  };
-
   const printReceipt = async (payload: SavedReceipt) => {
-    const path = await invoke<string>("print_pos_receipt", {
+    await invoke<string>("print_pos_receipt", {
       custName: payload.custName,
       note: payload.note.trim() || null,
       lines: payload.lines,
     });
-    await openPdf(path);
   };
 
   const handlePrint = async () => {
@@ -290,12 +368,15 @@ export function QuickSaleAddon() {
     setSuccess(null);
     try {
       const payload: SavedReceipt = {
+        id: `receipt-${Date.now()}`,
         custName: custName.trim() || "زبون نقدي",
         note: note.trim(),
         lines: buildReceiptLines(cart),
+        printedAt: new Date().toISOString(),
+        total,
       };
       await printReceipt(payload);
-      setLastReceipt(payload);
+      saveReceiptToArchive(payload);
       setSuccess(`تم طباعة إثبات البيع — الإجمالي ${formatMoney(total)}`);
       setCart([]);
       setNote("");
@@ -313,6 +394,21 @@ export function QuickSaleAddon() {
     setError(null);
     try {
       await printReceipt(lastReceipt);
+      setSuccess(`تمت إعادة طباعة إيصال — الإجمالي ${formatMoney(lastReceipt.total)}`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const handleReprintArchived = async (receipt: SavedReceipt) => {
+    setPrinting(true);
+    setError(null);
+    try {
+      await printReceipt(receipt);
+      setLastReceipt(receipt);
+      setSuccess(`تمت إعادة طباعة إيصال — الإجمالي ${formatMoney(receipt.total)}`);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -391,10 +487,12 @@ export function QuickSaleAddon() {
                   type="button"
                   role="option"
                   aria-selected={focusedIdx === i}
+                  disabled={hit.stock_qty <= 0}
                   className={cn(
                     "w-full text-right px-3 py-2.5 text-sm border-b border-border last:border-0",
                     "hover:bg-muted active:bg-muted/80",
                     focusedIdx === i && "bg-muted",
+                    hit.stock_qty <= 0 && "cursor-not-allowed opacity-50 hover:bg-transparent",
                   )}
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -405,6 +503,7 @@ export function QuickSaleAddon() {
                   <div className="flex flex-wrap gap-2 mt-1 text-xs text-muted-foreground">
                     <span>السعر: {formatMoney(hit.price > 0 ? hit.price : hit.public_price)}</span>
                     <span>المخزون: {hit.stock_qty.toLocaleString("ar-LY")}</span>
+                    {hit.stock_qty <= 0 && <span className="text-destructive">غير متاح</span>}
                   </div>
                 </button>
               ))}
@@ -561,6 +660,69 @@ export function QuickSaleAddon() {
           </Button>
         )}
       </div>
+
+      {receiptArchive.length > 0 && (
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{
+            borderColor: "var(--border-default)",
+            background: "var(--bg-elevated)",
+          }}
+        >
+          <div
+            className="flex items-center justify-between px-4 py-3 border-b"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-subtle)" }}
+          >
+            <div className="flex items-center gap-2 font-semibold text-sm">
+              <Printer className="h-4 w-4" />
+              أرشيف الإيصالات
+              <span className="text-muted-foreground font-normal">({receiptArchive.length})</span>
+            </div>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto divide-y divide-border">
+            {receiptArchive.map((receipt) => (
+              <div key={receipt.id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold">{receipt.custName}</p>
+                    <span className="text-sm font-bold tabular-nums" dir="ltr">
+                      {formatMoney(receipt.total)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {new Date(receipt.printedAt).toLocaleString("ar-LY")}
+                    {" — "}
+                    {receipt.lines.length} صنف
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-lg"
+                    disabled={printing}
+                    onClick={() => handleReprintArchived(receipt)}
+                  >
+                    <Printer className="h-3.5 w-3.5 ml-1.5" />
+                    طباعة
+                  </Button>
+                  <button
+                    type="button"
+                    className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => removeArchivedReceipt(receipt.id)}
+                    aria-label="حذف الإيصال من الأرشيف"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

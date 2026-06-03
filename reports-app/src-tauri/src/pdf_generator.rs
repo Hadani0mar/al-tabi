@@ -481,16 +481,14 @@ fn draw_rcpt_text(
     layer.use_text(&fitted, fs, Mm(x), Mm(y), font);
 }
 
-// أعمدة الجدول (يمين ← يسار): البيان | الوحدة | الكمية | الإجمالي
-const COL_TOTAL_W: f64 = 13.0;
-const COL_QTY_W: f64 = 10.0;
-const COL_UNIT_W: f64 = 11.0;
+// أعمدة الجدول (يمين ← يسار): البيان | الكمية | الإجمالي (3 أعمدة — حُذفت الوحدة)
+const COL_TOTAL_W: f64 = 16.0;
+const COL_QTY_W: f64 = 14.0;
 const RCPT_ROW_H: f64 = 8.5;
 
 struct RcptCols {
     total_l: f64,
     qty_l: f64,
-    unit_l: f64,
     name_l: f64,
     right: f64,
 }
@@ -499,12 +497,10 @@ fn rcpt_col_bounds() -> RcptCols {
     let right = RCPT_W - RCPT_MX;
     let total_l = RCPT_MX;
     let qty_l = total_l + COL_TOTAL_W;
-    let unit_l = qty_l + COL_QTY_W;
-    let name_l = unit_l + COL_UNIT_W;
+    let name_l = qty_l + COL_QTY_W;
     RcptCols {
         total_l,
         qty_l,
-        unit_l,
         name_l,
         right,
     }
@@ -541,7 +537,6 @@ fn draw_rcpt_table_row(
     layer: &PdfLayerReference,
     font: &IndirectFontRef,
     name: &str,
-    unit: &str,
     qty: &str,
     total: &str,
     y_top: f64,
@@ -558,12 +553,10 @@ fn draw_rcpt_table_row(
     }
 
     draw_rcpt_cell(layer, font, name, fs, cols.name_l, cols.right, text_y, 0);
-    draw_rcpt_cell(layer, font, unit, fs, cols.unit_l, cols.name_l, text_y, 1);
-    draw_rcpt_cell(layer, font, qty, fs, cols.qty_l, cols.unit_l, text_y, 1);
+    draw_rcpt_cell(layer, font, qty, fs, cols.qty_l, cols.name_l, text_y, 1);
     draw_rcpt_cell(layer, font, total, fs, cols.total_l, cols.qty_l, text_y, 1);
 
     draw_vline(layer, cols.name_l, y_bot, y_top, [0.0, 0.0, 0.0]);
-    draw_vline(layer, cols.unit_l, y_bot, y_top, [0.0, 0.0, 0.0]);
     draw_vline(layer, cols.qty_l, y_bot, y_top, [0.0, 0.0, 0.0]);
     draw_vline(layer, cols.total_l, y_bot, y_top, [0.0, 0.0, 0.0]);
 
@@ -678,7 +671,6 @@ pub fn generate_pos_receipt_pdf(
         &layer,
         &font,
         "البيان",
-        "الوحدة",
         "الكمية",
         "الإجمالي",
         y,
@@ -691,34 +683,28 @@ pub fn generate_pos_receipt_pdf(
     for line in lines {
         let line_total = line.qty * line.price;
         grand_total += line_total;
-        let unit = if line.unit.trim().is_empty() {
-            "—".to_string()
-        } else {
-            line.unit.trim().to_string()
-        };
         draw_rcpt_table_row(
             &layer,
             &font,
             &line.name,
-            &unit,
             &format_qty(line.qty),
             &format_money(line_total),
             y,
-            6.5,
+            8.0,
             false,
         );
         y -= RCPT_ROW_H;
     }
 
     // صف إجمالي الفاتورة
-    fill_rect(&layer, RCPT_MX, y - RCPT_ROW_H, cols.right, y, [0.95, 0.95, 0.95]);
-    let total_text_y = y - RCPT_ROW_H + 2.0;
+    fill_rect(&layer, RCPT_MX, y - RCPT_ROW_H, cols.right, y, [0.88, 0.88, 0.88]);
+    let total_text_y = y - RCPT_ROW_H + 2.5;
     draw_rcpt_cell(
         &layer,
         &font,
         "إجمالي الفاتورة",
-        7.2,
-        cols.unit_l,
+        8.5,
+        cols.name_l,
         cols.right,
         total_text_y,
         0,
@@ -727,18 +713,17 @@ pub fn generate_pos_receipt_pdf(
         &layer,
         &font,
         &format_money(grand_total),
-        7.5,
+        9.0,
         cols.total_l,
         cols.qty_l,
         total_text_y,
         1,
     );
-    draw_vline(&layer, cols.qty_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
-    draw_vline(&layer, cols.unit_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
-    draw_vline(&layer, cols.name_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
-    draw_vline(&layer, cols.total_l, y - RCPT_ROW_H, y, [0.55, 0.55, 0.55]);
-    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
-    layer.set_outline_thickness(0.35);
+    draw_vline(&layer, cols.qty_l, y - RCPT_ROW_H, y, [0.0, 0.0, 0.0]);
+    draw_vline(&layer, cols.name_l, y - RCPT_ROW_H, y, [0.0, 0.0, 0.0]);
+    draw_vline(&layer, cols.total_l, y - RCPT_ROW_H, y, [0.0, 0.0, 0.0]);
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+    layer.set_outline_thickness(0.5);
     layer.add_shape(Line {
         points: vec![
             (Point::new(Mm(RCPT_MX), Mm(y - RCPT_ROW_H)), false),

@@ -444,8 +444,8 @@ pub struct PosReceiptMeta {
 }
 
 fn draw_hline(layer: &PdfLayerReference, y: f64, dashed: bool) {
-    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
-    layer.set_outline_thickness(if dashed { 0.2 } else { 0.35 });
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+    layer.set_outline_thickness(if dashed { 0.3 } else { 0.5 });
     layer.add_shape(Line {
         points: vec![
             (Point::new(Mm(RCPT_MX), Mm(y)), false),
@@ -477,7 +477,7 @@ fn draw_rcpt_text(
         2 => RCPT_MX,
         _ => (RCPT_W - RCPT_MX - est_w).max(RCPT_MX),
     };
-    layer.set_fill_color(Color::Rgb(Rgb::new(0.05, 0.05, 0.05, None)));
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
     layer.use_text(&fitted, fs, Mm(x), Mm(y), font);
 }
 
@@ -485,7 +485,7 @@ fn draw_rcpt_text(
 const COL_TOTAL_W: f64 = 13.0;
 const COL_QTY_W: f64 = 10.0;
 const COL_UNIT_W: f64 = 11.0;
-const RCPT_ROW_H: f64 = 6.5;
+const RCPT_ROW_H: f64 = 8.5;
 
 struct RcptCols {
     total_l: f64,
@@ -533,7 +533,7 @@ fn draw_rcpt_cell(
         2 => x_left + pad,
         _ => x_right - pad - est_w,
     };
-    layer.set_fill_color(Color::Rgb(Rgb::new(0.05, 0.05, 0.05, None)));
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
     layer.use_text(&fitted, fs, Mm(x.max(x_left + pad)), Mm(y), font);
 }
 
@@ -553,8 +553,8 @@ fn draw_rcpt_table_row(
     let text_y = y_bot + 2.0;
 
     if header {
-        fill_rect(layer, RCPT_MX, y_bot, cols.right, y_top, [0.92, 0.92, 0.92]);
-        layer.set_fill_color(Color::Rgb(Rgb::new(0.1, 0.1, 0.1, None)));
+        fill_rect(layer, RCPT_MX, y_bot, cols.right, y_top, [0.85, 0.85, 0.85]);
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
     }
 
     draw_rcpt_cell(layer, font, name, fs, cols.name_l, cols.right, text_y, 0);
@@ -562,13 +562,13 @@ fn draw_rcpt_table_row(
     draw_rcpt_cell(layer, font, qty, fs, cols.qty_l, cols.unit_l, text_y, 1);
     draw_rcpt_cell(layer, font, total, fs, cols.total_l, cols.qty_l, text_y, 1);
 
-    draw_vline(layer, cols.name_l, y_bot, y_top, [0.55, 0.55, 0.55]);
-    draw_vline(layer, cols.unit_l, y_bot, y_top, [0.55, 0.55, 0.55]);
-    draw_vline(layer, cols.qty_l, y_bot, y_top, [0.55, 0.55, 0.55]);
-    draw_vline(layer, cols.total_l, y_bot, y_top, [0.55, 0.55, 0.55]);
+    draw_vline(layer, cols.name_l, y_bot, y_top, [0.0, 0.0, 0.0]);
+    draw_vline(layer, cols.unit_l, y_bot, y_top, [0.0, 0.0, 0.0]);
+    draw_vline(layer, cols.qty_l, y_bot, y_top, [0.0, 0.0, 0.0]);
+    draw_vline(layer, cols.total_l, y_bot, y_top, [0.0, 0.0, 0.0]);
 
-    layer.set_outline_color(Color::Rgb(Rgb::new(0.55, 0.55, 0.55, None)));
-    layer.set_outline_thickness(0.2);
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+    layer.set_outline_thickness(0.3);
     layer.add_shape(Line {
         points: vec![
             (Point::new(Mm(RCPT_MX), Mm(y_bot)), false),
@@ -589,8 +589,8 @@ pub fn generate_pos_receipt_pdf(
         return Err("لا توجد بنود للطباعة.".to_string());
     }
 
-    let meta_h = 52.0 + if meta.address.is_empty() { 0.0 } else { 4.0 }
-        + if meta.phone.is_empty() { 0.0 } else { 4.5 };
+    let meta_h = 68.0 + if meta.address.is_empty() { 0.0 } else { 5.5 }
+        + if meta.phone.is_empty() { 0.0 } else { 5.5 };
     let table_h = 6.0 + lines.len() as f64 * RCPT_ROW_H + RCPT_ROW_H + 2.0;
     let footer_h = 12.0;
     let page_h = meta_h + table_h + footer_h + 8.0;
@@ -609,60 +609,60 @@ pub fn generate_pos_receipt_pdf(
     let mut y = page_h - RCPT_MX - 2.0;
 
     // ── ترويسة النشاط ──
-    draw_rcpt_text(&layer, &font, &meta.company_name, 9.5, y, 1);
-    y -= 5.0;
+    draw_rcpt_text(&layer, &font, &meta.company_name, 12.0, y, 1);
+    y -= 7.5;
     if !meta.address.is_empty() {
-        draw_rcpt_text(&layer, &font, &meta.address, 7.0, y, 1);
-        y -= 4.0;
+        draw_rcpt_text(&layer, &font, &meta.address, 8.5, y, 1);
+        y -= 5.5;
     }
     if !meta.phone.is_empty() {
-        draw_rcpt_text(&layer, &font, &meta.phone, 7.0, y, 1);
-        y -= 4.5;
+        draw_rcpt_text(&layer, &font, &meta.phone, 8.5, y, 1);
+        y -= 5.5;
     }
 
     draw_hline(&layer, y, false);
-    y -= 4.5;
+    y -= 5.5;
 
-    draw_rcpt_text(&layer, &font, title, 8.5, y, 1);
-    y -= 5.0;
+    draw_rcpt_text(&layer, &font, title, 10.5, y, 1);
+    y -= 6.5;
 
     draw_rcpt_text(
         &layer,
         &font,
         &format!("رقم: {}", meta.invoice_no),
-        7.5,
+        8.5,
         y,
         0,
     );
-    y -= 4.0;
+    y -= 5.0;
     draw_rcpt_text(
         &layer,
         &font,
         &format!("التاريخ: {}", meta.invoice_time),
-        7.0,
+        8.5,
         y,
         0,
     );
-    y -= 4.0;
+    y -= 5.0;
     draw_rcpt_text(
         &layer,
         &font,
         &format!("العميل: {}", meta.customer_name),
-        7.0,
+        8.5,
         y,
         0,
     );
-    y -= 4.0;
+    y -= 5.0;
 
     draw_hline(&layer, y, true);
-    y -= 3.0;
+    y -= 4.0;
 
     // ── جدول البنود ──
     let cols = rcpt_col_bounds();
 
     // إطار الجدول العلوي
-    layer.set_outline_color(Color::Rgb(Rgb::new(0.35, 0.35, 0.35, None)));
-    layer.set_outline_thickness(0.35);
+    layer.set_outline_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+    layer.set_outline_thickness(0.5);
     layer.add_shape(Line {
         points: vec![
             (Point::new(Mm(RCPT_MX), Mm(y)), false),
@@ -682,7 +682,7 @@ pub fn generate_pos_receipt_pdf(
         "الكمية",
         "الإجمالي",
         y,
-        6.8,
+        8.0,
         true,
     );
     y -= RCPT_ROW_H;

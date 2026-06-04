@@ -80,11 +80,11 @@ pub fn marketing_shareable_products_sql() -> &'static str {
   SELECT
     sub.ITEM_ID,
     CAST(SUM(sub.QTY) AS int) AS total_qty,
-    CONVERT(varchar(10), MIN(CAST(sub.CATEOGRY3 AS date)), 23) AS nearest_expiry
+    CONVERT(varchar(10), MIN(sub.CATEOGRY3), 120) AS nearest_expiry
   FROM dbo.ITEMS_SUB sub
   WHERE sub.QTY > 0
     AND sub.CATEOGRY3 IS NOT NULL
-    AND CAST(sub.CATEOGRY3 AS date) >= CAST(GETDATE() AS date)
+    AND CONVERT(varchar(10), sub.CATEOGRY3, 120) >= CONVERT(varchar(10), GETDATE(), 120)
   GROUP BY sub.ITEM_ID
   HAVING SUM(sub.QTY) > 0
 ),
@@ -121,10 +121,10 @@ pub fn infinity_shareable_products_sql() -> &'static str {
 ;WITH ValidExpiry AS (
   SELECT
     i.ProductID_FK,
-    CONVERT(varchar(10), MIN(CAST(i.ExpiryDate AS date)), 23) AS nearest_expiry
+    CONVERT(varchar(10), MIN(i.ExpiryDate), 120) AS nearest_expiry
   FROM Inventory.Data_ProductInventories i
   WHERE i.ExpiryDate IS NOT NULL
-    AND CAST(i.ExpiryDate AS date) >= CAST(GETDATE() AS date)
+    AND CONVERT(varchar(10), i.ExpiryDate, 120) >= CONVERT(varchar(10), GETDATE(), 120)
   GROUP BY i.ProductID_FK
 )
 SELECT

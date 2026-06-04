@@ -602,6 +602,54 @@ pub async fn get_report_artifact_by_number(
     }
 }
 
+pub fn upsert_chat_session_background(access_token: String, session_id: String, title: String) {
+    tokio::spawn(async move {
+        let payload = json!({
+            "p_access_token": access_token.trim(),
+            "p_session_id": session_id.trim(),
+            "p_title": title.trim(),
+            "p_summary": Value::Null,
+        });
+        if let Err(e) = call_supabase_rpc("upsert_chat_session", payload).await {
+            eprintln!("[agent_memory] upsert chat session: {}", e);
+        }
+    });
+}
+
+pub fn append_chat_message_background(
+    access_token: String,
+    session_id: String,
+    role: String,
+    content: String,
+    success: Option<bool>,
+    report_number: Option<i64>,
+) {
+    tokio::spawn(async move {
+        let payload = json!({
+            "p_access_token": access_token.trim(),
+            "p_session_id": session_id.trim(),
+            "p_role": role.trim(),
+            "p_content": content,
+            "p_turn_index": Value::Null,
+            "p_tool_used": Value::Null,
+            "p_pattern_id": Value::Null,
+            "p_sql_text": Value::Null,
+            "p_success": success,
+            "p_error_text": Value::Null,
+            "p_row_count": Value::Null,
+            "p_report_number": report_number,
+            "p_prompt_tokens": Value::Null,
+            "p_completion_tokens": Value::Null,
+            "p_total_tokens": Value::Null,
+            "p_usage_source": Value::Null,
+            "p_metadata": json!({}),
+        });
+        if let Err(e) = call_supabase_rpc("append_chat_message", payload).await {
+            eprintln!("[agent_memory] append chat message: {}", e);
+        }
+    });
+}
+
 async fn is_near_duplicate_user(access_token: &str, embedding: &[f32]) -> Result<bool, String> {
     let hits = search_user_memories(access_token, embedding, 3).await?;
     Ok(hits

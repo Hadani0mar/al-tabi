@@ -952,12 +952,7 @@ async fn ask_local_ai(
         erp_kind: app_state.inner().erp_kind.clone(),
     });
 
-    let advanced_mode = app_handle
-        .store("settings.json")
-        .ok()
-        .and_then(|store| store.get("ai_advanced_mode").and_then(|v| v.as_bool()))
-        .unwrap_or(false);
-    eprintln!("[ask_local_ai] advanced_mode={}", advanced_mode);
+    eprintln!("[ask_local_ai] unified_agent=true");
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(300),
@@ -973,7 +968,6 @@ async fn ask_local_ai(
             chat_session_id.as_deref(),
             &dec_openai_key,
             Some(cancel_rx),
-            advanced_mode,
         ),
     )
     .await;

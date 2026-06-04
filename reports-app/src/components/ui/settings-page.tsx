@@ -107,7 +107,7 @@ const SECTIONS: {
   {
     id: "ai",
     title: "المساعد الذكي",
-    description: "الوضع السريع أو المتقدم للاستعلامات",
+    description: "وكيل موحد للتقارير والتحليل وسياق المحادثة",
     icon: <Bot className="w-5 h-5" />,
     iconBg: "bg-violet-500/15 text-violet-600",
   },
@@ -187,9 +187,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   const [businessLoading, setBusinessLoading] = useState(false);
   const [businessError, setBusinessError] = useState<string | null>(null);
-  const [aiAdvancedMode, setAiAdvancedMode] = useState(false);
-  const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
-
   const [pharmacySyncKey, setPharmacySyncKey] = useState("");
   const [pharmacySharing, setPharmacySharing] = useState(false);
   const [pharmacyShowPrices, setPharmacyShowPrices] = useState(false);
@@ -212,11 +209,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
         const queriesEnabled = await store.get<boolean>("telegram_enable_queries");
         if (queriesEnabled !== null && queriesEnabled !== undefined) {
           setEnableQueries(queriesEnabled);
-        }
-
-        const advancedAi = await store.get<boolean>("ai_advanced_mode");
-        if (advancedAi !== null && advancedAi !== undefined) {
-          setAiAdvancedMode(advancedAi);
         }
 
         const local = await invoke<TelegramSettingsLocal>("load_telegram_settings_local");
@@ -454,22 +446,6 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
     }
   };
 
-  const handleAiAdvancedToggle = async (enabled: boolean) => {
-    setAiSettingsSaving(true);
-    setAiAdvancedMode(enabled);
-    try {
-      const store = await load("settings.json");
-      await store.set("ai_advanced_mode", enabled);
-      await store.save();
-    } catch (err) {
-      console.error("Failed to save AI mode:", err);
-      setAiAdvancedMode(!enabled);
-      alert("تعذّر حفظ إعداد الوكيل: " + err);
-    } finally {
-      setAiSettingsSaving(false);
-    }
-  };
-
   const handleSaveBot = async () => {
     setSaving(true);
     try {
@@ -650,37 +626,11 @@ export function SettingsPage({ connInfo, onLogout }: SettingsPageProps = {}) {
                 />
                 <div className="space-y-5">
                   <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4">
-                    <p className="text-sm font-semibold text-foreground mb-1">الوضع السريع (افتراضي)</p>
+                    <p className="text-sm font-semibold text-foreground mb-1">وكيل موحد</p>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      ينفّذ أنماط استعلام جاهزة ومختبرة فقط — أسرع، أقل تكلفة، وأقل دوامة.
-                      مناسب لـ: المبيعات، الديون، المصروفات، النواقص، مقارنة الأسعار، طلبيات الشراء.
+                      يستخدم التقارير المعتمدة أولاً، ويحفظ النتائج الكاملة، ثم يجيب من التقرير نفسه عند أسئلة المتابعة.
+                      يعمل بنفس السلوك في التطبيق وتليجرام.
                     </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id="aiAdvancedMode"
-                        checked={aiAdvancedMode}
-                        disabled={aiSettingsSaving}
-                        onCheckedChange={(c) => handleAiAdvancedToggle(c === true)}
-                      />
-                      <div className="space-y-1">
-                        <Label htmlFor="aiAdvancedMode" className="font-semibold cursor-pointer">
-                          الوضع المتقدم
-                        </Label>
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          الافتراضي: منفّذ أنماط فقط (pattern_id + PDF/Excel). هذا الخيار يفعّل SQL
-                          حراً، RAG، وذاكرة schema — للمطوّرين فقط.
-                        </p>
-                      </div>
-                    </div>
-                    {aiSettingsSaving && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        جارٍ الحفظ...
-                      </p>
-                    )}
                   </div>
                 </div>
               </>

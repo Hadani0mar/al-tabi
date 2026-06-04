@@ -203,13 +203,13 @@ FROM dbo.SITTEINGS"#;
 /// بيانات النشاط — InfinityRetailDB من الفرع الحالي (MyCompany.Config_Branchs)
 pub const INFINITY_BUSINESS_PROFILE_SQL: &str = r#"SELECT TOP 1
     NULLIF(LTRIM(RTRIM(b.BranchName)), N'') AS A_NAME,
-    NULLIF(LTRIM(RTRIM(CONCAT(
-        ISNULL(NULLIF(LTRIM(RTRIM(b.BranchAddressLine1)), N''), N''),
+    NULLIF(LTRIM(RTRIM(
+        ISNULL(NULLIF(LTRIM(RTRIM(b.BranchAddressLine1)), N''), N'') +
         CASE WHEN NULLIF(LTRIM(RTRIM(b.BranchAddressLine2)), N'') IS NOT NULL
-             THEN N' — ' + LTRIM(RTRIM(b.BranchAddressLine2)) ELSE N'' END,
+             THEN N' - ' + LTRIM(RTRIM(b.BranchAddressLine2)) ELSE N'' END +
         CASE WHEN NULLIF(LTRIM(RTRIM(b.BranchAddressLine3)), N'') IS NOT NULL
-             THEN N' — ' + LTRIM(RTRIM(b.BranchAddressLine3)) ELSE N'' END
-    ))), N'') AS A_ADDRESS,
+             THEN N' - ' + LTRIM(RTRIM(b.BranchAddressLine3)) ELSE N'' END
+    )), N'') AS A_ADDRESS,
     NULLIF(LTRIM(RTRIM(b.BranchAddressLine3)), N'') AS CITY,
     CAST(b.BranchTypeID_FK AS nvarchar(20)) AS ACTIVITY,
     NULLIF(LTRIM(RTRIM(b.BranchName)), N'') AS ACTIVITYName,

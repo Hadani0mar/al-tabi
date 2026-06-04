@@ -1,7 +1,7 @@
 ﻿# AGENT_Marketing2026 — أنماط SQL جاهزة للتنفيذ
 # ERP: Marketing2026 | SQL Server 2005+ | schema: dbo
 # انسخ SQL من ## PATTERN أدناه ونفّذه بـ execute_raw_sql. لا تخترع SQL.
-# ⚠️ SQL 2005: لا CONVERT(varchar(10), x, 120) — استخدم CONVERT(varchar(10),x,120). لا STRING_AGG/IIF/FORMAT/OFFSET.
+# ⚠️ SQL 2005: لا تستخدم نوع date ولا CONVERT(date,...) ولا FORMAT/STRING_AGG/IIF/OFFSET. استخدم DATETIME و CONVERT(varchar(10), x, 120).
 # ⚠️ SALE_ITEMS لا يحتوي S_DATE — استخدم JOIN مع SALE_INVOICE.
 # ⚠️ تاريخ صريح → استخدمه مباشرةً. لا تستبدله بـ MAX(S_DATE).
 # ⚠️ الديون: يجب طرح S_DISCOUNT (خصم فاتورة البيع) و B_DISCOUNT (خصم فاتورة الشراء).
@@ -397,8 +397,8 @@ WHERE S.CATEOGRY3 IS NOT NULL
 GROUP BY I.ITEM_NAME, S.CATEOGRY3
 ORDER BY
   CASE
-    WHEN YEAR(S.CATEOGRY3) = YEAR(CAST((SELECT d FROM AsOf) AS date)) THEN 0
-    WHEN YEAR(S.CATEOGRY3) < YEAR(CAST((SELECT d FROM AsOf) AS date)) THEN 1
+    WHEN YEAR(S.CATEOGRY3) = YEAR((SELECT d FROM AsOf)) THEN 0
+    WHEN YEAR(S.CATEOGRY3) < YEAR((SELECT d FROM AsOf)) THEN 1
     ELSE 2
   END,
   S.CATEOGRY3 ASC;
@@ -414,7 +414,7 @@ SELECT TOP 100
   LEFT(I.ITEM_NAME, 70) AS [اسم المنتج],
   CAST(SUM(S.QTY) AS decimal(18,2)) AS [الكمية],
   CONVERT(varchar(10), S.CATEOGRY3, 120) AS [تاريخ الانتهاء],
-  DATEDIFF(day, CAST((SELECT d FROM AsOf) AS date), CAST(S.CATEOGRY3 AS date)) AS [الايام المتبقية]
+  DATEDIFF(day, (SELECT d FROM AsOf), CONVERT(varchar(10), S.CATEOGRY3, 120)) AS [الايام المتبقية]
 FROM dbo.ITEMS_SUB S
 INNER JOIN dbo.ITEMS I ON S.ITEM_ID = I.ITEM_ID
 WHERE S.CATEOGRY3 IS NOT NULL
@@ -425,8 +425,8 @@ WHERE S.CATEOGRY3 IS NOT NULL
 GROUP BY I.ITEM_NAME, S.CATEOGRY3
 ORDER BY
   CASE
-    WHEN YEAR(S.CATEOGRY3) = YEAR(CAST((SELECT d FROM AsOf) AS date)) THEN 0
-    WHEN YEAR(S.CATEOGRY3) < YEAR(CAST((SELECT d FROM AsOf) AS date)) THEN 1
+    WHEN YEAR(S.CATEOGRY3) = YEAR((SELECT d FROM AsOf)) THEN 0
+    WHEN YEAR(S.CATEOGRY3) < YEAR((SELECT d FROM AsOf)) THEN 1
     ELSE 2
   END,
   S.CATEOGRY3 ASC;
@@ -1120,14 +1120,11 @@ NOTES:
 SELECT
     c.CUST_NAME AS [المورد],
 
-    FORMAT(ISNULL(p.TotalPurchases,0),'N2') AS [إجمالي المشتريات],
+    CAST(ISNULL(p.TotalPurchases,0) AS DECIMAL(18,2)) AS [إجمالي المشتريات],
 
-    FORMAT(ISNULL(g.TotalPaid,0),'N2') AS [إجمالي المدفوع],
+    CAST(ISNULL(g.TotalPaid,0) AS DECIMAL(18,2)) AS [إجمالي المدفوع],
 
-    FORMAT(
-        ISNULL(p.TotalPurchases,0) - ISNULL(g.TotalPaid,0),
-        'N2'
-    ) AS [الرصيد المستحق]
+    CAST(ISNULL(p.TotalPurchases,0) - ISNULL(g.TotalPaid,0) AS DECIMAL(18,2)) AS [الرصيد المستحق]
 
 FROM dbo.CUSTOMERS c
 LEFT JOIN

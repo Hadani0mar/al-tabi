@@ -275,7 +275,8 @@ pub fn cancelled_invoices_sql(erp: ErpKind, day: &str) -> String {
     match erp {
         ErpKind::InfinityRetailDb => format!(
             "SET NOCOUNT ON; SET DATEFORMAT ymd;
-DECLARE @Day date = '{day}';
+DECLARE @Day DATETIME;
+SET @Day = '{day}';
 SELECT
   inv.SalesInvoiceID_PK AS invoice_id,
   'sale' AS invoice_kind,
@@ -288,7 +289,7 @@ SELECT
 FROM SALES.Data_SalesInvoices inv
 INNER JOIN SALES.RefSalesInvoiceStates st ON st.SalesInvoiceStateID_PK = inv.SalesInvoiceStateID_FK
 LEFT JOIN SALES.Data_Customers c ON c.CustomerID_PK = inv.CustomerID_FK
-WHERE CAST(inv.SalesInvoiceDate AS date) = @Day
+WHERE CONVERT(varchar(10), inv.SalesInvoiceDate, 120) = CONVERT(varchar(10), @Day, 120)
   AND (
     st.SalesInvoiceStateCaption LIKE N'%ملغ%'
     OR st.SalesInvoiceStateCaption LIKE N'%Cancel%'
@@ -308,7 +309,7 @@ SELECT
 FROM Purchase.Data_PurchaseInvoices inv
 INNER JOIN Purchase.RefPurchaseInvoiceStates st ON st.PurchaseInvoiceStateID_PK = inv.PurchaseInvoiceStateID_PK
 LEFT JOIN Purchase.Data_Suppliers s ON s.SupplierID_PK = inv.SupplierID_FK
-WHERE CAST(inv.InvoiceDate AS date) = @Day
+WHERE CONVERT(varchar(10), inv.InvoiceDate, 120) = CONVERT(varchar(10), @Day, 120)
   AND (
     st.PurchaseInvoiceStateCaption LIKE N'%ملغ%'
     OR st.PurchaseInvoiceStateCaption LIKE N'%Cancel%'
@@ -319,7 +320,8 @@ ORDER BY invoice_time DESC;"
         ),
         ErpKind::Marketing2026 | ErpKind::Unknown => format!(
             "SET NOCOUNT ON; SET DATEFORMAT ymd;
-DECLARE @Day date = '{day}';
+DECLARE @Day DATETIME;
+SET @Day = '{day}';
 SELECT
   S.S_ID AS invoice_id,
   'sale' AS invoice_kind,
@@ -331,7 +333,7 @@ SELECT
   ISNULL(NULLIF(LTRIM(RTRIM(S.S_NOTE)), N''), N'—') AS note
 FROM dbo.SALE_INVOICE S
 LEFT JOIN dbo.USERS U ON S.USERS_ID = U.USERS_ID
-WHERE CAST(S.S_STATUES AS int) = 2 AND CAST(S.S_DATE AS date) = @Day
+WHERE CAST(S.S_STATUES AS int) = 2 AND CONVERT(varchar(10), S.S_DATE, 120) = CONVERT(varchar(10), @Day, 120)
 UNION ALL
 SELECT
   B.B_ID,
@@ -345,7 +347,7 @@ SELECT
 FROM dbo.BUY_INVOICE B
 LEFT JOIN dbo.USERS U ON B.USERS_ID = U.USERS_ID
 LEFT JOIN dbo.CUSTOMERS C ON B.CUST_ID = C.CUST_ID
-WHERE CAST(B.B_STATUES AS int) = 2 AND CAST(B.B_DATE AS date) = @Day
+WHERE CAST(B.B_STATUES AS int) = 2 AND CONVERT(varchar(10), B.B_DATE, 120) = CONVERT(varchar(10), @Day, 120)
 ORDER BY invoice_time DESC;"
         ),
     }

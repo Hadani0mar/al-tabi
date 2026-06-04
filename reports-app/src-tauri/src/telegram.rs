@@ -736,6 +736,21 @@ async fn handle_message(
 ) {
     let text_trim = text.trim();
     let normalized = text_trim.to_lowercase();
+    let access_token = crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string();
+    let session_id = format!("telegram:{}", chat_id);
+    crate::agent_memory::upsert_chat_session_background(
+        access_token.clone(),
+        session_id.clone(),
+        "محادثة تليجرام".to_string(),
+    );
+    crate::agent_memory::append_chat_message_background(
+        access_token.clone(),
+        session_id.clone(),
+        "user".to_string(),
+        text_trim.to_string(),
+        None,
+        None,
+    );
     let _ = send_chat_action(client, token, chat_id, "typing").await;
     let requested_report_id = extract_report_number_from_text(&normalized);
     let wants_last_report = wants_last_report_text(&normalized);
@@ -821,6 +836,28 @@ async fn handle_message(
             }
         }
         return;
+    }
+
+    if crate::pattern_catalog::resolve_pattern_id(
+        text_trim,
+        crate::erp_profile::current_erp_kind(app_state).await,
+    )
+    .is_none()
+    {
+        if let Some(answer) =
+            crate::agent_tools::answer_from_last_report_text(text_trim, app_state).await
+        {
+            let _ = send_message(client, token, chat_id, answer.clone()).await;
+            crate::agent_memory::append_chat_message_background(
+                access_token,
+                session_id,
+                "assistant".to_string(),
+                answer,
+                Some(true),
+                None,
+            );
+            return;
+        }
     }
 
     // شات حر بالكامل: كل رسالة تذهب للوكيل الذكي

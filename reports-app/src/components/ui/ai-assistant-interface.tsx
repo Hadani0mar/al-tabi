@@ -821,7 +821,12 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     }
     setChats(updatedChats);
     saveChatsToStore(updatedChats);
-    appendChatMessageToSupabase(currentChatId, newMsg, newHistory.length);
+    await invoke("sync_chat_to_supabase", {
+      chatId: currentChatId,
+      title: updatedChats.find((chat) => chat.id === currentChatId)?.title || "محادثة جديدة",
+      messages: [],
+    }).catch(console.error);
+    await appendChatMessageToSupabase(currentChatId, newMsg, newHistory.length).catch(console.error);
 
     if (isNewChat && groqKey.trim()) {
       generateChatTitle(groqKey.trim(), aiModel, userMessage)
@@ -877,7 +882,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         delete reportsByRequestRef.current[requestId];
         const assistMsg: Message = { role: "assistant", content: text, aiUsage: usage, reports };
         const finalHistory = [...newHistory, assistMsg];
-        appendChatMessageToSupabase(currentChatId, assistMsg, finalHistory.length);
+        void appendChatMessageToSupabase(currentChatId, assistMsg, finalHistory.length).catch(console.error);
         setChats((prev) => {
            const newC = prev.map((c) =>
              c.id === currentChatId
@@ -906,10 +911,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         };
         errMsg.aiUsage = usage;
         const finalHistory = [...newHistory, errMsg];
-        appendChatMessageToSupabase(currentChatId, errMsg, finalHistory.length, {
+        void appendChatMessageToSupabase(currentChatId, errMsg, finalHistory.length, {
           success: false,
           errorText: errText,
-        });
+        }).catch(console.error);
         setChats((prev) => {
            const newC = prev.map((c) =>
              c.id === currentChatId

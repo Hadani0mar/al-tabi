@@ -450,7 +450,11 @@ fn looks_like_detailed_customer_account_request(h: &str) -> bool {
         || h.contains("شركة")
         || h.contains("له")
         || h.contains("لها")
-        || h.contains("نفس العميل");
+        || h.contains("نفس العميل")
+        || h.contains("نفس الزبون")
+        || h.contains("نفس الشركة")
+        || h.contains("حسابه")
+        || h.contains("حسابها");
     if !customer_context {
         return false;
     }
@@ -462,6 +466,13 @@ fn looks_like_detailed_customer_account_request(h: &str) -> bool {
         || h.contains("رايك")
         || h.contains("كشف شامل")
         || h.contains("شامل")
+        || h.contains("كامل")
+        || h.contains("الكامل")
+        || h.contains("التقرير الكامل")
+        || h.contains("بالتفصيل")
+        || h.contains("تفاصيل")
+        || h.contains("تفاصيله")
+        || h.contains("تفاصيلها")
         || h.contains("تفصيلي")
         || h.contains("مفصل")
         || h.contains("فواتير")
@@ -554,84 +565,6 @@ pub fn handle_list_available_patterns(erp: ErpKind) -> serde_json::Value {
         "patterns": patterns,
         "message": "اختر pattern_id ومرّره لـ run_query_pattern — لا SQL حر."
     })
-}
-
-pub fn executor_tool_definitions() -> Vec<serde_json::Value> {
-    // أدوات نية عالية المستوى + نمط منخفض المستوى fallback — التاريخ محقون في system prompt مباشرةً بدل tool call
-    vec![
-        json!({
-            "type": "function",
-            "function": {
-                "name": "run_erp_report",
-                "description": "Runs a known ERP report by intent. Prefer this for كشف حساب عميل, ديون عميل, ديون مورد, ديون موظف, صلاحية, نواقص, مبيعات موظف, أكثر مبيعاً, آخر سعر شراء, مقارنة أسعار موردين. It selects an approved pattern and executes it. Do not use for custom SQL.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "report_type": {
-                            "type": "string",
-                            "enum": [
-                                "customer_balance",
-                                "customer_balance_detailed",
-                                "customer_debt",
-                                "supplier_debt",
-                                "employee_debt",
-                                "expiry_report",
-                                "shortage_report",
-                                "daily_sales_report",
-                                "daily_sales_by_employee",
-                                "last_sale_day_by_employee",
-                                "top_sellers",
-                                "near_expiry_sales_hero",
-                                "last_purchase_price",
-                                "supplier_price_compare"
-                            ],
-                            "description": "customer_balance = كشف حساب/رصيد عميل مختصر. customer_balance_detailed = كشف حساب مفصل/كامل يتضمن الملخص والفواتير والبنود. customer_debt = ديون عميل. If a customer name contains كلمة ديون, keep it in customer_name."
-                        },
-                        "customer_name": { "type": "string", "description": "Customer/company name exactly as written, e.g. احمد مختي ديون." },
-                        "employee_name": { "type": "string", "description": "Employee name when needed." },
-                        "product_filter": { "type": "string", "description": "Product name/code for product reports." },
-                        "keywords": { "type": "string", "description": "Original user request or date/mode hints." },
-                        "days_recent": { "type": "integer", "description": "Optional sales window days." },
-                        "coverage_days": { "type": "integer", "description": "Optional coverage days." }
-                    },
-                    "required": ["report_type"]
-                }
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": "run_query_pattern",
-                "description": "Executes a pre-tested SQL pattern. REQUIRED for any data question. Use pattern_id from the <patterns> table in system prompt.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "pattern_id": { "type": "string", "description": "ID from the <patterns> table (e.g. top_sellers, expiry_report)." },
-                        "keywords": { "type": "string", "description": "Fallback Arabic keywords if pattern_id unknown." },
-                        "days_recent": { "type": "integer", "description": "Override sales window in days (default 60)." },
-                        "coverage_days": { "type": "integer", "description": "Purchase coverage days (default 30)." },
-                        "product_filter": { "type": "string", "description": "Product name/code for patterns that need it." }
-                    },
-                    "required": []
-                }
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": "export_last_result",
-                "description": "Export last query result as Excel when user asks for export/اكسل/xlsx. Printing/PDF is handled by the app from the saved full result, not by the model.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "title": { "type": "string", "description": "Arabic report title." },
-                        "format": { "type": "string", "enum": ["excel"], "description": "excel only." }
-                    },
-                    "required": ["title", "format"]
-                }
-            }
-        }),
-    ]
 }
 
 pub fn build_executor_system_prompt(
@@ -801,6 +734,24 @@ mod tests {
     #[test]
     fn resolve_followup_customer_account_analysis_to_detailed_balance() {
         let p = resolve_pattern_id("اعطيني رأيك في حركته نفس العميل", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("client_balance_detailed"));
+    }
+
+    #[test]
+    fn resolve_followup_full_report_to_detailed_balance() {
+        let p = resolve_pattern_id("اريد التقرير الكامل له", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("client_balance_detailed"));
+    }
+
+    #[test]
+    fn resolve_followup_detailed_account_without_name() {
+        let p = resolve_pattern_id("اعرض كشف حساب مفصل له", ErpKind::Marketing2026);
+        assert_eq!(p.map(|x| x.id), Some("client_balance_detailed"));
+    }
+
+    #[test]
+    fn resolve_followup_same_customer_details() {
+        let p = resolve_pattern_id("تفاصيل نفس العميل بالكامل", ErpKind::Marketing2026);
         assert_eq!(p.map(|x| x.id), Some("client_balance_detailed"));
     }
 

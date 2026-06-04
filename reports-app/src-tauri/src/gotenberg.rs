@@ -3,20 +3,27 @@
 use base64::Engine;
 use std::path::PathBuf;
 
+fn push_dotenv_ancestor_candidates(candidates: &mut Vec<PathBuf>, start: PathBuf) {
+    let mut cursor = Some(start.as_path());
+    while let Some(path) = cursor {
+        candidates.push(path.join(".env"));
+        cursor = path.parent();
+    }
+}
+
 fn read_dotenv_value(key: &str) -> Option<String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::current_dir() {
-        candidates.push(dir.join(".env"));
-        candidates.push(dir.join("..").join(".env"));
+        push_dotenv_ancestor_candidates(&mut candidates, dir);
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(".env"));
-            candidates.push(dir.join("..").join(".env"));
-            candidates.push(dir.join("..").join("..").join(".env"));
-            candidates.push(dir.join("..").join("..").join("..").join(".env"));
+            push_dotenv_ancestor_candidates(&mut candidates, dir.to_path_buf());
         }
     }
+    candidates.push(PathBuf::from(
+        r"C:\Users\DELL\Desktop\al-tabi\reports-app\.env",
+    ));
 
     for path in candidates {
         let Ok(content) = std::fs::read_to_string(path) else {
@@ -38,12 +45,35 @@ fn read_dotenv_value(key: &str) -> Option<String> {
     None
 }
 
+fn gotenberg_key_aliases(key: &str) -> &'static [&'static str] {
+    match key {
+        "GOTENBERG_URL" => &["GOTENBERG_URL", "GOTENBERG_ENDPOINT", "GUTENBERG_URL"],
+        "GOTENBERG_USERNAME" => &["GOTENBERG_USERNAME", "GOTENBERG_USER", "GUTENBERG_USERNAME"],
+        "GOTENBERG_PASSWORD" => &["GOTENBERG_PASSWORD", "GOTENBERG_PASS", "GUTENBERG_PASSWORD"],
+        _ => &[],
+    }
+}
+
 fn gotenberg_env(key: &str) -> Result<String, String> {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| read_dotenv_value(key))
-        .ok_or_else(|| format!("متغير البيئة {} غير موجود.", key))
+    let aliases = gotenberg_key_aliases(key);
+    let keys = if aliases.is_empty() {
+        &[key][..]
+    } else {
+        aliases
+    };
+    for candidate in keys {
+        if let Some(value) = std::env::var(candidate)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| read_dotenv_value(candidate))
+        {
+            return Ok(value);
+        }
+    }
+    Err(format!(
+        "متغير البيئة {} غير موجود. أضفه في ملف .env بجانب التطبيق أو في مجلد reports-app.",
+        key
+    ))
 }
 
 fn basic_auth_header() -> Result<String, String> {

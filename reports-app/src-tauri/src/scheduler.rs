@@ -1,12 +1,11 @@
 /// نظام الجدولة التلقائية للتقارير
 /// يدعم: تقارير نصية، PDF، Excel — بمعدلات متكررة (ثوانٍ / دقائق / ساعات / أيام)
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
 use tauri::Emitter;
+use tokio::sync::Mutex;
 
 // ─── هياكل البيانات ──────────────────────────────────────────────
 
@@ -100,7 +99,10 @@ pub fn load_state(data_dir: &PathBuf) -> SchedulerState {
         .and_then(|s| serde_json::from_str::<Vec<ReportNotification>>(&s).ok())
         .unwrap_or_default();
 
-    SchedulerState { schedules, notifications }
+    SchedulerState {
+        schedules,
+        notifications,
+    }
 }
 
 pub fn save_schedules(data_dir: &PathBuf, schedules: &[ScheduledReport]) {
@@ -127,28 +129,41 @@ pub fn format_text_report(title: &str, columns: &[String], rows: &[Vec<String>])
     let mut out = format!("📊 **{}**\n\n", title);
 
     // حساب عرض الأعمدة
-    let widths: Vec<usize> = columns.iter().enumerate().map(|(i, h)| {
-        let max_data = rows.iter()
-            .filter_map(|r| r.get(i))
-            .map(|v| v.chars().count())
-            .max()
-            .unwrap_or(0);
-        h.chars().count().max(max_data).max(4)
-    }).collect();
+    let widths: Vec<usize> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let max_data = rows
+                .iter()
+                .filter_map(|r| r.get(i))
+                .map(|v| v.chars().count())
+                .max()
+                .unwrap_or(0);
+            h.chars().count().max(max_data).max(4)
+        })
+        .collect();
 
     // رأس الجدول
-    let header: String = columns.iter().zip(&widths)
+    let header: String = columns
+        .iter()
+        .zip(&widths)
         .map(|(h, &w)| format!("{:width$}", h, width = w))
         .collect::<Vec<_>>()
         .join(" | ");
-    let sep: String = widths.iter().map(|&w| "-".repeat(w)).collect::<Vec<_>>().join("-+-");
+    let sep: String = widths
+        .iter()
+        .map(|&w| "-".repeat(w))
+        .collect::<Vec<_>>()
+        .join("-+-");
 
     out.push_str(&format!("| {} |\n", header));
     out.push_str(&format!("|-{}-|\n", sep));
 
     // صفوف البيانات (أقصى 50 صفاً في التنبيه)
     for row in rows.iter().take(50) {
-        let line: String = row.iter().zip(&widths)
+        let line: String = row
+            .iter()
+            .zip(&widths)
             .map(|(v, &w)| {
                 let s = v.chars().take(w).collect::<String>();
                 format!("{:width$}", s, width = w)
@@ -163,12 +178,19 @@ pub fn format_text_report(title: &str, columns: &[String], rows: &[Vec<String>])
     }
 
     // ملخص إجماليات أرقام
-    let totals: Vec<Option<f64>> = (0..columns.len()).map(|c| {
-        let nums: Vec<f64> = rows.iter()
-            .filter_map(|r| r.get(c)?.trim().replace(',', "").parse::<f64>().ok())
-            .collect();
-        if nums.len() > 1 { Some(nums.iter().sum()) } else { None }
-    }).collect();
+    let totals: Vec<Option<f64>> = (0..columns.len())
+        .map(|c| {
+            let nums: Vec<f64> = rows
+                .iter()
+                .filter_map(|r| r.get(c)?.trim().replace(',', "").parse::<f64>().ok())
+                .collect();
+            if nums.len() > 1 {
+                Some(nums.iter().sum())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let has_totals = totals.iter().any(|t| t.is_some());
     if has_totals {
@@ -200,13 +222,17 @@ pub async fn run_scheduler(
         // جمع التقارير المستحقة
         let due: Vec<ScheduledReport> = {
             let state = shared.lock().await;
-            state.schedules.iter()
+            state
+                .schedules
+                .iter()
                 .filter(|s| s.is_active && s.next_run_unix <= now)
                 .cloned()
                 .collect()
         };
 
-        if due.is_empty() { continue; }
+        if due.is_empty() {
+            continue;
+        }
 
         // نسخة من إعدادات الاتصال
         let conn_opt = {
@@ -234,10 +260,13 @@ pub async fn run_scheduler(
                     match sched.report_type.as_str() {
                         "pdf" => {
                             match crate::pdf_generator::generate_report_pdf(
-                                &sched.report_title, &cols, &rows
+                                &sched.report_title,
+                                &cols,
+                                &rows,
                             ) {
                                 Ok(bytes) => {
-                                    let path = save_report_file(&data_dir, &sched.id, "pdf", &bytes);
+                                    let path =
+                                        save_report_file(&data_dir, &sched.id, "pdf", &bytes);
                                     ReportNotification {
                                         id: new_id(),
                                         schedule_id: sched.id.clone(),
@@ -255,10 +284,13 @@ pub async fn run_scheduler(
                         }
                         "excel" => {
                             match crate::excel_generator::generate_report_excel(
-                                &sched.report_title, &cols, &rows
+                                &sched.report_title,
+                                &cols,
+                                &rows,
                             ) {
                                 Ok(bytes) => {
-                                    let path = save_report_file(&data_dir, &sched.id, "xlsx", &bytes);
+                                    let path =
+                                        save_report_file(&data_dir, &sched.id, "xlsx", &bytes);
                                     ReportNotification {
                                         id: new_id(),
                                         schedule_id: sched.id.clone(),
@@ -412,10 +444,12 @@ async fn send_notification_to_telegram(
             let Some(text) = notification.text_content.as_ref() else {
                 return;
             };
-            let message = format!("📅 {}\n{}\n\n{}", notification.schedule_name, notification.title, text);
+            let message = format!(
+                "📅 {}\n{}\n\n{}",
+                notification.schedule_name, notification.title, text
+            );
             let message = truncate_telegram_text(&message, 4096);
-            crate::telegram::send_message(&client, token.trim(), chat_id, message)
-                .await
+            crate::telegram::send_message(&client, token.trim(), chat_id, message).await
         }
     };
 
@@ -486,11 +520,14 @@ async fn execute_scheduled_sql(
         return Ok((vec![], vec![]));
     }
 
-    let columns: Vec<String> = rows[0].columns().iter()
+    let columns: Vec<String> = rows[0]
+        .columns()
+        .iter()
         .map(|c| c.name().to_string())
         .collect();
 
-    let data: Vec<Vec<String>> = rows.iter()
+    let data: Vec<Vec<String>> = rows
+        .iter()
         .map(|row| {
             (0..row.columns().len())
                 .map(|i| crate::row_cell_to_string(row, i))
@@ -535,13 +572,25 @@ pub fn describe_interval(seconds: u64) -> String {
         format!("كل {} أيام", seconds / 86400)
     } else if seconds >= 86400 {
         let d = seconds / 86400;
-        if d == 1 { "يومياً".to_string() } else { format!("كل {} أيام", d) }
+        if d == 1 {
+            "يومياً".to_string()
+        } else {
+            format!("كل {} أيام", d)
+        }
     } else if seconds >= 3600 {
         let h = seconds / 3600;
-        if h == 1 { "كل ساعة".to_string() } else { format!("كل {} ساعات", h) }
+        if h == 1 {
+            "كل ساعة".to_string()
+        } else {
+            format!("كل {} ساعات", h)
+        }
     } else if seconds >= 60 {
         let m = seconds / 60;
-        if m == 1 { "كل دقيقة".to_string() } else { format!("كل {} دقائق", m) }
+        if m == 1 {
+            "كل دقيقة".to_string()
+        } else {
+            format!("كل {} دقائق", m)
+        }
     } else {
         format!("كل {} ثانية", seconds)
     }

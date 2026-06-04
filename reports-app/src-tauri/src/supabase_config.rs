@@ -51,8 +51,7 @@ impl AppSecretsSettings {
     }
 
     pub fn has_remote_payload(&self) -> bool {
-        !self.openrouter_api_key.trim().is_empty()
-            || !self.openai_api_key.trim().is_empty()
+        !self.openrouter_api_key.trim().is_empty() || !self.openai_api_key.trim().is_empty()
     }
 }
 
@@ -209,8 +208,11 @@ pub fn load_legacy_secrets_from_store(
         if !enc.is_empty() {
             match decrypt(enc) {
                 Ok(key) => {
-                    eprintln!("[secrets] groq_api_key decrypted OK, len={}, starts_with='{}'",
-                        key.len(), &key[..key.len().min(8)]);
+                    eprintln!(
+                        "[secrets] groq_api_key decrypted OK, len={}, starts_with='{}'",
+                        key.len(),
+                        &key[..key.len().min(8)]
+                    );
                     settings.openrouter_api_key = key;
                 }
                 Err(e) => {
@@ -264,7 +266,10 @@ pub async fn resolve_app_secrets(
 
     if let Ok(Ok(mut remote)) = remote_result {
         if remote.has_remote_payload() {
-            eprintln!("[secrets] USING SUPABASE key (len={})", remote.openrouter_api_key.len());
+            eprintln!(
+                "[secrets] USING SUPABASE key (len={})",
+                remote.openrouter_api_key.len()
+            );
             remote.telegram_bot_token = telegram_bot_token;
             remote.telegram_chat_id = telegram_chat_id;
             return Ok(remote);
@@ -279,7 +284,10 @@ pub async fn resolve_app_secrets(
     // 2. احتياطي محلي فقط عند تعذّر Supabase (offline)
     let mut legacy = load_legacy_secrets_from_store(app, decrypt)?;
     if legacy.has_remote_payload() {
-        eprintln!("[secrets] USING LOCAL fallback key (len={})", legacy.openrouter_api_key.len());
+        eprintln!(
+            "[secrets] USING LOCAL fallback key (len={})",
+            legacy.openrouter_api_key.len()
+        );
         legacy.telegram_bot_token = telegram_bot_token;
         legacy.telegram_chat_id = telegram_chat_id;
         return Ok(legacy);

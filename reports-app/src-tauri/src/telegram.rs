@@ -1,12 +1,12 @@
+use crate::erp_profile::ErpKind;
+use crate::supabase_config::{self, SUPABASE_ANON_KEY, SUPABASE_URL};
+use crate::AppState;
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
-use crate::erp_profile::ErpKind;
-use crate::supabase_config::{self, SUPABASE_ANON_KEY, SUPABASE_URL};
-use crate::AppState;
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct SupabaseReport {
@@ -48,10 +48,13 @@ pub async fn fetch_reports() -> Vec<SupabaseReport> {
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .unwrap();
-    let url = supabase_config::supabase_rest_url("reports?is_active=eq.true&select=id,name_ar,sql_query,has_parameters");
+    let url = supabase_config::supabase_rest_url(
+        "reports?is_active=eq.true&select=id,name_ar,sql_query,has_parameters",
+    );
     let api_key = SUPABASE_ANON_KEY;
 
-    match client.get(url)
+    match client
+        .get(url)
         .header("apikey", api_key)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
@@ -101,16 +104,29 @@ fn enrich_query_with_english(query: &str, erp: ErpKind) -> String {
     let query_lower = query.to_lowercase();
 
     if erp == ErpKind::InfinityRetailDb {
-        if query_lower.contains("منتج") || query_lower.contains("صنف") || query_lower.contains("أدوية") {
+        if query_lower.contains("منتج")
+            || query_lower.contains("صنف")
+            || query_lower.contains("أدوية")
+        {
             enriched.push_str(" Data_Products ProductCode ProductName Inventory StockOnHand");
         }
-        if query_lower.contains("بيع") || query_lower.contains("فاتورة") || query_lower.contains("مبيع") {
-            enriched.push_str(" Data_SalesInvoices SalesInvoiceDate Data_SalesInvoiceItems QYT UnitPrice");
+        if query_lower.contains("بيع")
+            || query_lower.contains("فاتورة")
+            || query_lower.contains("مبيع")
+        {
+            enriched.push_str(
+                " Data_SalesInvoices SalesInvoiceDate Data_SalesInvoiceItems QYT UnitPrice",
+            );
         }
         if query_lower.contains("شراء") || query_lower.contains("مورد") {
-            enriched.push_str(" Data_PurchaseInvoices Data_PurchaseInvoiceItems Data_Suppliers UnitCost");
+            enriched.push_str(
+                " Data_PurchaseInvoices Data_PurchaseInvoiceItems Data_Suppliers UnitCost",
+            );
         }
-        if query_lower.contains("مخزون") || query_lower.contains("جرد") || query_lower.contains("صلاحية") {
+        if query_lower.contains("مخزون")
+            || query_lower.contains("جرد")
+            || query_lower.contains("صلاحية")
+        {
             enriched.push_str(" Data_ProductInventories ExpiryDate BranchID_FK Config_Branchs");
         }
         if query_lower.contains("موظف") {
@@ -118,39 +134,75 @@ fn enrich_query_with_english(query: &str, erp: ErpKind) -> String {
         }
         return enriched;
     }
-    
+
     // expiry / expiration / date
-    if query_lower.contains("صلاحية") || query_lower.contains("منتهي") || query_lower.contains("تاريخ انتهاء") || query_lower.contains("اكسباير") || query_lower.contains("انتهاء") {
+    if query_lower.contains("صلاحية")
+        || query_lower.contains("منتهي")
+        || query_lower.contains("تاريخ انتهاء")
+        || query_lower.contains("اكسباير")
+        || query_lower.contains("انتهاء")
+    {
         enriched.push_str(" expiry expire expiration date batch Invoice_Items");
     }
-    
+
     // products / items
-    if query_lower.contains("منتج") || query_lower.contains("أدوية") || query_lower.contains("دواء") || query_lower.contains("أصناف") || query_lower.contains("صنف") {
+    if query_lower.contains("منتج")
+        || query_lower.contains("أدوية")
+        || query_lower.contains("دواء")
+        || query_lower.contains("أصناف")
+        || query_lower.contains("صنف")
+    {
         enriched.push_str(" product item medicine items ITEMS");
     }
-    
+
     // invoice / billing / sales / buy
-    if query_lower.contains("فاتورة") || query_lower.contains("فواتير") || query_lower.contains("بيع") || query_lower.contains("شراء") {
+    if query_lower.contains("فاتورة")
+        || query_lower.contains("فواتير")
+        || query_lower.contains("بيع")
+        || query_lower.contains("شراء")
+    {
         enriched.push_str(" invoice bill sale purchase sale_items buy_items buy_invoice");
     }
-    
+
     // customer / supplier
-    if query_lower.contains("عميل") || query_lower.contains("عملاء") || query_lower.contains("زبون") || query_lower.contains("مورد") || query_lower.contains("موردين") {
+    if query_lower.contains("عميل")
+        || query_lower.contains("عملاء")
+        || query_lower.contains("زبون")
+        || query_lower.contains("مورد")
+        || query_lower.contains("موردين")
+    {
         enriched.push_str(" customer supplier account CUSTOMERS");
     }
-    
+
     // store / stock / qty
-    if query_lower.contains("مخزن") || query_lower.contains("مخازن") || query_lower.contains("جرد") || query_lower.contains("رصيد") || query_lower.contains("كمية") {
+    if query_lower.contains("مخزن")
+        || query_lower.contains("مخازن")
+        || query_lower.contains("جرد")
+        || query_lower.contains("رصيد")
+        || query_lower.contains("كمية")
+    {
         enriched.push_str(" store stock qty quantity jared inventory STORES");
     }
-    
+
     // finance / cash / safe
-    if query_lower.contains("خزينة") || query_lower.contains("صندوق") || query_lower.contains("مالية") || query_lower.contains("حسابات") || query_lower.contains("أرباح") || query_lower.contains("خسائر") {
+    if query_lower.contains("خزينة")
+        || query_lower.contains("صندوق")
+        || query_lower.contains("مالية")
+        || query_lower.contains("حسابات")
+        || query_lower.contains("أرباح")
+        || query_lower.contains("خسائر")
+    {
         enriched.push_str(" finance cash safe profit loss account");
     }
 
     // debt / credit / balance — BALANCE_C is empty; steer RAG toward invoice math
-    if query_lower.contains("دين") || query_lower.contains("ديون") || query_lower.contains("رصيد") || query_lower.contains("مديون") || query_lower.contains("علي") || query_lower.contains("استحقاق") {
+    if query_lower.contains("دين")
+        || query_lower.contains("ديون")
+        || query_lower.contains("رصيد")
+        || query_lower.contains("مديون")
+        || query_lower.contains("علي")
+        || query_lower.contains("استحقاق")
+    {
         enriched.push_str(" debt receivable TAKE GIVE BALANCE_EDIT SALE_INVOICE BUY_INVOICE CUSTOMERS CUST_CUSTOM CUST_VENDOR");
     }
 
@@ -193,26 +245,34 @@ fn document_matches_erp(doc: &DocumentRecord, erp: ErpKind) -> bool {
 }
 
 pub async fn search_schema(keywords: &str, openai_key: &str, erp: ErpKind) -> String {
-    println!("search_schema called with keywords: {}, openai_key length: {}", keywords, openai_key.len());
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+    println!(
+        "search_schema called with keywords: {}, openai_key length: {}",
+        keywords,
+        openai_key.len()
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap();
     let api_key = SUPABASE_ANON_KEY;
-    
+
     if !openai_key.trim().is_empty() {
         println!("Using Vector RAG with OpenAI...");
         let enriched = enrich_query_with_english(keywords, erp);
         println!("Enriched query for embedding: {}", enriched);
-        
+
         let req = OpenAiEmbeddingRequest {
             model: "text-embedding-3-small".to_string(),
             input: enriched,
         };
-        
-        let emb_res = client.post("https://api.openai.com/v1/embeddings")
+
+        let emb_res = client
+            .post("https://api.openai.com/v1/embeddings")
             .header("Authorization", format!("Bearer {}", openai_key.trim()))
             .json(&req)
             .send()
             .await;
-            
+
         if let Ok(res) = emb_res {
             if let Ok(json) = res.json::<OpenAiEmbeddingResponse>().await {
                 if let Some(data) = json.data.first() {
@@ -222,14 +282,15 @@ pub async fn search_schema(keywords: &str, openai_key: &str, erp: ErpKind) -> St
                         match_threshold: 0.05,
                         match_count: 3,
                     };
-                    
+
                     let supabase_url = format!("{}/rest/v1/rpc/match_documents", SUPABASE_URL);
-                    if let Ok(rpc_res) = client.post(supabase_url)
+                    if let Ok(rpc_res) = client
+                        .post(supabase_url)
                         .header("apikey", api_key)
                         .header("Authorization", format!("Bearer {}", api_key))
                         .json(&rpc_req)
                         .send()
-                        .await 
+                        .await
                     {
                         if let Ok(docs) = rpc_res.json::<Vec<DocumentRecord>>().await {
                             println!("Supabase returned {} documents from RAG", docs.len());
@@ -273,26 +334,28 @@ pub async fn search_schema(keywords: &str, openai_key: &str, erp: ErpKind) -> St
     println!("Falling back to ILIKE text matching...");
     // Enrich with English so ILIKE can match the English DDL content
     let enriched_for_ilike = enrich_query_with_english(keywords, erp);
-    let terms: Vec<&str> = enriched_for_ilike.split(|c: char| c == ',' || c == ' ')
+    let terms: Vec<&str> = enriched_for_ilike
+        .split(|c: char| c == ',' || c == ' ')
         .filter(|s: &&str| !s.trim().is_empty() && s.trim().chars().count() > 2)
         .collect();
     let mut or_conditions = Vec::new();
     for term in &terms {
         or_conditions.push(format!("content.ilike.*{}*", term));
     }
-    
+
     let query_param = if or_conditions.is_empty() {
         "content=not.is.null".to_string()
     } else {
         format!("or=({})", or_conditions.join(","))
     };
-    
+
     let url = format!(
         "{}/rest/v1/documents?select=content,metadata&{}&limit=5",
         SUPABASE_URL, query_param
     );
-    
-    match client.get(&url)
+
+    match client
+        .get(&url)
         .header("apikey", api_key)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
@@ -336,7 +399,10 @@ pub async fn start_polling(
         return;
     }
 
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap();
     let mut offset = 0;
     let expected_chat_id = chat_id.trim().to_string();
 
@@ -363,14 +429,36 @@ pub async fn start_polling(
                                 offset = update.update_id + 1;
                                 if let Some(msg) = update.message {
                                     if msg.chat.id.to_string() == expected_chat_id {
-                                        if let Some(text) = msg.text.as_deref().or(msg.caption.as_deref()) {
+                                        if let Some(text) =
+                                            msg.text.as_deref().or(msg.caption.as_deref())
+                                        {
                                             handle_message(
-                                                &client, &token, msg.chat.id, text.to_string(), &groq_key, &ai_model,
-                                                &app_state, &mut reports_cache,
-                                                &mut chat_history, &openai_key
-                                            ).await;
-                                        } else if msg.document.is_some() || msg.photo.as_ref().map(|p| !p.is_empty()).unwrap_or(false) {
-                                            let _ = send_chat_action(&client, &token, msg.chat.id, "typing").await;
+                                                &client,
+                                                &token,
+                                                msg.chat.id,
+                                                text.to_string(),
+                                                &groq_key,
+                                                &ai_model,
+                                                &app_state,
+                                                &mut reports_cache,
+                                                &mut chat_history,
+                                                &openai_key,
+                                            )
+                                            .await;
+                                        } else if msg.document.is_some()
+                                            || msg
+                                                .photo
+                                                .as_ref()
+                                                .map(|p| !p.is_empty())
+                                                .unwrap_or(false)
+                                        {
+                                            let _ = send_chat_action(
+                                                &client,
+                                                &token,
+                                                msg.chat.id,
+                                                "typing",
+                                            )
+                                            .await;
                                             let _ = send_html(
                                                 &client,
                                                 &token,
@@ -379,7 +467,13 @@ pub async fn start_polling(
                                             )
                                             .await;
                                         } else {
-                                            let _ = send_chat_action(&client, &token, msg.chat.id, "typing").await;
+                                            let _ = send_chat_action(
+                                                &client,
+                                                &token,
+                                                msg.chat.id,
+                                                "typing",
+                                            )
+                                            .await;
                                             let _ = send_html(
                                                 &client,
                                                 &token,
@@ -402,6 +496,232 @@ pub async fn start_polling(
     }
 }
 
+fn artifact_to_stored_result(
+    value: serde_json::Value,
+) -> Option<crate::agent_tools::StoredQueryResult> {
+    let report_id = value.get("report_number")?.as_u64()? as u32;
+    let columns = value
+        .get("columns")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .map(|v| v.as_str().unwrap_or("").to_string())
+        .collect::<Vec<_>>();
+    let rows = value
+        .get("rows")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .filter_map(|row| {
+            row.as_array().map(|cells| {
+                cells
+                    .iter()
+                    .map(|cell| cell.as_str().unwrap_or("").to_string())
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        return None;
+    }
+    let saved_at_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Some(crate::agent_tools::StoredQueryResult {
+        report_id,
+        sql: String::new(),
+        columns,
+        rows,
+        saved_at_unix,
+        analysis: value
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+    })
+}
+
+fn extract_report_number_from_text(normalized: &str) -> Option<u32> {
+    if normalized.contains("تقرير") || normalized.contains("report") {
+        normalized
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|part| !part.is_empty())
+            .and_then(|part| part.parse::<u32>().ok())
+    } else {
+        None
+    }
+}
+
+fn wants_report_summary(normalized: &str) -> bool {
+    let has_summary_word = [
+        "مختصر",
+        "المختصر",
+        "ملخص",
+        "الملخص",
+        "سريع",
+        "السريع",
+        "quick",
+        "summary",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    if !has_summary_word {
+        return false;
+    }
+    [
+        "ارسل",
+        "أرسل",
+        "ابعث",
+        "ابعت",
+        "هات",
+        "اعطيني",
+        "اعرض",
+        "تقرير",
+        "report",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(&needle.to_lowercase()))
+}
+
+fn wants_last_report_text(normalized: &str) -> bool {
+    [
+        "ارسل آخر تقرير",
+        "أرسل آخر تقرير",
+        "ابعث آخر تقرير",
+        "ابعت آخر تقرير",
+        "ارسل اخر تقرير",
+        "أرسل اخر تقرير",
+        "ابعث اخر تقرير",
+        "ابعت اخر تقرير",
+        "send last report",
+        "last report",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(&needle.to_lowercase()))
+}
+
+async fn select_stored_report(
+    app_state: &Arc<AppState>,
+    requested_report_id: Option<u32>,
+) -> Option<crate::agent_tools::StoredQueryResult> {
+    let mut selected_result = {
+        let session = app_state.agent_session.lock().await;
+        if let Some(report_id) = requested_report_id {
+            session
+                .recent_reports
+                .iter()
+                .find(|report| report.report_id == report_id)
+                .cloned()
+        } else {
+            session.last_result.clone()
+        }
+    };
+
+    if selected_result.is_none() {
+        if let Some(report_id) = requested_report_id {
+            match crate::agent_memory::get_report_artifact_by_number(
+                crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN,
+                report_id as i64,
+            )
+            .await
+            {
+                Ok(Some(value)) => {
+                    selected_result = artifact_to_stored_result(value);
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("[telegram] fetch report artifact: {}", e),
+            }
+        }
+    }
+
+    selected_result
+}
+
+fn report_summary_html(result: &crate::agent_tools::StoredQueryResult) -> String {
+    let mut out = format!(
+        "<b>ملخص التقرير رقم {}</b>\nعدد السجلات المحفوظة: <code>{}</code>",
+        result.report_id,
+        result.rows.len()
+    );
+
+    if result.rows.is_empty() || result.columns.is_empty() {
+        out.push_str("\nلا توجد بيانات محفوظة داخل التقرير.");
+        return out;
+    }
+
+    let metric_needles = [
+        ("العميل", ["اسم العميل", "العميل", "customer"].as_slice()),
+        ("المدين", ["المدين", "debit"].as_slice()),
+        ("الدائن", ["الدائن", "credit"].as_slice()),
+        ("الرصيد", ["الرصيد", "balance"].as_slice()),
+        ("الإجمالي", ["الإجمالي", "اجمالي", "total"].as_slice()),
+    ];
+    let last_row = result.rows.last().unwrap_or(&result.rows[0]);
+    let mut metrics = Vec::new();
+    for (label, needles) in metric_needles {
+        if let Some(idx) = result.columns.iter().position(|column| {
+            let c = column.trim().to_lowercase();
+            needles
+                .iter()
+                .any(|needle| c.contains(&needle.to_lowercase()))
+        }) {
+            if let Some(value) = last_row.get(idx).filter(|v| !v.trim().is_empty()) {
+                metrics.push(format!("{}: {}", label, value));
+            }
+        }
+    }
+
+    if !metrics.is_empty() {
+        out.push_str("\n\n<b>أهم المؤشرات</b>");
+        for line in metrics.iter().take(5) {
+            out.push_str(&format!("\n- {}", html_escape_minimal(line)));
+        }
+    }
+
+    let preview_cols = result.columns.iter().take(4).cloned().collect::<Vec<_>>();
+    let preview_lines = result
+        .rows
+        .iter()
+        .take(3)
+        .map(|row| {
+            row.iter()
+                .take(4)
+                .enumerate()
+                .filter_map(|(idx, value)| {
+                    if value.trim().is_empty() {
+                        return None;
+                    }
+                    Some(format!(
+                        "{}: {}",
+                        preview_cols.get(idx).map(String::as_str).unwrap_or("قيمة"),
+                        value
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    if !preview_lines.is_empty() {
+        out.push_str("\n\n<b>لمحة سريعة</b>");
+        for (idx, line) in preview_lines.iter().enumerate() {
+            out.push_str(&format!("\n{}. {}", idx + 1, html_escape_minimal(line)));
+        }
+    }
+
+    out.push_str(&format!(
+        "\n\nلإرسال الملف الكامل اكتب:\n<code>ارسل التقرير {}</code>",
+        result.report_id
+    ));
+    out
+}
+
+fn html_escape_minimal(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 async fn handle_message(
     client: &Client,
     token: &str,
@@ -417,39 +737,32 @@ async fn handle_message(
     let text_trim = text.trim();
     let normalized = text_trim.to_lowercase();
     let _ = send_chat_action(client, token, chat_id, "typing").await;
-    let requested_report_id = if normalized.contains("تقرير") || normalized.contains("report") {
-        normalized
-            .split(|c: char| !c.is_ascii_digit())
-            .find(|part| !part.is_empty())
-            .and_then(|part| part.parse::<u32>().ok())
-    } else {
-        None
-    };
-    let wants_last_report = [
-        "ارسل آخر تقرير",
-        "أرسل آخر تقرير",
-        "ابعث آخر تقرير",
-        "ابعت آخر تقرير",
-        "send last report",
-        "last report",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(&needle.to_lowercase()));
+    let requested_report_id = extract_report_number_from_text(&normalized);
+    let wants_last_report = wants_last_report_text(&normalized);
+    let wants_summary = wants_report_summary(&normalized);
+
+    if wants_summary && (wants_last_report || requested_report_id.is_some()) {
+        let Some(result) = select_stored_report(app_state, requested_report_id).await else {
+            let _ = send_message(
+                client,
+                token,
+                chat_id,
+                if let Some(report_id) = requested_report_id {
+                    format!("لم أجد تقريراً محفوظاً برقم {}.", report_id)
+                } else {
+                    "لا يوجد تقرير محفوظ حالياً. نفّذ تقريراً من التطبيق أو تليجرام أولاً.".to_string()
+                },
+            )
+            .await;
+            return;
+        };
+        let _ = send_html(client, token, chat_id, report_summary_html(&result)).await;
+        return;
+    }
 
     if wants_last_report || requested_report_id.is_some() {
         let _ = send_chat_action(client, token, chat_id, "upload_document").await;
-        let selected_result = {
-            let session = app_state.agent_session.lock().await;
-            if let Some(report_id) = requested_report_id {
-                session
-                    .recent_reports
-                    .iter()
-                    .find(|report| report.report_id == report_id)
-                    .cloned()
-            } else {
-                session.last_result.clone()
-            }
-        };
+        let selected_result = select_stored_report(app_state, requested_report_id).await;
         let Some(result) = selected_result else {
             let _ = send_message(
                 client,
@@ -466,16 +779,17 @@ async fn handle_message(
         };
         let title = format!("تقرير رقم {}", result.report_id);
         let business_name = crate::resolve_report_business_name(app_state).await;
-        let html = crate::html_report_document(
+        let html = crate::html_report_document_with_analysis(
             &title,
             &result.columns,
             &result.rows,
             &business_name,
+            result.analysis.as_deref(),
         );
         match crate::gotenberg::html_to_pdf(&html).await {
             Ok(bytes) => {
                 let filename = format!("report_{}.pdf", result.report_id);
-                let _ = send_pdf(
+                let send_result = send_pdf(
                     client,
                     token,
                     chat_id,
@@ -483,7 +797,18 @@ async fn handle_message(
                     bytes,
                     &format!("تقرير رقم {}", result.report_id),
                 )
-                .await;
+                .await
+                .map_err(|e| e.to_string());
+                if let Err(error_text) = send_result {
+                    eprintln!("[telegram] send report pdf failed: {}", error_text);
+                    let _ = send_message(
+                        client,
+                        token,
+                        chat_id,
+                        format!("فشل إرسال التقرير إلى تليجرام: {}", error_text),
+                    )
+                    .await;
+                }
             }
             Err(e) => {
                 let _ = send_message(
@@ -504,8 +829,10 @@ async fn handle_message(
             client,
             token,
             chat_id,
-            "⚠️ الوكيل الذكي غير مُهيّأ.\nيرجى إضافة مفتاح OpenRouter (Groq) من إعدادات التطبيق.".to_string(),
-        ).await;
+            "⚠️ الوكيل الذكي غير مُهيّأ.\nيرجى إضافة مفتاح OpenRouter (Groq) من إعدادات التطبيق."
+                .to_string(),
+        )
+        .await;
         return;
     }
 
@@ -521,17 +848,23 @@ async fn handle_message(
         reports_cache,
         history_vec,
         openai_key,
-    ).await;
+    )
+    .await;
 }
 
 // ─── إرسال رسالة نصية عادية (إشعارات) ───────────────────────────
 pub async fn send_message(
-    client: &Client, token: &str, chat_id: i64, text: String,
+    client: &Client,
+    token: &str,
+    chat_id: i64,
+    text: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-    client.post(&url)
+    client
+        .post(&url)
         .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
-        .send().await?;
+        .send()
+        .await?;
     Ok(())
 }
 
@@ -555,23 +888,32 @@ pub async fn send_chat_action(
 }
 
 pub async fn send_html(
-    client: &Client, token: &str, chat_id: i64, html: String,
+    client: &Client,
+    token: &str,
+    chat_id: i64,
+    html: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-    client.post(&url)
+    client
+        .post(&url)
         .json(&serde_json::json!({
             "chat_id": chat_id,
             "text": html,
             "parse_mode": "HTML"
         }))
-        .send().await?;
+        .send()
+        .await?;
     Ok(())
 }
 
 // ─── إرسال PDF ────────────────────────────────────────────────────
 pub async fn send_pdf(
-    client: &Client, token: &str, chat_id: i64,
-    filename: &str, content: Vec<u8>, caption: &str,
+    client: &Client,
+    token: &str,
+    chat_id: i64,
+    filename: &str,
+    content: Vec<u8>,
+    caption: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = send_chat_action(client, token, chat_id, "upload_document").await;
     let url = format!("https://api.telegram.org/bot{}/sendDocument", token);
@@ -579,10 +921,10 @@ pub async fn send_pdf(
         .file_name(filename.to_string())
         .mime_str("application/pdf")?;
     let form = reqwest::multipart::Form::new()
-        .text("chat_id",    chat_id.to_string())
-        .text("caption",    caption.to_string())
+        .text("chat_id", chat_id.to_string())
+        .text("caption", caption.to_string())
         .text("parse_mode", "Markdown".to_string())
-        .part("document",   part);
+        .part("document", part);
     client.post(&url).multipart(form).send().await?;
     Ok(())
 }
@@ -600,9 +942,7 @@ pub async fn send_excel(
     let url = format!("https://api.telegram.org/bot{}/sendDocument", token);
     let part = reqwest::multipart::Part::bytes(content)
         .file_name(filename.to_string())
-        .mime_str(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )?;
+        .mime_str("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")?;
     let form = reqwest::multipart::Form::new()
         .text("chat_id", chat_id.to_string())
         .text("caption", caption.to_string())

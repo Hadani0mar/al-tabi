@@ -1,10 +1,12 @@
+use crate::excel_generator::generate_report_excel;
+use crate::pdf_generator::generate_report_pdf;
+use crate::telegram::{
+    search_schema, send_excel, send_html, send_message, send_pdf, SupabaseReport,
+};
+use crate::{execute_sql_query, AppState};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use crate::{AppState, execute_sql_query};
-use crate::telegram::{send_message, send_html, send_pdf, send_excel, SupabaseReport, search_schema};
-use crate::excel_generator::generate_report_excel;
-use crate::pdf_generator::generate_report_pdf;
 use tauri::Emitter;
 use tauri_plugin_store::StoreExt;
 
@@ -76,64 +78,83 @@ pub fn search_query_patterns_local(keywords: &str, erp: crate::erp_profile::ErpK
             || kw_lower.contains("مبيع")
             || kw_lower.contains("sold")
             || kw_lower.contains("sales"))
-        && (kw_lower.contains("اليوم")
-            || kw_lower.contains("today")
-            || kw_lower.contains("آخر"));
+        && (kw_lower.contains("اليوم") || kw_lower.contains("today") || kw_lower.contains("آخر"));
 
     // احسب درجة تطابق كل قسم
-    let mut scored: Vec<(usize, &str)> = sections.iter().skip(1).map(|section| {
-        let section_lower = section.to_lowercase();
-        let header_lines: String = section_lower.lines().take(3).collect::<Vec<_>>().join(" ");
-        let mut score = kw_words.iter()
-            .map(|w| {
-                if header_lines.contains(w) { 3 } else if section_lower.contains(w) { 1 } else { 0 }
-            })
-            .sum::<usize>();
+    let mut scored: Vec<(usize, &str)> = sections
+        .iter()
+        .skip(1)
+        .map(|section| {
+            let section_lower = section.to_lowercase();
+            let header_lines: String = section_lower.lines().take(3).collect::<Vec<_>>().join(" ");
+            let mut score = kw_words
+                .iter()
+                .map(|w| {
+                    if header_lines.contains(w) {
+                        3
+                    } else if section_lower.contains(w) {
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .sum::<usize>();
 
-        if customer_intent {
-            if header_lines.contains("عملاء")
-                || header_lines.contains("زبون")
-                || header_lines.contains("customer")
-            {
-                score += 8;
+            if customer_intent {
+                if header_lines.contains("عملاء")
+                    || header_lines.contains("زبون")
+                    || header_lines.contains("customer")
+                {
+                    score += 8;
+                }
+                if section_lower.contains("منتج") && !header_lines.contains("عملاء") {
+                    score = score.saturating_sub(5);
+                }
             }
-            if section_lower.contains("منتج") && !header_lines.contains("عملاء") {
-                score = score.saturating_sub(5);
+            if employee_intent && header_lines.contains("موظف") {
+                score += 5;
             }
-        }
-        if employee_intent && header_lines.contains("موظف") {
-            score += 5;
-        }
-        if products_sold_today_intent {
-            if header_lines.contains("آخر-منتجات-بيعت-اليوم")
-                || header_lines.contains("منتجات بيعت اليوم")
-            {
-                score += 12;
+            if products_sold_today_intent {
+                if header_lines.contains("آخر-منتجات-بيعت-اليوم")
+                    || header_lines.contains("منتجات بيعت اليوم")
+                {
+                    score += 12;
+                }
+                if employee_intent
+                    && header_lines.contains("موظف")
+                    && !header_lines.contains("منتج")
+                {
+                    score = score.saturating_sub(4);
+                }
             }
-            if employee_intent && header_lines.contains("موظف") && !header_lines.contains("منتج") {
-                score = score.saturating_sub(4);
+            if employee_intent && header_lines.contains("عملاء") {
+                score = score.saturating_sub(3);
             }
-        }
-        if employee_intent && header_lines.contains("عملاء") {
-            score = score.saturating_sub(3);
-        }
 
-        (score, *section)
-    }).collect();
+            (score, *section)
+        })
+        .collect();
 
     // رتّب تنازلياً ثم خذ أفضل قسمين
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    let top: Vec<&str> = scored.iter()
+    let top: Vec<&str> = scored
+        .iter()
         .filter(|(s, _)| *s > 0)
         .take(2)
         .map(|(_, sec)| *sec)
         .collect();
 
     if top.is_empty() {
-        format!("لم يُعثر على نمط مطابق للكلمات: «{}»\nالأنماط المتاحة: {}", keywords,
-            sections.iter().skip(1)
+        format!(
+            "لم يُعثر على نمط مطابق للكلمات: «{}»\nالأنماط المتاحة: {}",
+            keywords,
+            sections
+                .iter()
+                .skip(1)
                 .filter_map(|s| s.lines().next())
-                .collect::<Vec<_>>().join(", "))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     } else {
         top.iter()
             .map(|sec| format!("## PATTERN:{}", sec))
@@ -145,24 +166,60 @@ pub fn search_query_patterns_local(keywords: &str, erp: crate::erp_profile::ErpK
 /// تاريخ مضغوط للحقن في system prompt — يُغني عن tool call لـ get_current_datetime
 pub fn compact_date_for_prompt() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let local_secs = secs + 2 * 3600;
     let days_since_epoch = local_secs / 86400;
     let mut remaining = days_since_epoch;
     let mut year: u64 = 1970;
     loop {
-        let dy = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 366 } else { 365 };
-        if remaining < dy { break; }
+        let dy = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if remaining < dy {
+            break;
+        }
         remaining -= dy;
         year += 1;
     }
     let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let dpm = [31u64, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let dpm = [
+        31u64,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month: u64 = 1;
-    for &d in &dpm { if remaining < d { break; } remaining -= d; month += 1; }
+    for &d in &dpm {
+        if remaining < d {
+            break;
+        }
+        remaining -= d;
+        month += 1;
+    }
     let day = remaining + 1;
     let dow = (days_since_epoch + 4) % 7;
-    let weekday_ar = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][dow as usize % 7];
+    let weekday_ar = [
+        "الأحد",
+        "الاثنين",
+        "الثلاثاء",
+        "الأربعاء",
+        "الخميس",
+        "الجمعة",
+        "السبت",
+    ][dow as usize % 7];
     format!("{weekday_ar} {day}/{month}/{year} | الشهر:{month} | السنة:{year}")
 }
 
@@ -179,25 +236,46 @@ fn get_current_datetime_info() -> String {
     // UTC+2 للتوقيت الليبي
     let local_secs = secs + 2 * 3600;
 
-    let s   = local_secs % 60;
-    let m   = (local_secs / 60) % 60;
-    let h   = (local_secs / 3600) % 24;
+    let s = local_secs % 60;
+    let m = (local_secs / 60) % 60;
+    let h = (local_secs / 3600) % 24;
     let days_since_epoch = local_secs / 86400;
 
     // حساب التاريخ الميلادي من الأيام منذ 1970-01-01
     let mut remaining = days_since_epoch;
     let mut year: u64 = 1970;
     loop {
-        let days_in_year = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 366 } else { 365 };
-        if remaining < days_in_year { break; }
+        let days_in_year = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if remaining < days_in_year {
+            break;
+        }
         remaining -= days_in_year;
         year += 1;
     }
     let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let days_per_month = [31u64,if is_leap {29} else {28},31,30,31,30,31,31,30,31,30,31];
+    let days_per_month = [
+        31u64,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month: u64 = 1;
     for &d in &days_per_month {
-        if remaining < d { break; }
+        if remaining < d {
+            break;
+        }
         remaining -= d;
         month += 1;
     }
@@ -216,13 +294,28 @@ fn get_current_datetime_info() -> String {
         _ => "؟",
     };
     let month_ar = match month {
-        1 => "يناير", 2 => "فبراير", 3 => "مارس", 4 => "أبريل",
-        5 => "مايو",  6 => "يونيو",  7 => "يوليو", 8 => "أغسطس",
-        9 => "سبتمبر", 10 => "أكتوبر", 11 => "نوفمبر", 12 => "ديسمبر",
+        1 => "يناير",
+        2 => "فبراير",
+        3 => "مارس",
+        4 => "أبريل",
+        5 => "مايو",
+        6 => "يونيو",
+        7 => "يوليو",
+        8 => "أغسطس",
+        9 => "سبتمبر",
+        10 => "أكتوبر",
+        11 => "نوفمبر",
+        12 => "ديسمبر",
         _ => "؟",
     };
     let period_ar = if h < 12 { "صباحاً" } else { "مساءً" };
-    let h12 = if h == 0 { 12 } else if h > 12 { h - 12 } else { h };
+    let h12 = if h == 0 {
+        12
+    } else if h > 12 {
+        h - 12
+    } else {
+        h
+    };
 
     format!(
         "التاريخ والوقت الحالي (توقيت ليبيا UTC+2):\n\
@@ -250,7 +343,11 @@ fn merge_ddl_schemas(existing: &str, new_ddl: &str) -> String {
             if chunk_trim.is_empty() {
                 continue;
             }
-            if chunk_trim.starts_with("⚠️") || chunk_trim.starts_with("✅") || chunk_trim.contains("تعليمات مهمة") || chunk_trim.contains("الآن استخدم") {
+            if chunk_trim.starts_with("⚠️")
+                || chunk_trim.starts_with("✅")
+                || chunk_trim.contains("تعليمات مهمة")
+                || chunk_trim.contains("الآن استخدم")
+            {
                 continue;
             }
 
@@ -259,7 +356,12 @@ fn merge_ddl_schemas(existing: &str, new_ddl: &str) -> String {
                 let start = idx;
                 let mut end = start + 4;
                 let bytes = chunk_trim.as_bytes();
-                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'[' || bytes[end] == b']') {
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric()
+                        || bytes[end] == b'_'
+                        || bytes[end] == b'['
+                        || bytes[end] == b']')
+                {
                     end += 1;
                 }
                 if end > start {
@@ -273,7 +375,11 @@ fn merge_ddl_schemas(existing: &str, new_ddl: &str) -> String {
                     merged_ddls.push(chunk_trim.to_string());
                 }
             } else {
-                let snippet = if chunk_trim.len() > 50 { &chunk_trim[..50] } else { chunk_trim };
+                let snippet = if chunk_trim.len() > 50 {
+                    &chunk_trim[..50]
+                } else {
+                    chunk_trim
+                };
                 let already_exists = merged_ddls.iter().any(|d| d.contains(snippet));
                 if !already_exists {
                     merged_ddls.push(chunk_trim.to_string());
@@ -310,7 +416,9 @@ fn read_u64_path(value: &Value, path: &str) -> Option<u64> {
 }
 
 fn openrouter_usage_payload(request_id: &str, res_json: &Value) -> Value {
-    let generation = res_json.get("openrouter_generation").unwrap_or(&Value::Null);
+    let generation = res_json
+        .get("openrouter_generation")
+        .unwrap_or(&Value::Null);
     let usage = res_json.get("usage").unwrap_or(&Value::Null);
     let model = res_json
         .get("model")
@@ -351,10 +459,7 @@ fn openrouter_usage_payload(request_id: &str, res_json: &Value) -> Value {
 fn emit_openrouter_usage(app_handle: &tauri::AppHandle, request_id: &str, res_json: &Value) {
     let payload = openrouter_usage_payload(request_id, res_json);
 
-    let _ = app_handle.emit(
-        "ai-usage",
-        payload,
-    );
+    let _ = app_handle.emit("ai-usage", payload);
 }
 
 fn trim_message_content(content: &str, max_chars: usize) -> String {
@@ -457,10 +562,24 @@ fn sql_semantic_fingerprint(sql: &str) -> String {
 
     let mut filter_keys: Vec<String> = Vec::new();
     let interesting_columns = [
-        "cust_emp", "cust_vendor", "cust_custom", "cust_id", "users_id",
-        "item_id", "store_id", "s_date", "b_date", "g_date", "g_statues",
-        "expences_id", "wait", "item_invisible", "qty", "min_level",
-        "cateogry3", "s_statues",
+        "cust_emp",
+        "cust_vendor",
+        "cust_custom",
+        "cust_id",
+        "users_id",
+        "item_id",
+        "store_id",
+        "s_date",
+        "b_date",
+        "g_date",
+        "g_statues",
+        "expences_id",
+        "wait",
+        "item_invisible",
+        "qty",
+        "min_level",
+        "cateogry3",
+        "s_statues",
     ];
     for col in interesting_columns {
         if lower.contains(col) {
@@ -494,7 +613,7 @@ const SLIM_DOMAIN_CRITICAL_FACTS: &str = r#"<DOMAIN_CRITICAL_FACTS>
 
 ### أنماط run_query_pattern (keywords)
 | السؤال | keywords |
-| مبيعات اليوم/آخر يوم/موظف | مبيعات آخر يوم موظف / مبيعات يومية موظف |
+| مبيعات اليوم/آخر يوم/موظف | مبيعات آخر يوم موظف |
 | **آخر منتجات/أصناف بيعت اليوم** | **آخر منتجات بيعت اليوم** |
 | أفضل عملاء / أكثر زبائن مبيعاً | أفضل عملاء مبيعات |
 | ديون لي وعلي | متابعة الديون |
@@ -543,7 +662,7 @@ const SLIM_DOMAIN_CRITICAL_FACTS_INFINITY: &str = r#"<DOMAIN_CRITICAL_FACTS>
 ### أنماط run_query_pattern (keywords)
 | السؤال | keywords |
 | منتجات بيعت اليوم | آخر منتجات بيعت اليوم |
-| مبيعات آخر يوم / موظف | مبيعات آخر يوم موظف / مبيعات يومية موظف |
+| مبيعات آخر يوم / موظف | مبيعات آخر يوم موظف |
 | نواقص نشطة + مورد + سعر | نواقص نشطة مورد |
 | متابعة نواقص | متابعة النواقص |
 | مقارنة أسعار موردين (+ product_filter) | مقارنة أسعار موردين |
@@ -638,9 +757,16 @@ async fn execute_raw_sql_for_agent(
     delivery: &crate::agent_tools::ExportDelivery,
 ) -> Value {
     let sql_upper = sql.to_uppercase();
-    if sql_upper.contains("INSERT ") || sql_upper.contains("UPDATE ") || sql_upper.contains("DELETE ") 
-       || sql_upper.contains("DROP ") || sql_upper.contains("ALTER ") || sql_upper.contains("TRUNCATE ")
-       || sql_upper.contains("EXEC ") || sql_upper.contains("GRANT ") || sql_upper.contains("REVOKE ") {
+    if sql_upper.contains("INSERT ")
+        || sql_upper.contains("UPDATE ")
+        || sql_upper.contains("DELETE ")
+        || sql_upper.contains("DROP ")
+        || sql_upper.contains("ALTER ")
+        || sql_upper.contains("TRUNCATE ")
+        || sql_upper.contains("EXEC ")
+        || sql_upper.contains("GRANT ")
+        || sql_upper.contains("REVOKE ")
+    {
         return json!({ "error": "غير مصرح لك بتنفيذ استعلامات تعديل أو حذف. يُسمح فقط باستعلامات القراءة (SELECT)." });
     }
 
@@ -648,7 +774,7 @@ async fn execute_raw_sql_for_agent(
     if let Some(block_msg) = crate::agent_tools::antipattern_block_message(sql, erp) {
         return json!({
             "error": block_msg,
-            "hint": "استخدم run_query_pattern(keywords=\"مبيعات يومية موظف\") أو get_database_views() ثم أعد كتابة SQL."
+            "hint": "استخدم run_query_pattern(keywords=\"مبيعات آخر يوم موظف\") فقط لمبيعات وإيرادات الموظفين."
         });
     }
 
@@ -687,7 +813,8 @@ async fn explore_local_schema_for_agent(table_hint: &str, app_state: &Arc<AppSta
 
     let sql = if table_hint.trim().is_empty() {
         // List all tables
-        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'".to_string()
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'"
+            .to_string()
     } else {
         // List columns for a specific table or hint
         let safe_hint = table_hint.replace("'", "''");
@@ -707,8 +834,8 @@ async fn explore_local_schema_for_agent(table_hint: &str, app_state: &Arc<AppSta
                     "row_count": result.row_count
                 })
             }
-        },
-        Err(e) => json!({ "error": format!("خطأ في الاستعلام عن المخطط المحلي: {}", e) })
+        }
+        Err(e) => json!({ "error": format!("خطأ في الاستعلام عن المخطط المحلي: {}", e) }),
     }
 }
 
@@ -733,7 +860,11 @@ async fn call_api_streaming(
     }
 
     let clean_key = api_key.trim();
-    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or(DEFAULT_AI_MODEL).to_string();
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_AI_MODEL)
+        .to_string();
 
     let mut response = client
         .post("https://openrouter.ai/api/v1/chat/completions")
@@ -770,15 +901,23 @@ async fn call_api_streaming(
                 _ => continue,
             };
 
-            let Ok(v) = serde_json::from_str::<Value>(&data) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
 
-            if let Some(t) = v.pointer("/choices/0/delta/content").and_then(|v| v.as_str()) {
+            if let Some(t) = v
+                .pointer("/choices/0/delta/content")
+                .and_then(|v| v.as_str())
+            {
                 if !t.is_empty() {
                     full_text.push_str(t);
-                    let _ = app_handle.emit("ai-stream-chunk", json!({
-                        "requestId": request_id,
-                        "delta": t
-                    }));
+                    let _ = app_handle.emit(
+                        "ai-stream-chunk",
+                        json!({
+                            "requestId": request_id,
+                            "delta": t
+                        }),
+                    );
                 }
             }
         }
@@ -799,15 +938,26 @@ async fn call_api_streaming(
 }
 
 async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Result<Value, String> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap();
     let url = "https://openrouter.ai/api/v1/chat/completions";
     let model = OPENROUTER_MODEL;
     let mut current_body = req_body.clone();
-    let mut max_tokens = DEFAULT_MAX_TOKENS;
+    let mut max_tokens = req_body
+        .get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .map(|v| (v as u32).min(DEFAULT_MAX_TOKENS))
+        .unwrap_or(DEFAULT_MAX_TOKENS);
     current_body["model"] = json!(model);
     current_body["max_tokens"] = json!(max_tokens);
     let clean_key = api_key.trim();
-    eprintln!("[OpenRouter] key len after trim: {} starts_with: '{}'", clean_key.len(), &clean_key[..clean_key.len().min(10)]);
+    eprintln!(
+        "[OpenRouter] key len after trim: {} starts_with: '{}'",
+        clean_key.len(),
+        &clean_key[..clean_key.len().min(10)]
+    );
 
     let mut credit_retries = 0u8;
     let mut rate_retries = 0u8;
@@ -855,17 +1005,12 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
             {
                 return Err(format!("النموذج غير متاح على OpenRouter: {}", model));
             }
-            if status.as_u16() == 402
-                && err_text.contains("Prompt tokens limit exceeded")
-            {
+            if status.as_u16() == 402 && err_text.contains("Prompt tokens limit exceeded") {
                 return Err(
-                    "حجم المحادثة كبير جداً. ابدأ محادثة جديدة أو أضف رصيد OpenRouter."
-                        .to_string(),
+                    "حجم المحادثة كبير جداً. ابدأ محادثة جديدة أو أضف رصيد OpenRouter.".to_string(),
                 );
             }
-            if status.as_u16() == 402
-                && err_text.contains("can only afford")
-                && credit_retries < 3
+            if status.as_u16() == 402 && err_text.contains("can only afford") && credit_retries < 3
             {
                 credit_retries += 1;
                 if let Some(affordable) = parse_openrouter_affordable_tokens(&err_text) {
@@ -909,10 +1054,22 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
         eprintln!(
             "[OpenRouter] usage model={} prompt={} completion={} total={} source={}",
             usage.get("model").and_then(|v| v.as_str()).unwrap_or(model),
-            usage.get("promptTokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            usage.get("completionTokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            usage.get("totalTokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            usage.get("usageSource").and_then(|v| v.as_str()).unwrap_or("unknown")
+            usage
+                .get("promptTokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            usage
+                .get("completionTokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            usage
+                .get("totalTokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            usage
+                .get("usageSource")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
         );
         return Ok(json_res);
     }
@@ -920,10 +1077,13 @@ async fn call_groq_api(api_key: &str, _ai_model: &str, req_body: &Value) -> Resu
 
 fn emit_html_report_result(
     app_handle: &tauri::AppHandle,
+    access_token: &str,
+    chat_session_id: Option<&str>,
     request_id: &str,
     title: &str,
     tool_name: &str,
     tool_content: &str,
+    analysis: Option<&str>,
 ) {
     let Ok(v) = serde_json::from_str::<Value>(tool_content) else {
         return;
@@ -931,7 +1091,99 @@ fn emit_html_report_result(
     if v.get("error").is_some() {
         return;
     }
-    let columns = v.get("columns").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    if let Some(parts) = v.get("parts").and_then(|p| p.as_array()) {
+        let mut sections = Vec::new();
+        let mut primary_columns = Vec::new();
+        let mut primary_rows = Vec::new();
+        let mut total_row_count = 0u64;
+        let mut report_id = 0u64;
+
+        for (idx, part) in parts.iter().enumerate() {
+            let columns = part
+                .get("columns")
+                .and_then(|c| c.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if columns.is_empty() {
+                continue;
+            }
+            let rows = part
+                .get("all_rows")
+                .or_else(|| part.get("rows"))
+                .and_then(|r| r.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if primary_columns.is_empty() {
+                primary_columns = columns.clone();
+                primary_rows = rows.clone();
+            }
+            total_row_count += part
+                .get("row_count")
+                .and_then(|r| r.as_u64())
+                .unwrap_or(rows.len() as u64);
+            if report_id == 0 {
+                report_id = part.get("report_id").and_then(|r| r.as_u64()).unwrap_or(0);
+            }
+            let section_title = part
+                .get("title")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{title} - قسم {}", idx + 1));
+            sections.push(json!({
+                "title": section_title,
+                "columns": columns,
+                "rows": rows,
+            }));
+        }
+
+        if sections.is_empty() {
+            return;
+        }
+
+        let report_number = if report_id > 0 {
+            Some(report_id as i64)
+        } else {
+            None
+        };
+        crate::agent_memory::save_report_artifact_background(
+            access_token.to_string(),
+            chat_session_id.map(str::to_string),
+            request_id.to_string(),
+            if title.trim().is_empty() {
+                "تقرير".to_string()
+            } else {
+                title.to_string()
+            },
+            tool_name.to_string(),
+            None,
+            report_number,
+            Some(total_row_count as i64),
+            Value::Array(primary_columns.clone()),
+            Value::Array(primary_rows.clone()),
+            analysis.map(str::to_string),
+        );
+        let _ = app_handle.emit(
+            "ai-html-report",
+            json!({
+                "requestId": request_id,
+                "chatSessionId": chat_session_id,
+                "reportId": report_id,
+                "title": if title.trim().is_empty() { "تقرير" } else { title },
+                "toolName": tool_name,
+                "columns": primary_columns,
+                "rows": primary_rows,
+                "rowCount": total_row_count,
+                "analysis": analysis.unwrap_or(""),
+                "sections": sections,
+            }),
+        );
+        return;
+    }
+    let columns = v
+        .get("columns")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
     if columns.is_empty() {
         return;
     }
@@ -945,20 +1197,41 @@ fn emit_html_report_result(
         .get("row_count")
         .and_then(|r| r.as_u64())
         .unwrap_or(rows.len() as u64);
-    let report_id = v
-        .get("report_id")
-        .and_then(|r| r.as_u64())
-        .unwrap_or(0);
+    let report_id = v.get("report_id").and_then(|r| r.as_u64()).unwrap_or(0);
+    let report_number = if report_id > 0 {
+        Some(report_id as i64)
+    } else {
+        None
+    };
+    crate::agent_memory::save_report_artifact_background(
+        access_token.to_string(),
+        chat_session_id.map(str::to_string),
+        request_id.to_string(),
+        if title.trim().is_empty() {
+            "تقرير".to_string()
+        } else {
+            title.to_string()
+        },
+        tool_name.to_string(),
+        None,
+        report_number,
+        Some(row_count as i64),
+        Value::Array(columns.clone()),
+        Value::Array(rows.clone()),
+        analysis.map(str::to_string),
+    );
     let _ = app_handle.emit(
         "ai-html-report",
         json!({
             "requestId": request_id,
+            "chatSessionId": chat_session_id,
             "reportId": report_id,
             "title": if title.trim().is_empty() { "تقرير" } else { title },
             "toolName": tool_name,
             "columns": columns,
             "rows": rows,
             "rowCount": row_count,
+            "analysis": analysis.unwrap_or(""),
         }),
     );
 }
@@ -1016,7 +1289,10 @@ async fn fetch_openrouter_generation_usage(
         }
     }
 
-    eprintln!("[OpenRouter] generation usage unavailable id={}", generation_id);
+    eprintln!(
+        "[OpenRouter] generation usage unavailable id={}",
+        generation_id
+    );
     None
 }
 
@@ -1039,12 +1315,27 @@ fn parse_openrouter_affordable_tokens(err_text: &str) -> Option<u32> {
 /// Returns a canned response if matched, None otherwise.
 fn try_handle_greeting(text: &str, erp: crate::erp_profile::ErpKind) -> Option<String> {
     let t = text.trim().to_lowercase();
-    if t.chars().count() > 25 { return None; }
+    if t.chars().count() > 25 {
+        return None;
+    }
 
     let greetings = [
-        "اهلا", "أهلا", "هلا", "هاي", "مرحبا", "مرحباً", "السلام",
-        "صباح الخير", "مساء الخير", "كيفك", "كيف الحال", "شلونك",
-        "hi", "hello", "hey", "salam",
+        "اهلا",
+        "أهلا",
+        "هلا",
+        "هاي",
+        "مرحبا",
+        "مرحباً",
+        "السلام",
+        "صباح الخير",
+        "مساء الخير",
+        "كيفك",
+        "كيف الحال",
+        "شلونك",
+        "hi",
+        "hello",
+        "hey",
+        "salam",
     ];
     let thanks = ["شكرا", "شكراً", "تسلم", "thanks", "thank you"];
     let bye = ["باي", "وداعا", "bye", "مع السلامة"];
@@ -1481,15 +1772,21 @@ fn report_id_from_tool_result(value: &Value) -> Option<u32> {
 }
 
 fn rows_from_tool_result(value: &Value) -> Option<&Vec<Value>> {
-    value
-        .get("rows")
-        .and_then(|v| v.as_array())
-        .or_else(|| {
-            value
-                .get("parts")
-                .and_then(|v| v.as_array())
-                .and_then(|parts| parts.iter().rev().find_map(rows_from_tool_result))
-        })
+    value.get("rows").and_then(|v| v.as_array()).or_else(|| {
+        value
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .and_then(|parts| parts.iter().rev().find_map(rows_from_tool_result))
+    })
+}
+
+fn columns_from_tool_result(value: &Value) -> Option<&Vec<Value>> {
+    value.get("columns").and_then(|v| v.as_array()).or_else(|| {
+        value
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .and_then(|parts| parts.iter().rev().find_map(columns_from_tool_result))
+    })
 }
 
 fn row_count_from_tool_result(value: &Value) -> usize {
@@ -1506,6 +1803,120 @@ fn row_count_from_tool_result(value: &Value) -> usize {
         })
 }
 
+fn value_to_clean_string(value: &Value) -> String {
+    value
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| value.to_string().trim_matches('"').to_string())
+}
+
+fn metric_from_tool_result(value: &Value, needles: &[&str]) -> Option<String> {
+    if let (Some(columns), Some(rows)) = (
+        value.get("columns").and_then(|v| v.as_array()),
+        value.get("rows").and_then(|v| v.as_array()),
+    ) {
+        if let Some(idx) = columns.iter().position(|column| {
+            let name = column.as_str().unwrap_or("").trim().to_lowercase();
+            needles
+                .iter()
+                .any(|needle| name.contains(&needle.to_lowercase()))
+        }) {
+            return rows
+                .iter()
+                .rev()
+                .filter_map(|row| row.as_array())
+                .filter_map(|row| row.get(idx))
+                .map(value_to_clean_string)
+                .find(|s| !s.trim().is_empty());
+        }
+    }
+
+    value
+        .get("parts")
+        .and_then(|v| v.as_array())
+        .and_then(|parts| {
+            parts
+                .iter()
+                .find_map(|part| metric_from_tool_result(part, needles))
+        })
+}
+
+fn compact_accounting_summary(value: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(customer) = metric_from_tool_result(value, &["اسم العميل", "customer"]) {
+        lines.push(format!("العميل: {}", customer));
+    }
+    if let Some(debit) = metric_from_tool_result(value, &["المدين", "debit"]) {
+        lines.push(format!("المدين: {}", debit));
+    }
+    if let Some(credit) = metric_from_tool_result(value, &["الدائن", "credit"]) {
+        lines.push(format!("الدائن: {}", credit));
+    }
+    if let Some(balance) = metric_from_tool_result(value, &["الرصيد", "balance"]) {
+        lines.push(format!("الرصيد: {}", balance));
+    }
+    lines
+}
+
+fn compact_business_note(value: &Value) -> Option<String> {
+    let balance = metric_from_tool_result(value, &["الرصيد", "balance"])
+        .and_then(|s| s.replace(',', "").parse::<f64>().ok());
+    match balance {
+        Some(v) if v < 0.0 => {
+            Some("محاسبياً: الرصيد دائن للعميل، راجع اتجاه الحركة قبل أي مطالبة.".to_string())
+        }
+        Some(v) if v > 0.0 => {
+            Some("محاسبياً: الرصيد يحتاج متابعة تحصيل حسب سياسة الحساب.".to_string())
+        }
+        Some(_) => Some("محاسبياً: الحساب متوازن في حدود البيانات المعروضة.".to_string()),
+        None => None,
+    }
+}
+
+fn format_result_rows_as_key_values(
+    rows: &[Value],
+    columns: Option<&Vec<Value>>,
+    max_rows: usize,
+    max_cols: usize,
+) -> Vec<String> {
+    let column_names: Vec<String> = columns
+        .map(|cols| {
+            cols.iter()
+                .take(max_cols)
+                .filter_map(|c| c.as_str().map(|s| s.trim().to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    rows.iter()
+        .take(max_rows)
+        .filter_map(|row| row.as_array())
+        .map(|row| {
+            row.iter()
+                .take(max_cols)
+                .enumerate()
+                .filter_map(|(idx, cell)| {
+                    let value = cell
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|| cell.to_string());
+                    if value.trim().is_empty() {
+                        return None;
+                    }
+                    let label = column_names
+                        .get(idx)
+                        .filter(|s| !s.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| format!("قيمة {}", idx + 1));
+                    Some(format!("{}: {}", label, value))
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect()
+}
+
 fn format_telegram_pattern_summary(title: &str, result: &Value) -> String {
     if let Some(error) = result.get("error") {
         return format!(
@@ -1515,11 +1926,7 @@ fn format_telegram_pattern_summary(title: &str, result: &Value) -> String {
     }
 
     let report_id = report_id_from_tool_result(result);
-    let mut out = format!(
-        "<b>{}</b>\nنوع التقرير: <b>{}</b>",
-        telegram_escape_html(title),
-        telegram_escape_html(title)
-    );
+    let mut out = format!("<b>{}</b>", telegram_escape_html(title));
     let row_count = row_count_from_tool_result(result);
 
     if let Some(report_id) = report_id {
@@ -1534,26 +1941,21 @@ fn format_telegram_pattern_summary(title: &str, result: &Value) -> String {
         return out;
     }
 
+    let accounting_lines = compact_accounting_summary(result);
+    if !accounting_lines.is_empty() {
+        out.push_str("\n<b>ملخص محاسبي</b>");
+        for line in accounting_lines.iter().take(4) {
+            out.push_str(&format!("\n- {}", telegram_escape_html(line)));
+        }
+    }
+
     if let Some(rows) = rows_from_tool_result(result) {
-        let preview = rows.iter().take(3).filter_map(|row| row.as_array());
-        for (idx, row) in preview.enumerate() {
-            let cells: Vec<String> = row
-                .iter()
-                .take(3)
-                .map(|cell| {
-                    cell.as_str()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| cell.to_string())
-                })
-                .filter(|s| !s.trim().is_empty())
-                .collect();
-            if !cells.is_empty() {
-                out.push_str(&format!(
-                    "\n{}. {}",
-                    idx + 1,
-                    telegram_escape_html(&cells.join(" | "))
-                ));
-            }
+        let lines = format_result_rows_as_key_values(rows, columns_from_tool_result(result), 2, 4);
+        if !lines.is_empty() {
+            out.push_str("\n<b>لمحة سريعة</b>");
+        }
+        for (idx, line) in lines.iter().enumerate() {
+            out.push_str(&format!("\n{}. {}", idx + 1, telegram_escape_html(line)));
         }
     }
 
@@ -1567,7 +1969,7 @@ fn format_desktop_pattern_summary(title: &str, result: &Value) -> String {
 
     let report_id = report_id_from_tool_result(result);
     let row_count = row_count_from_tool_result(result);
-    let mut out = format!("{title}\n\nنوع التقرير: {title}");
+    let mut out = title.to_string();
 
     if let Some(report_id) = report_id {
         out.push_str(&format!("\nرقم التقرير: {report_id}"));
@@ -1578,27 +1980,25 @@ fn format_desktop_pattern_summary(title: &str, result: &Value) -> String {
         return out;
     }
 
+    let accounting_lines = compact_accounting_summary(result);
+    if !accounting_lines.is_empty() {
+        out.push_str("\n\nملخص محاسبي:");
+        for line in accounting_lines.iter().take(4) {
+            out.push_str(&format!("\n- {}", line));
+        }
+        if let Some(note) = compact_business_note(result) {
+            out.push_str(&format!("\n\nملاحظة المتمكن: {}", note));
+        }
+    }
+
     if let Some(rows) = rows_from_tool_result(result) {
-        let lines: Vec<String> = rows
-            .iter()
-            .take(5)
-            .filter_map(|row| row.as_array())
-            .map(|row| {
-                row.iter()
-                    .take(4)
-                    .map(|cell| {
-                        cell.as_str()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| cell.to_string())
-                    })
-                    .filter(|s| !s.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            })
-            .filter(|line| !line.trim().is_empty())
-            .collect();
+        let lines = format_result_rows_as_key_values(rows, columns_from_tool_result(result), 2, 4);
         if !lines.is_empty() {
-            out.push_str("\n\nأول النتائج:");
+            out.push_str(if accounting_lines.is_empty() {
+                "\n\nلمحة من النتائج:"
+            } else {
+                "\n\nلمحة حركة:"
+            });
             for (idx, line) in lines.iter().enumerate() {
                 out.push_str(&format!("\n{}. {}", idx + 1, line));
             }
@@ -1615,11 +2015,147 @@ fn format_desktop_pattern_summary(title: &str, result: &Value) -> String {
     out
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+fn wants_interpretive_reply(user_text: &str) -> bool {
+    let text = user_text.trim().to_lowercase();
+    [
+        "رأيك",
+        "رايك",
+        "حلل",
+        "تحليل",
+        "قيّم",
+        "قيم",
+        "شن معنى",
+        "ماذا يعني",
+        "اشرح",
+        "فسر",
+        "استنتاج",
+        "استنتج",
+        "ملاحظة",
+        "نصيحة",
+        "حركة",
+        "الأداء",
+        "اداء",
+        "هل كويس",
+        "هل جيد",
+        "ليش",
+        "لماذا",
+        "مقارنة",
+        "اتجاه",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn compact_result_for_interpretation(result: &Value) -> Value {
+    let report_id = report_id_from_tool_result(result);
+    let row_count = row_count_from_tool_result(result);
+    let accounting = compact_accounting_summary(result);
+    let note = compact_business_note(result);
+    let columns = columns_from_tool_result(result)
+        .map(|cols| {
+            cols.iter()
+                .take(8)
+                .map(value_to_clean_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let sample_rows = rows_from_tool_result(result)
+        .map(|rows| {
+            rows.iter()
+                .take(6)
+                .map(|row| {
+                    row.as_array()
+                        .map(|cells| {
+                            cells
+                                .iter()
+                                .take(8)
+                                .map(value_to_clean_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    json!({
+        "report_id": report_id,
+        "row_count": row_count,
+        "columns": columns,
+        "sample_rows": sample_rows,
+        "accounting_summary": accounting,
+        "local_note": note,
+    })
+}
+
+fn assistant_content_from_response(res_json: &Value) -> Option<String> {
+    res_json
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+async fn generate_interpretive_pattern_reply(
+    user_text: &str,
+    title: &str,
+    result: &Value,
+    groq_key: &str,
+    ai_model: &str,
+    usage_emit: Option<(&tauri::AppHandle, &str)>,
+) -> Option<String> {
+    if result.get("error").is_some() {
+        return None;
+    }
+    let report_id = report_id_from_tool_result(result);
+    let compact = compact_result_for_interpretation(result);
+    let system = "أنت محلل أعمال ومحاسبة داخل نظام المتمكن. اكتب بالعربية الواضحة المختصرة. لا تخترع أرقاماً غير موجودة. اعتمد فقط على JSON المرفق. لا تذكر SQL ولا أسماء الأدوات. أعطِ قراءة عملية: ماذا يظهر، ما الملاحظة، وما الإجراء المقترح إن وجد. حد الرد 6 أسطر.";
+    let user = format!(
+        "طلب المستخدم:\n{}\n\nعنوان التقرير:\n{}\n\nبيانات مختصرة:\n{}",
+        user_text, title, compact
+    );
+    let req_body = json!({
+        "model": DEFAULT_AI_MODEL,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ],
+        "temperature": 0.35,
+        "max_tokens": 420,
+        "tool_choice": "none"
+    });
+    match call_groq_api(groq_key, ai_model, &req_body).await {
+        Ok(res_json) => {
+            if let Some((app_handle, request_id)) = usage_emit {
+                emit_openrouter_usage(app_handle, request_id, &res_json);
+            }
+            assistant_content_from_response(&res_json).map(|mut reply| {
+            if let Some(id) = report_id {
+                if !reply.contains(&id.to_string()) {
+                    reply.push_str(&format!("\n\nرقم التقرير: {id}"));
+                }
+                reply.push_str(&format!(
+                    "\n\nما قدمته هو ملخص تحليلي مختصر، والتقرير الكامل محفوظ كملف PDF. يمكنك طلبه برقم التقرير: {id}"
+                ));
+            }
+            reply
+            })
+        }
+        Err(e) => {
+            eprintln!("[Desktop Agent] interpretive reply failed: {}", e);
+            None
+        }
+    }
+}
+
 async fn try_handle_telegram_pattern_fast(
     client: &Client,
     token: &str,
     chat_id: i64,
     user_text: &str,
+    groq_key: &str,
+    ai_model: &str,
     app_state: &Arc<AppState>,
 ) -> bool {
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
@@ -1657,6 +2193,22 @@ async fn try_handle_telegram_pattern_fast(
         &delivery,
     )
     .await;
+    if let Some(reply) = generate_interpretive_pattern_reply(
+        user_text,
+        entry.name_ar,
+        &result,
+        groq_key,
+        ai_model,
+        None,
+    )
+    .await
+    {
+        if let Some(report_id) = report_id_from_tool_result(&result) {
+            crate::agent_tools::attach_report_analysis(app_state, report_id, &reply).await;
+        }
+        let _ = send_message(client, token, chat_id, reply).await;
+        return true;
+    }
     let reply = format_telegram_pattern_summary(entry.name_ar, &result);
     let _ = send_html(client, token, chat_id, reply).await;
     true
@@ -1680,7 +2232,11 @@ pub async fn handle_with_groq(
         let _ = send_html(client, token, chat_id, reply).await;
         return;
     }
-    if try_handle_telegram_pattern_fast(client, token, chat_id, user_text, app_state).await {
+    if try_handle_telegram_pattern_fast(
+        client, token, chat_id, user_text, groq_key, ai_model, app_state,
+    )
+    .await
+    {
         return;
     }
 
@@ -1688,8 +2244,13 @@ pub async fn handle_with_groq(
 
     let new_schema_info = search_schema(user_text, openai_key, erp).await;
     let schema_info = prepare_schema_for_system_prompt(&new_schema_info);
-    let memory_block =
-        crate::agent_memory::recall_memory_prompt_block(user_text, openai_key, erp, crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN).await;
+    let memory_block = crate::agent_memory::recall_memory_prompt_block(
+        user_text,
+        openai_key,
+        erp,
+        crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN,
+    )
+    .await;
 
     let system_instruction = if erp == crate::erp_profile::ErpKind::InfinityRetailDb {
         build_infinity_telegram_system_prompt(&schema_info, &memory_block)
@@ -1791,7 +2352,7 @@ ACC_ID, ACC_DEBIT, ACC_CREDIT, BALANCE — غير مُحدَّث هنا\n\
 - **Product search: use `LIKE '%X%'` not `= 'X'`.** Names have variable spacing, case, etc.\n\n\
 ### 🎯 Reusable query templates\n\
 For SQL templates use `run_query_pattern` or `search_query_patterns` — do NOT embed long SQL in answers.\n\
-Key patterns: **آخر منتجات بيعت اليوم**, مبيعات يومية موظف, متابعة الديون, ملخص مالي شهري, نواقص نشطة مورد, مقارنة أسعار موردين, رواتب, مصروفات, طلبية شراء ذكية.\n\
+Key patterns: **آخر منتجات بيعت اليوم**, مبيعات آخر يوم موظف, متابعة الديون, ملخص مالي شهري, نواقص نشطة مورد, مقارنة أسعار موردين, رواتب, مصروفات, طلبية شراء ذكية.\n\
 **Debts:** NEVER `BALANCE_C` (empty). لي = Sales−Returns−TAKE+BALANCE_EDIT.\n\
 **Monthly expenses (مصاريف شهرية):** Paid salary receipts = `dbo.GIVE` WHERE `EXPENCES_ID=1`. Operational/private = `GIVE` WHERE `EXPENCES_ID>0 AND EXPENCES_ID<>1` AND `G_STATUES=1`. ⚠️ `EXPENCES_ID=0` = supplier payments NOT expenses. ⚠️ `SALARIES` is **empty**.\n\
 **Pattern:** `run_query_pattern(\"ملخص مالي شهري\")` → 4 parts: debts + salary receipts + operational + summary. SQL file: `monthly_expenses_tracking.sql`.\n\
@@ -1841,16 +2402,16 @@ Wait for results before deciding the next step. If 0 rows, READ <DOMAIN_CRITICAL
 Do NOT use Markdown (`**`, `_`). Add 📊 📦 emojis where helpful. The official currency is `د.ل` (Libyan Dinar) — always append `د.ل` to any financial amounts, prices, or revenues in your final Arabic response (e.g., `150.00 د.ل`).\n\n\
 5b. **Column name translation (MANDATORY).** When generating Excel or HTML report cards, ALWAYS translate every column name from its database form into clear Arabic business terminology before passing it to any report tool. Database column names like ITEM_NAME → اسم المنتج, CUST_NAME → اسم العميل, QTY → الكمية, PRICE → السعر, LAST_COST → آخر تكلفة, AVER_COST → متوسط التكلفة, S_DATE → تاريخ البيع, B_DATE → تاريخ الشراء, FULL_NAME → اسم الموظف, G_VALUE → المبلغ, T_VALUE → المبلغ المحصَّل, ITEM_MODEL → الكود, STORE_NAME → المخزن, CUST_VENDOR → مورد, etc. NEVER pass raw DB column names to reports.\n\n\
 5c. **Professional advisor behavior.** You are not just a query engine — you are a business intelligence advisor. When asked for advice, recommendations, or analysis: provide concrete, specific, actionable insights with data to back them up. Proactively suggest related queries the user might find useful. If you notice something important in the data (e.g., critically low stock, high debt concentration, expired products), mention it even if not asked.\n\n\
-6. **Reports and printing.** Never generate HTML/CSS, never dump long tables, and never recreate a report only for printing. For query results, the app stores full rows outside the model context and renders/prints/sends them later. Your job is only: short Arabic title, compact summary, key totals, and useful notes from the tool preview.\n\
+6. **Reports and printing.** Never generate HTML/CSS, never dump long tables, and never recreate a report only for printing. For query results, the app stores full rows outside the model context and renders/prints/sends them later. The PDF renderer adds concise \"آراء المتمكن\" programmatically. Your reply must feel professional, not templated: short title, key accounting totals, one useful business note, and at most 2 preview lines.\n\
 7. **Excel Reports.** Create Excel (.xlsx) files only when the user explicitly asks for Excel, اكسل, إكسل, xlsx, spreadsheet, or جدول بيانات. For a predefined saved report, call `generate_excel`. For a new custom report from SQL, call `create_excel_report` with title + one read-only SELECT. If you already have tabular rows in memory, call `generate_custom_excel`. Never create Excel for a normal answer unless requested.\n\
-8. **Advanced SQL tools.** `get_database_views` for Views + join rules (مبيعات موظف: SUM(QTY*PRICE), SALE_ITEMS_INVOICE_VIEW). `get_product_schema` for products. **مبيعات يومية/موظف:** `run_query_pattern(\"مبيعات يومية موظف\")` FIRST. **Complex:** `plan_complex_query` → `execute_query_plan`. `validate_sql`, `explain_sql`, `get_table_sample`, `compare_periods`, `suggest_indexes`, favorites, `export_last_result`.\n\n\
+8. **Advanced SQL tools.** **مبيعات/إيرادات الموظفين:** استخدم فقط `run_query_pattern(\"مبيعات آخر يوم موظف\")`. لا تستخدم أي استعلام آخر لهذا الغرض. `get_product_schema` للمنتجات. **Complex:** `plan_complex_query` → `execute_query_plan`. `validate_sql`, `explain_sql`, `get_table_sample`, `compare_periods`, `suggest_indexes`, favorites, `export_last_result`.\n\n\
 9. **Save to favorites (MANDATORY).** When the user says: «احفظ»، «خزّن»، «ضعه في المفضلة»، «أضفه للمحفوظات»، «save», «remember» — you MUST call `save_favorite_query` in the SAME turn with the EXACT SQL from the last successful `execute_raw_sql` / `run_query_pattern`. Generate a concise Arabic `name` (≤50 chars) and brief `description`. **Never** reply «تم الحفظ» without calling the tool. **Never** ask permission — just save.\n\
 </critical_rules>\n\n\
 <workflow>\n\
 For each user question, follow these steps:\n\
 1. **Read the question carefully.** Identify what data is requested and which domain entity (product, invoice, customer, expiry...).\n\
 2. **Date/time sensitive?** If the request involves today, current month, current year, 'الشهر الحالي', 'اليوم', 'هذه السنة', salary period, or attendance — call `get_current_datetime` FIRST to get the exact date and use it in your SQL filters.\n\
-3. **Is this a complex query?** **آخر منتجات/أصناف بيعت اليوم** → `run_query_pattern(\"آخر منتجات بيعت اليوم\")`. مبيعات يومية/موظف → `run_query_pattern(\"مبيعات يومية موظف\")`. **ديون + مصاريف + رواتب شهرية** → `run_query_pattern(\"ملخص مالي شهري\")`. **مقارنة أسعار الموردين لمنتج** → `run_query_pattern(\"مقارنة أسعار موردين\", product_filter=\"...\")`. **نواقص نشطة + مورد + آخر سعر شراء** → `run_query_pattern(\"نواقص نشطة مورد\")`. **متابعة نواقص بدون مورد** → `run_query_pattern(\"متابعة النواقص\")`. دراسة منتج → `plan_complex_query` + `execute_query_plan`. طلبية شراء/ديون/صلاحية/جرد/رواتب/تصنيع → `run_query_pattern`. Skip steps 4-5.\n\
+3. **Is this a complex query?** **آخر منتجات/أصناف بيعت اليوم** → `run_query_pattern(\"آخر منتجات بيعت اليوم\")`. مبيعات/إيرادات الموظفين → `run_query_pattern(\"مبيعات آخر يوم موظف\")` فقط. **ديون + مصاريف + رواتب شهرية** → `run_query_pattern(\"ملخص مالي شهري\")`. **مقارنة أسعار الموردين لمنتج** → `run_query_pattern(\"مقارنة أسعار موردين\", product_filter=\"...\")`. **نواقص نشطة + مورد + آخر سعر شراء** → `run_query_pattern(\"نواقص نشطة مورد\")`. **متابعة نواقص بدون مورد** → `run_query_pattern(\"متابعة النواقص\")`. دراسة منتج → `plan_complex_query` + `execute_query_plan`. طلبية شراء/ديون/صلاحية/جرد/رواتب/تصنيع → `run_query_pattern`. Skip steps 4-5.\n\
 3b. **Before execute_raw_sql:** call `validate_sql` if unsure. Unknown table shape? → `get_table_sample`. User wants period comparison? → `compare_periods`.\n\
 4. **Scan <schema>** for matching tables. If no obvious match, call `search_schema` ONCE with refined keywords.\n\
 5. **Pick ONE table** that best fits. Identify the exact column names you need (copy them from <schema>).\n\
@@ -2197,10 +2758,12 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
     let mut current_history = chat_history.clone();
 
     // Per-conversation guards
-    let mut recent_sql: Vec<String> = Vec::new();           // last 3 executed SQLs
-    let mut sql_fingerprints: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut schema_cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut sql_call_count: usize = 0;                       // total execute_raw_sql calls this turn
+    let mut recent_sql: Vec<String> = Vec::new(); // last 3 executed SQLs
+    let mut sql_fingerprints: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut schema_cache: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut sql_call_count: usize = 0; // total execute_raw_sql calls this turn
     const MAX_SQL_PER_TURN: usize = 5;
     const MAX_SAME_FINGERPRINT: usize = 2;
     const FORCE_FINALIZE_AFTER_SQL: usize = 4;
@@ -2253,11 +2816,19 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                             let mut filtered_calls: Vec<&Value> = Vec::new();
                             let mut sql_seen = false;
                             for tc in tool_calls {
-                                let tname = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-                                if tname == "execute_raw_sql" || tname == "create_pdf_report" || tname == "create_excel_report" {
+                                let tname = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("");
+                                if tname == "execute_raw_sql"
+                                    || tname == "create_pdf_report"
+                                    || tname == "create_excel_report"
+                                {
                                     if sql_seen {
                                         // skip subsequent SQL calls in same turn — respond with a hint instead
-                                        let tid = tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                        let tid =
+                                            tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
                                         let resp = json!({
                                             "role": "tool",
                                             "tool_call_id": tid,
@@ -2275,18 +2846,42 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                             for tool_call in filtered_calls {
                                 let func = tool_call.get("function").unwrap_or(&empty_json);
                                 let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
-                                let tool_call_id = tool_call.get("id").and_then(|id| id.as_str()).unwrap_or("");
+                                let args_str = func
+                                    .get("arguments")
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("{}");
+                                let tool_call_id =
+                                    tool_call.get("id").and_then(|id| id.as_str()).unwrap_or("");
 
-                                println!("[Telegram Agent] Tool called: {} with args: {}", name, args_str);
+                                println!(
+                                    "[Telegram Agent] Tool called: {} with args: {}",
+                                    name, args_str
+                                );
                                 if name == "execute_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
-                                    
-                                    let func_response_data = execute_db_report(rep_id, search_term, target_date, app_state, reports_cache).await;
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+
+                                    let func_response_data = execute_db_report(
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2295,15 +2890,33 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "generate_pdf" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+
                                     let func_response_data = generate_and_send_pdf_for_agent(
-                                        client, token, chat_id, rep_id, search_term, target_date, app_state, reports_cache
-                                    ).await;
-                                    
+                                        client,
+                                        token,
+                                        chat_id,
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2312,24 +2925,39 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "generate_custom_pdf" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title =
+                                        args.get("title").and_then(|t| t.as_str()).unwrap_or("");
                                     let empty_arr = vec![];
-                                    let columns_val = args.get("columns").and_then(|c| c.as_array()).unwrap_or(&empty_arr);
-                                    let rows_val = args.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty_arr);
+                                    let columns_val = args
+                                        .get("columns")
+                                        .and_then(|c| c.as_array())
+                                        .unwrap_or(&empty_arr);
+                                    let rows_val = args
+                                        .get("rows")
+                                        .and_then(|r| r.as_array())
+                                        .unwrap_or(&empty_arr);
 
-                                    let columns: Vec<String> = columns_val.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
+                                    let columns: Vec<String> = columns_val
+                                        .iter()
+                                        .map(|v| v.as_str().unwrap_or("").to_string())
+                                        .collect();
                                     let mut rows: Vec<Vec<String>> = Vec::new();
                                     for r_val in rows_val {
                                         if let Some(arr) = r_val.as_array() {
-                                            let r_str: Vec<String> = arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
+                                            let r_str: Vec<String> = arr
+                                                .iter()
+                                                .map(|v| v.as_str().unwrap_or("").to_string())
+                                                .collect();
                                             rows.push(r_str);
                                         }
                                     }
 
                                     let func_response_data = generate_custom_pdf_for_agent(
-                                        client, token, chat_id, title, &columns, &rows
-                                    ).await;
+                                        client, token, chat_id, title, &columns, &rows,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -2339,13 +2967,22 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "create_pdf_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("PDF Report");
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title = args
+                                        .get("title")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("PDF Report");
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
 
-                                    let func_response_data = generate_pdf_report_from_sql_for_agent(
-                                        client, token, chat_id, title, sql_query, app_state
-                                    ).await;
+                                    let func_response_data =
+                                        generate_pdf_report_from_sql_for_agent(
+                                            client, token, chat_id, title, sql_query, app_state,
+                                        )
+                                        .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -2355,14 +2992,32 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "generate_excel" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
 
                                     let func_response_data = generate_and_send_excel_for_agent(
-                                        client, token, chat_id, rep_id, search_term, target_date, app_state, reports_cache
-                                    ).await;
+                                        client,
+                                        token,
+                                        chat_id,
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -2372,12 +3027,21 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "generate_custom_excel" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title =
+                                        args.get("title").and_then(|t| t.as_str()).unwrap_or("");
                                     let empty_arr = vec![];
-                                    let columns_val = args.get("columns").and_then(|c| c.as_array()).unwrap_or(&empty_arr);
-                                    let rows_val = args.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty_arr);
-                                    let columns: Vec<String> = columns_val.iter().map(json_value_to_cell).collect();
+                                    let columns_val = args
+                                        .get("columns")
+                                        .and_then(|c| c.as_array())
+                                        .unwrap_or(&empty_arr);
+                                    let rows_val = args
+                                        .get("rows")
+                                        .and_then(|r| r.as_array())
+                                        .unwrap_or(&empty_arr);
+                                    let columns: Vec<String> =
+                                        columns_val.iter().map(json_value_to_cell).collect();
                                     let mut rows: Vec<Vec<String>> = Vec::new();
                                     for r_val in rows_val {
                                         if let Some(arr) = r_val.as_array() {
@@ -2385,8 +3049,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                         }
                                     }
                                     let func_response_data = generate_custom_excel_for_agent(
-                                        client, token, chat_id, title, &columns, &rows
-                                    ).await;
+                                        client, token, chat_id, title, &columns, &rows,
+                                    )
+                                    .await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2395,13 +3060,22 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "create_excel_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Excel Report");
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title = args
+                                        .get("title")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("Excel Report");
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
 
-                                    let func_response_data = generate_excel_report_from_sql_for_agent(
-                                        client, token, chat_id, title, sql_query, app_state
-                                    ).await;
+                                    let func_response_data =
+                                        generate_excel_report_from_sql_for_agent(
+                                            client, token, chat_id, title, sql_query, app_state,
+                                        )
+                                        .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -2411,12 +3085,21 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "search_schema" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let keywords = args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
-                                    
-                                    let _ = send_message(client, token, chat_id, format!("⏳ جاري البحث في المخطط عن '{}'...", keywords)).await;
-                                    let schema_data = search_schema(keywords, openai_key, erp).await;
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let keywords =
+                                        args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
+
+                                    let _ = send_message(
+                                        client,
+                                        token,
+                                        chat_id,
+                                        format!("⏳ جاري البحث في المخطط عن '{}'...", keywords),
+                                    )
+                                    .await;
+                                    let schema_data =
+                                        search_schema(keywords, openai_key, erp).await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2425,14 +3108,23 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "execute_raw_sql" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
-                                    let sql_norm = sql_query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
+                                    let sql_norm = sql_query
+                                        .split_whitespace()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .to_lowercase();
                                     let fingerprint = sql_semantic_fingerprint(sql_query);
 
                                     // Per-turn cap
                                     sql_call_count += 1;
-                                    let fp_count = sql_fingerprints.entry(fingerprint.clone()).or_insert(0);
+                                    let fp_count =
+                                        sql_fingerprints.entry(fingerprint.clone()).or_insert(0);
                                     *fp_count += 1;
                                     let fp_hits = *fp_count;
 
@@ -2443,7 +3135,13 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     } else if fp_hits > MAX_SAME_FINGERPRINT {
                                         "{\"error\": \"حاولت الاستعلام عن نفس الجداول/الشروط عدة مرات بصياغات مختلفة. توقف عن إعادة الصياغة وقدّم إجابة نهائية بالعربية بما لديك، أو اطلب توضيحاً محدداً — ولا تكرر هذا الاستعلام.\"}".to_string()
                                     } else {
-                                        let _ = send_message(client, token, chat_id, "⏳ جاري تنفيذ استعلام SQL...".to_string()).await;
+                                        let _ = send_message(
+                                            client,
+                                            token,
+                                            chat_id,
+                                            "⏳ جاري تنفيذ استعلام SQL...".to_string(),
+                                        )
+                                        .await;
                                         let result = execute_raw_sql_for_agent(
                                             sql_query,
                                             app_state,
@@ -2455,7 +3153,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                         )
                                         .await;
                                         recent_sql.push(sql_norm);
-                                        if recent_sql.len() > 3 { recent_sql.remove(0); }
+                                        if recent_sql.len() > 3 {
+                                            recent_sql.remove(0);
+                                        }
                                         result.to_string()
                                     };
 
@@ -2467,16 +3167,30 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "explore_local_schema" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let table_hint = args.get("table_hint").and_then(|h| h.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let table_hint = args
+                                        .get("table_hint")
+                                        .and_then(|h| h.as_str())
+                                        .unwrap_or("");
                                     let cache_key = table_hint.to_lowercase();
 
                                     // Cache hit: avoid re-querying INFORMATION_SCHEMA in same turn
-                                    let resp_content = if let Some(cached) = schema_cache.get(&cache_key) {
+                                    let resp_content = if let Some(cached) =
+                                        schema_cache.get(&cache_key)
+                                    {
                                         format!("{{\"cached\": true, \"data\": {}}}", cached)
                                     } else {
-                                        let _ = send_message(client, token, chat_id, "⏳ جاري استكشاف قاعدة البيانات المحلية...".to_string()).await;
-                                        let func_response_data = explore_local_schema_for_agent(table_hint, app_state).await;
+                                        let _ = send_message(
+                                            client,
+                                            token,
+                                            chat_id,
+                                            "⏳ جاري استكشاف قاعدة البيانات المحلية...".to_string(),
+                                        )
+                                        .await;
+                                        let func_response_data =
+                                            explore_local_schema_for_agent(table_hint, app_state)
+                                                .await;
                                         let s = func_response_data.to_string();
                                         schema_cache.insert(cache_key, s.clone());
                                         s
@@ -2490,8 +3204,10 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "search_query_patterns" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let keywords = args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let keywords =
+                                        args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
                                     let result = search_query_patterns_local(keywords, erp);
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -2510,7 +3226,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "schedule_report" {
-                                    let result = handle_schedule_report_tool(args_str, app_state).await;
+                                    let result =
+                                        handle_schedule_report_tool(args_str, app_state).await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2519,7 +3236,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "list_scheduled_reports" {
-                                    let result = handle_list_scheduled_reports_tool(app_state).await;
+                                    let result =
+                                        handle_list_scheduled_reports_tool(app_state).await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2528,9 +3246,15 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                     chat_history.push(tool_resp_msg);
                                 } else if name == "delete_scheduled_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                                    let schedule_id = args.get("schedule_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    let result = handle_delete_scheduled_report_tool(schedule_id, app_state).await;
+                                    let args: Value =
+                                        serde_json::from_str(args_str).unwrap_or(json!({}));
+                                    let schedule_id = args
+                                        .get("schedule_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let result =
+                                        handle_delete_scheduled_report_tool(schedule_id, app_state)
+                                            .await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -2568,33 +3292,66 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     content.clone(),
                                     openai_key.to_string(),
                                     groq_key.to_string(),
-                                    crate::agent_memory::build_turn_context_from_history(&current_history),
+                                    crate::agent_memory::build_turn_context_from_history(
+                                        &current_history,
+                                    ),
                                     erp,
                                     crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string(),
                                 );
                                 let _ = send_html(client, token, chat_id, content).await;
                                 return;
                             }
-                            let _ = send_message(client, token, chat_id, "رد فارغ من الذكاء الاصطناعي".to_string()).await;
+                            let _ = send_message(
+                                client,
+                                token,
+                                chat_id,
+                                "رد فارغ من الذكاء الاصطناعي".to_string(),
+                            )
+                            .await;
                             return;
                         }
                     } else {
-                         let _ = send_message(client, token, chat_id, "لا توجد استجابة صالحة من الذكاء الاصطناعي".to_string()).await;
-                         return;
+                        let _ = send_message(
+                            client,
+                            token,
+                            chat_id,
+                            "لا توجد استجابة صالحة من الذكاء الاصطناعي".to_string(),
+                        )
+                        .await;
+                        return;
                     }
                 } else {
-                    let _ = send_message(client, token, chat_id, "فشل في قراءة الرد (JSON Error)".to_string()).await;
+                    let _ = send_message(
+                        client,
+                        token,
+                        chat_id,
+                        "فشل في قراءة الرد (JSON Error)".to_string(),
+                    )
+                    .await;
                     return;
                 }
             }
             Err(e) => {
-                let _ = send_message(client, token, chat_id, format!("خطأ في الاتصال بـ OpenRouter: {}", e)).await;
+                let _ = send_message(
+                    client,
+                    token,
+                    chat_id,
+                    format!("خطأ في الاتصال بـ OpenRouter: {}", e),
+                )
+                .await;
                 return;
             }
         }
     }
-    
-    let _ = send_message(client, token, chat_id, "عذراً، استغرق تحليل البيانات وقتاً أطول من المتوقع. يرجى المحاولة بسؤال أكثر تحديداً.".to_string()).await;
+
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "عذراً، استغرق تحليل البيانات وقتاً أطول من المتوقع. يرجى المحاولة بسؤال أكثر تحديداً."
+            .to_string(),
+    )
+    .await;
 }
 
 // ─── Execute Report locally for the Agent ─────────────────────────────────
@@ -2638,7 +3395,7 @@ async fn execute_db_report(
                 })
             }
         }
-        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) }),
     }
 }
 
@@ -2653,7 +3410,13 @@ async fn generate_and_send_pdf_for_agent(
     app_state: &Arc<AppState>,
     reports_cache: &[SupabaseReport],
 ) -> Value {
-    let _ = send_message(client, token, chat_id, "⏳ جاري تجهيز التقرير كملف PDF...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "⏳ جاري تجهيز التقرير كملف PDF...".to_string(),
+    )
+    .await;
 
     let report = match reports_cache.iter().find(|r| r.id == report_id) {
         Some(r) => r,
@@ -2682,10 +3445,21 @@ async fn generate_and_send_pdf_for_agent(
 
             match generate_report_pdf(&report.name_ar, &result.columns, &result.rows) {
                 Ok(pdf_bytes) => {
-                    let filename = format!("{}.pdf", report.name_ar.chars().take(30).collect::<String>().replace(' ', "_"));
-                    let caption = format!("📊 *{}*\n✅ {} نتيجة", report.name_ar, result.rows.len());
-                    
-                    if let Err(e) = send_pdf(client, token, chat_id, &filename, pdf_bytes, &caption).await {
+                    let filename = format!(
+                        "{}.pdf",
+                        report
+                            .name_ar
+                            .chars()
+                            .take(30)
+                            .collect::<String>()
+                            .replace(' ', "_")
+                    );
+                    let caption =
+                        format!("📊 *{}*\n✅ {} نتيجة", report.name_ar, result.rows.len());
+
+                    if let Err(e) =
+                        send_pdf(client, token, chat_id, &filename, pdf_bytes, &caption).await
+                    {
                         json!({ "error": format!("فشل في إرسال ملف PDF إلى تيليجرام: {}", e) })
                     } else {
                         json!({ "result": "تم إنشاء وإرسال ملف PDF للمستخدم بنجاح." })
@@ -2696,7 +3470,7 @@ async fn generate_and_send_pdf_for_agent(
                 }
             }
         }
-        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) }),
     }
 }
 
@@ -2708,10 +3482,19 @@ async fn generate_custom_pdf_for_agent(
     columns: &[String],
     rows: &[Vec<String>],
 ) -> Value {
-    let _ = send_message(client, token, chat_id, "⏳ جاري تجهيز تقرير PDF مخصص...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "⏳ جاري تجهيز تقرير PDF مخصص...".to_string(),
+    )
+    .await;
     match generate_report_pdf(title, columns, rows) {
         Ok(pdf_bytes) => {
-            let filename = format!("{}.pdf", title.chars().take(30).collect::<String>().replace(' ', "_"));
+            let filename = format!(
+                "{}.pdf",
+                title.chars().take(30).collect::<String>().replace(' ', "_")
+            );
             let caption = format!("📊 *{}*\n✅ {} نتيجة", title, rows.len());
             if let Err(e) = send_pdf(client, token, chat_id, &filename, pdf_bytes, &caption).await {
                 json!({ "error": format!("فشل في إرسال ملف PDF إلى تيليجرام: {}", e) })
@@ -2719,7 +3502,7 @@ async fn generate_custom_pdf_for_agent(
                 json!({ "result": "تم إنشاء وإرسال ملف PDF للمستخدم بنجاح." })
             }
         }
-        Err(e) => json!({ "error": format!("فشل في إنشاء ملف PDF: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في إنشاء ملف PDF: {}", e) }),
     }
 }
 
@@ -2736,7 +3519,13 @@ async fn generate_pdf_report_from_sql_for_agent(
         return json!({ "error": e });
     }
 
-    let _ = send_message(client, token, chat_id, "Preparing the PDF report...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "Preparing the PDF report...".to_string(),
+    )
+    .await;
 
     let conn_opt = app_state.conn.lock().await.clone();
     if conn_opt.is_none() {
@@ -2752,18 +3541,23 @@ async fn generate_pdf_report_from_sql_for_agent(
 
             match generate_report_pdf(title, &result.columns, &result.rows) {
                 Ok(pdf_bytes) => {
-                    let filename = format!("{}.pdf", title.chars().take(30).collect::<String>().replace(' ', "_"));
+                    let filename = format!(
+                        "{}.pdf",
+                        title.chars().take(30).collect::<String>().replace(' ', "_")
+                    );
                     let caption = format!("PDF report: {}\nRows: {}", title, result.rows.len());
-                    if let Err(e) = send_pdf(client, token, chat_id, &filename, pdf_bytes, &caption).await {
+                    if let Err(e) =
+                        send_pdf(client, token, chat_id, &filename, pdf_bytes, &caption).await
+                    {
                         json!({ "error": format!("Failed to send PDF to Telegram: {}", e) })
                     } else {
                         json!({ "result": format!("PDF report was generated and sent successfully. Rows: {}", result.rows.len()) })
                     }
                 }
-                Err(e) => json!({ "error": format!("Failed to generate PDF: {}", e) })
+                Err(e) => json!({ "error": format!("Failed to generate PDF: {}", e) }),
             }
         }
-        Err(e) => json!({ "error": format!("Failed to execute the PDF report query: {}", e) })
+        Err(e) => json!({ "error": format!("Failed to execute the PDF report query: {}", e) }),
     }
 }
 
@@ -2778,7 +3572,13 @@ async fn generate_and_send_excel_for_agent(
     app_state: &Arc<AppState>,
     reports_cache: &[SupabaseReport],
 ) -> Value {
-    let _ = send_message(client, token, chat_id, "⏳ جاري تجهيز التقرير كملف Excel...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "⏳ جاري تجهيز التقرير كملف Excel...".to_string(),
+    )
+    .await;
 
     let report = match reports_cache.iter().find(|r| r.id == report_id) {
         Some(r) => r,
@@ -2807,19 +3607,30 @@ async fn generate_and_send_excel_for_agent(
 
             match generate_report_excel(&report.name_ar, &result.columns, &result.rows) {
                 Ok(xlsx_bytes) => {
-                    let filename = format!("{}.xlsx", report.name_ar.chars().take(30).collect::<String>().replace(' ', "_"));
-                    let caption = format!("📊 *{}*\n✅ {} نتيجة", report.name_ar, result.rows.len());
+                    let filename = format!(
+                        "{}.xlsx",
+                        report
+                            .name_ar
+                            .chars()
+                            .take(30)
+                            .collect::<String>()
+                            .replace(' ', "_")
+                    );
+                    let caption =
+                        format!("📊 *{}*\n✅ {} نتيجة", report.name_ar, result.rows.len());
 
-                    if let Err(e) = send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await {
+                    if let Err(e) =
+                        send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await
+                    {
                         json!({ "error": format!("فشل في إرسال ملف Excel إلى تيليجرام: {}", e) })
                     } else {
                         json!({ "result": "تم إنشاء وإرسال ملف Excel للمستخدم بنجاح." })
                     }
                 }
-                Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) })
+                Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) }),
             }
         }
-        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) }),
     }
 }
 
@@ -2831,18 +3642,29 @@ async fn generate_custom_excel_for_agent(
     columns: &[String],
     rows: &[Vec<String>],
 ) -> Value {
-    let _ = send_message(client, token, chat_id, "⏳ جاري تجهيز تقرير Excel مخصص...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "⏳ جاري تجهيز تقرير Excel مخصص...".to_string(),
+    )
+    .await;
     match generate_report_excel(title, columns, rows) {
         Ok(xlsx_bytes) => {
-            let filename = format!("{}.xlsx", title.chars().take(30).collect::<String>().replace(' ', "_"));
+            let filename = format!(
+                "{}.xlsx",
+                title.chars().take(30).collect::<String>().replace(' ', "_")
+            );
             let caption = format!("📊 *{}*\n✅ {} نتيجة", title, rows.len());
-            if let Err(e) = send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await {
+            if let Err(e) =
+                send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await
+            {
                 json!({ "error": format!("فشل في إرسال ملف Excel إلى تيليجرام: {}", e) })
             } else {
                 json!({ "result": "تم إنشاء وإرسال ملف Excel للمستخدم بنجاح." })
             }
         }
-        Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) }),
     }
 }
 
@@ -2858,7 +3680,13 @@ async fn generate_excel_report_from_sql_for_agent(
         return json!({ "error": e });
     }
 
-    let _ = send_message(client, token, chat_id, "Preparing the Excel report...".to_string()).await;
+    let _ = send_message(
+        client,
+        token,
+        chat_id,
+        "Preparing the Excel report...".to_string(),
+    )
+    .await;
 
     let conn_opt = app_state.conn.lock().await.clone();
     if conn_opt.is_none() {
@@ -2874,18 +3702,23 @@ async fn generate_excel_report_from_sql_for_agent(
 
             match generate_report_excel(title, &result.columns, &result.rows) {
                 Ok(xlsx_bytes) => {
-                    let filename = format!("{}.xlsx", title.chars().take(30).collect::<String>().replace(' ', "_"));
+                    let filename = format!(
+                        "{}.xlsx",
+                        title.chars().take(30).collect::<String>().replace(' ', "_")
+                    );
                     let caption = format!("Excel report: {}\nRows: {}", title, result.rows.len());
-                    if let Err(e) = send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await {
+                    if let Err(e) =
+                        send_excel(client, token, chat_id, &filename, xlsx_bytes, &caption).await
+                    {
                         json!({ "error": format!("Failed to send Excel to Telegram: {}", e) })
                     } else {
                         json!({ "result": format!("Excel report was generated and sent successfully. Rows: {}", result.rows.len()) })
                     }
                 }
-                Err(e) => json!({ "error": format!("Failed to generate Excel: {}", e) })
+                Err(e) => json!({ "error": format!("Failed to generate Excel: {}", e) }),
             }
         }
-        Err(e) => json!({ "error": format!("Failed to execute the Excel report query: {}", e) })
+        Err(e) => json!({ "error": format!("Failed to execute the Excel report query: {}", e) }),
     }
 }
 
@@ -2902,8 +3735,16 @@ fn ai_cancelled(cancel_rx: &mut Option<tokio::sync::oneshot::Receiver<()>>) -> b
 
 fn response_defers_tool_execution(content: &str) -> bool {
     const MARKERS: &[&str] = &[
-        "سأقوم", "سأنفذ", "سأستخدم", "سأبحث", "سأستعرض", "سأبدأ", "سوف ",
-        "الآن س", "في الخطوة", "سأقوم ب",
+        "سأقوم",
+        "سأنفذ",
+        "سأستخدم",
+        "سأبحث",
+        "سأستعرض",
+        "سأبدأ",
+        "سوف ",
+        "الآن س",
+        "في الخطوة",
+        "سأقوم ب",
     ];
     MARKERS.iter().any(|m| content.contains(m))
 }
@@ -2934,6 +3775,7 @@ pub fn replace_file_path_tags(content: &str, path: &str) -> String {
     out
 }
 
+#[allow(dead_code)]
 async fn sanitize_response_file_paths(content: &str, app_state: &Arc<AppState>) -> String {
     sanitize_response_file_paths_ex(content, app_state, false).await
 }
@@ -2956,9 +3798,20 @@ async fn sanitize_response_file_paths_ex(
     }
     // كلمات مفتاحية تدل على ملف تصدير
     let export_keywords = [
-        "xlsx", "Excel", "اكسل", "إكسل", "PDF", "pdf",
-        "تصدير", "تم التصدير", "تم إنشاء", "تم حفظ", "الملف",
-        "ملف التقرير", "جاهز", "حُفظ",
+        "xlsx",
+        "Excel",
+        "اكسل",
+        "إكسل",
+        "PDF",
+        "pdf",
+        "تصدير",
+        "تم التصدير",
+        "تم إنشاء",
+        "تم حفظ",
+        "الملف",
+        "ملف التقرير",
+        "جاهز",
+        "حُفظ",
     ];
     let has_keyword = export_keywords.iter().any(|k| content.contains(k));
     if force || has_keyword {
@@ -2977,23 +3830,29 @@ pub async fn handle_with_groq_local(
     reports_cache: &[SupabaseReport],
     app_handle: tauri::AppHandle,
     request_id: &str,
+    chat_session_id: Option<&str>,
     openai_key: &str,
     mut cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     advanced_mode: bool,
 ) -> Result<String, String> {
     if groq_key.trim().is_empty() {
         return Err(
-            "مفتاح OpenRouter غير متوفر. تحقق من اتصال الإنترنت أو راجع إعدادات المطوّر."
-                .to_string(),
+            "مفتاح OpenRouter غير متوفر. تحقق من اتصال الإنترنت أو راجع إعدادات المطوّر.".to_string(),
         );
     }
 
     let erp = crate::erp_profile::current_erp_kind(app_state).await;
 
-    let access_token = match crate::supabase_config::read_stored_access_token(&app_handle, crate::decrypt_value_internal) {
+    let access_token = match crate::supabase_config::read_stored_access_token(
+        &app_handle,
+        crate::decrypt_value_internal,
+    ) {
         Ok(Some(token)) => token,
         _ => crate::supabase_config::DEFAULT_APP_ACCESS_TOKEN.to_string(),
     };
+    let chat_context_block =
+        crate::agent_memory::recall_chat_session_context_block(&access_token, chat_session_id)
+            .await;
 
     if let Some(reply) = try_handle_greeting(user_text, erp) {
         return Ok(reply);
@@ -3058,13 +3917,34 @@ pub async fn handle_with_groq_local(
                     &delivery,
                 )
                 .await;
+                let analysis = generate_interpretive_pattern_reply(
+                    user_text,
+                    entry.name_ar,
+                    &result,
+                    groq_key,
+                    ai_model,
+                    Some((&app_handle, request_id)),
+                )
+                .await;
+                if let (Some(report_id), Some(ref analysis_text)) =
+                    (report_id_from_tool_result(&result), analysis.as_ref())
+                {
+                    crate::agent_tools::attach_report_analysis(app_state, report_id, analysis_text)
+                        .await;
+                }
                 emit_html_report_result(
                     &app_handle,
+                    &access_token,
+                    chat_session_id,
                     request_id,
                     entry.name_ar,
                     "run_query_pattern",
                     &result.to_string(),
+                    analysis.as_deref(),
                 );
+                if let Some(reply) = analysis {
+                    return Ok(reply);
+                }
                 return Ok(format_desktop_pattern_summary(entry.name_ar, &result));
             }
         }
@@ -3089,10 +3969,12 @@ pub async fn handle_with_groq_local(
     }
 
     let memory_block = if advanced_mode {
-        crate::agent_memory::recall_memory_prompt_block(user_text, openai_key, erp, &access_token).await
+        crate::agent_memory::recall_memory_prompt_block(user_text, openai_key, erp, &access_token)
+            .await
     } else {
         String::new()
     };
+    let memory_block = format!("{}{}", chat_context_block, memory_block);
 
     let system_instruction = if advanced_mode {
         if erp == crate::erp_profile::ErpKind::InfinityRetailDb {
@@ -3125,7 +4007,7 @@ pub async fn handle_with_groq_local(
                 product_note = product_note,
             )
         } else {
-        format!(
+            format!(
         "<DOMAIN_CRITICAL_FACTS>\n\
 **READ THIS FIRST.** This is your pre-loaded knowledge of the Marketing2026 database. \
 Use this as your primary reference. Only call `search_schema` if the answer needs a table NOT listed here.\n\n\
@@ -3222,7 +4104,7 @@ ACC_ID, ACC_DEBIT, ACC_CREDIT, BALANCE — غير مُحدَّث هنا\n\
 - **Product search: use `LIKE '%X%'` not `= 'X'`.** Names have variable spacing, case, etc.\n\n\
 ### 🎯 Reusable query templates\n\
 For SQL templates use `run_query_pattern` or `search_query_patterns` — do NOT embed long SQL in answers.\n\
-Key patterns: **آخر منتجات بيعت اليوم**, مبيعات يومية موظف, متابعة الديون, ملخص مالي شهري, نواقص نشطة مورد, مقارنة أسعار موردين, رواتب, مصروفات, طلبية شراء ذكية.\n\
+Key patterns: **آخر منتجات بيعت اليوم**, مبيعات آخر يوم موظف, متابعة الديون, ملخص مالي شهري, نواقص نشطة مورد, مقارنة أسعار موردين, رواتب, مصروفات, طلبية شراء ذكية.\n\
 **Debts:** NEVER `BALANCE_C` (empty). لي = Sales−Returns−TAKE+BALANCE_EDIT.\n\
 **Monthly expenses (مصاريف شهرية):** Paid salary receipts = `dbo.GIVE` WHERE `EXPENCES_ID=1`. Operational/private = `GIVE` WHERE `EXPENCES_ID>0 AND EXPENCES_ID<>1` AND `G_STATUES=1`. ⚠️ `EXPENCES_ID=0` = supplier payments NOT expenses. ⚠️ `SALARIES` is **empty**.\n\
 **Pattern:** `run_query_pattern(\"ملخص مالي شهري\")` → 4 parts: debts + salary receipts + operational + summary. SQL file: `monthly_expenses_tracking.sql`.\n\
@@ -3280,7 +4162,7 @@ Prefer run_query_pattern over explore_local_schema/search_schema.\n\n\
 **FILE_PATH:** copy the EXACT path from the tool result — NEVER invent paths like `C:\\Users\\User\\...`. \
 Append `[FILE_PATH:actual_path]` only when a file was saved.\n\n\
 8. **Excel Reports.** When user asks for Excel/اكسل/xlsx: call create_excel_report or export_last_result — do NOT describe the file without creating it.\n\
-9. **Large results (>25 rows).** Summarize preview rows only. Full rows are saved by the app for one-click print/send. Do NOT dump all rows, do NOT generate HTML/CSS, and do NOT rerun the same query for export.\n\
+9. **Large results (>25 rows).** Summarize preview rows only. Full rows are saved by the app for one-click print/send. Keep a smart accounting tone: key total, risk/opportunity note, and report number. Do NOT dump all rows, do NOT generate HTML/CSS, and do NOT rerun the same query for export.\n\
 10. **Advanced tools.** run_query_pattern FIRST for: ديون، مصاريف، مبيعات موظف، مقارنة أسعار موردين (مع product_filter)، نواقص نشطة مورد، متابعة النواقص، طلبية شراء. \
 Avoid search_schema/get_table_sample unless run_query_pattern failed.\n\n\
 11. **Save to favorites (MANDATORY behavior).** When the user asks to save, store, remember, or favorite a query — using ANY of these triggers: \
@@ -3293,7 +4175,7 @@ If no successful SELECT was executed yet in this conversation, run it first then
 </critical_rules>\n\n\
 <workflow>\n\
 1. Identify the request type.\n\
-2. **Known pattern?** → `run_query_pattern` immediately (**آخر منتجات بيعت اليوم** → \"آخر منتجات بيعت اليوم\", آخر يوم مبيعات → \"مبيعات آخر يوم موظف\", ديون/مصاريف → \"ملخص مالي شهري\", مبيعات موظف → \"مبيعات يومية موظف\", مقارنة أسعار موردين → \"مقارنة أسعار موردين\" + product_filter, نواقص+مورد+سعر → \"نواقص نشطة مورد\", متابعة نواقص → \"متابعة النواقص\", ديون → \"متابعة الديون\").\n\
+2. **Known pattern?** → `run_query_pattern` immediately (**آخر منتجات بيعت اليوم** → \"آخر منتجات بيعت اليوم\", مبيعات/إيرادات الموظفين → \"مبيعات آخر يوم موظف\" فقط, ديون/مصاريف → \"ملخص مالي شهري\", مقارنة أسعار موردين → \"مقارنة أسعار موردين\" + product_filter, نواقص+مورد+سعر → \"نواقص نشطة مورد\", متابعة نواقص → \"متابعة النواقص\", ديون → \"متابعة الديون\").\n\
 3. **Need today's date?** → `get_current_datetime` then execute SQL.\n\
 4. **Custom query?** → ONE `execute_raw_sql` using DOMAIN_CRITICAL_FACTS columns.\n\
 5. **Export?** → `export_last_result` or `create_excel_report` after data is ready.\n\
@@ -3372,7 +4254,11 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         )
         }
     } else {
-        build_fast_system_prompt(&schema_info, active_pf.as_deref(), erp)
+        let mut prompt = build_fast_system_prompt(&schema_info, active_pf.as_deref(), erp);
+        if !memory_block.trim().is_empty() {
+            prompt.push_str(&memory_block);
+        }
+        prompt
     };
 
     let tools_json = json!([
@@ -3660,11 +4546,16 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
     );
 
     // Check if system prompt exists in history
-    if chat_history.is_empty() || chat_history[0].get("role").and_then(|r| r.as_str()) != Some("system") {
-        chat_history.insert(0, json!({
-            "role": "system",
-            "content": system_instruction
-        }));
+    if chat_history.is_empty()
+        || chat_history[0].get("role").and_then(|r| r.as_str()) != Some("system")
+    {
+        chat_history.insert(
+            0,
+            json!({
+                "role": "system",
+                "content": system_instruction
+            }),
+        );
     } else {
         chat_history[0] = json!({
             "role": "system",
@@ -3680,7 +4571,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
     // لا يحتاج تاريخ المحادثات السابقة لاتخاذ قرار أي pattern يستدعي.
     // هذا يوفر ~1200-1500 توكن لكل استعلام بدلاً من إرسال 6-8 رسائل قديمة.
     let mut current_history: Vec<Value> = if !advanced_mode {
-        let system_msg = chat_history.first().cloned()
+        let system_msg = chat_history
+            .first()
+            .cloned()
             .unwrap_or_else(|| json!({"role": "system", "content": ""}));
         vec![system_msg, json!({"role": "user", "content": user_text})]
     } else {
@@ -3691,8 +4584,10 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
 
     // Per-conversation guards (Desktop)
     let mut recent_sql: Vec<String> = Vec::new();
-    let mut sql_fingerprints: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut schema_cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut sql_fingerprints: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut schema_cache: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut sql_call_count: usize = 0;
     const MAX_SQL_PER_TURN: usize = 5;
     const MAX_SAME_FINGERPRINT: usize = 2;
@@ -3709,7 +4604,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
     let mut fast_path_summarize_only = false;
 
     if !advanced_mode {
-        match crate::agent_memory::fetch_agent_tool_recipes(&access_token, erp, user_text, 1).await {
+        match crate::agent_memory::fetch_agent_tool_recipes(&access_token, erp, user_text, 1).await
+        {
             Ok(recipes) => {
                 if let Some(recipe) = recipes.first() {
                     eprintln!(
@@ -3722,13 +4618,34 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                             .get("requires_product_filter")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        if requires_product_filter && active_pf.as_deref().unwrap_or("").trim().is_empty() {
+                        if requires_product_filter
+                            && active_pf.as_deref().unwrap_or("").trim().is_empty()
+                        {
                             eprintln!(
                                 "[agent_memory] recipe skipped id={} reason=missing_product_filter",
                                 recipe.id
                             );
                         } else {
                             let mut args = recipe.tool_args_template.clone();
+                            let catalog_entry =
+                                crate::pattern_catalog::resolve_pattern_id(user_text, erp);
+                            if let Some(entry) = catalog_entry {
+                                let recipe_pattern = args
+                                    .get("pattern_id")
+                                    .and_then(|v| v.as_str())
+                                    .or(recipe.pattern_id.as_deref())
+                                    .unwrap_or("");
+                                if recipe_pattern != entry.id {
+                                    eprintln!(
+                                        "[agent_memory] recipe override id={} old_pattern={} catalog_pattern={}",
+                                        recipe.id, recipe_pattern, entry.id
+                                    );
+                                    args = json!({
+                                        "pattern_id": entry.id,
+                                        "keywords": user_text
+                                    });
+                                }
+                            }
                             if requires_product_filter {
                                 if let Some(pf) = active_pf.as_deref() {
                                     args["product_filter"] = json!(pf);
@@ -3789,9 +4706,17 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                 erp,
                                 user_text,
                                 &recipe.tool_name,
-                                if pattern_id.is_empty() { None } else { Some(pattern_id.as_str()) },
+                                if pattern_id.is_empty() {
+                                    None
+                                } else {
+                                    Some(pattern_id.as_str())
+                                },
                                 success,
-                                if success { None } else { Some(tool_content.as_str()) },
+                                if success {
+                                    None
+                                } else {
+                                    Some(tool_content.as_str())
+                                },
                             )
                             .await
                             {
@@ -3851,9 +4776,14 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
         //   [system] + [user_original] + [tool_result كـ user message]
         // هذا يقطع ~40-50% من توكنز iter 1 (نتخلص من tool_call message + nudge + old history)
         // slim_messages يُطبَّق على fast path أيضاً (أكثر الحالات شيوعاً)
-        let slim_messages: Option<serde_json::Value> = if (summarize_after_pattern || summarize_fast_path) && !advanced_mode {
+        let slim_messages: Option<serde_json::Value> = if (summarize_after_pattern
+            || summarize_fast_path)
+            && !advanced_mode
+        {
             // استخرج آخر نتيجة tool من التاريخ (role=tool)
-            let tool_result_content = current_history.iter().rev()
+            let tool_result_content = current_history
+                .iter()
+                .rev()
                 .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
                 .and_then(|m| m.get("content").and_then(|c| c.as_str()))
                 .unwrap_or("")
@@ -3929,10 +4859,18 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                 if ai_cancelled(&mut cancel_rx) {
                                     return Err("تم إيقاف الطلب من المستخدم.".to_string());
                                 }
-                                let tname = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-                                if tname == "execute_raw_sql" || tname == "create_pdf_report" || tname == "create_excel_report" {
+                                let tname = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("");
+                                if tname == "execute_raw_sql"
+                                    || tname == "create_pdf_report"
+                                    || tname == "create_excel_report"
+                                {
                                     if sql_seen {
-                                        let tid = tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                        let tid =
+                                            tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
                                         let resp = json!({
                                             "role": "tool",
                                             "tool_call_id": tid,
@@ -3952,11 +4890,18 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                 }
                                 let func = tool_call.get("function").unwrap_or(&empty_json);
                                 let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
-                                let tool_call_id = tool_call.get("id").and_then(|id| id.as_str()).unwrap_or("");
+                                let args_str = func
+                                    .get("arguments")
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("{}");
+                                let tool_call_id =
+                                    tool_call.get("id").and_then(|id| id.as_str()).unwrap_or("");
 
-                                println!("[Desktop Agent] Tool called: {} with args: {}", name, args_str);
-                                
+                                println!(
+                                    "[Desktop Agent] Tool called: {} with args: {}",
+                                    name, args_str
+                                );
+
                                 let friendly_tool_name = match name {
                                     "execute_raw_sql" => "سأستخدم أداة الاستعلام (SQL) للبحث في قاعدة البيانات...",
                                     "search_schema" => "سأبحث في هيكل البيانات للتعرف على الجداول المناسبة...",
@@ -3985,16 +4930,34 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     "send_pdf_to_telegram" | "send_excel_to_telegram" => "سأرسل الملف مباشرة عبر تليجرام...",
                                     _ => "سأقوم باستخدام أداة ذكية لمساعدتك..."
                                 };
-                                let _ = app_handle.emit("tool-usage", json!({ "tool": friendly_tool_name }));
+                                let _ = app_handle
+                                    .emit("tool-usage", json!({ "tool": friendly_tool_name }));
                                 if name == "execute_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    let func_response_data = execute_db_report(rep_id, search_term, target_date, app_state, reports_cache).await;
-                                    
+                                    let func_response_data = execute_db_report(
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4002,16 +4965,31 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "generate_pdf" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+
                                     // let _ = app_handle.emit("tool-usage"... removed
                                     let func_response_data = generate_and_save_pdf_local(
-                                        rep_id, search_term, target_date, app_state, reports_cache
-                                    ).await;
-                                    
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4019,23 +4997,38 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "generate_custom_pdf" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title =
+                                        args.get("title").and_then(|t| t.as_str()).unwrap_or("");
                                     let empty_arr2 = vec![];
-                                    let columns_val = args.get("columns").and_then(|c| c.as_array()).unwrap_or(&empty_arr2);
-                                    let rows_val = args.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty_arr2);
+                                    let columns_val = args
+                                        .get("columns")
+                                        .and_then(|c| c.as_array())
+                                        .unwrap_or(&empty_arr2);
+                                    let rows_val = args
+                                        .get("rows")
+                                        .and_then(|r| r.as_array())
+                                        .unwrap_or(&empty_arr2);
 
-                                    let columns: Vec<String> = columns_val.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
+                                    let columns: Vec<String> = columns_val
+                                        .iter()
+                                        .map(|v| v.as_str().unwrap_or("").to_string())
+                                        .collect();
                                     let mut rows: Vec<Vec<String>> = Vec::new();
                                     for r_val in rows_val {
                                         if let Some(arr) = r_val.as_array() {
-                                            let r_str: Vec<String> = arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
+                                            let r_str: Vec<String> = arr
+                                                .iter()
+                                                .map(|v| v.as_str().unwrap_or("").to_string())
+                                                .collect();
                                             rows.push(r_str);
                                         }
                                     }
 
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    let func_response_data = generate_custom_pdf_local(title, &columns, &rows).await;
+                                    let func_response_data =
+                                        generate_custom_pdf_local(title, &columns, &rows).await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4044,14 +5037,22 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "create_pdf_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("PDF Report");
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title = args
+                                        .get("title")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("PDF Report");
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
 
                                     // let _ = app_handle.emit("tool-usage"... removed
                                     let func_response_data = generate_pdf_report_from_sql_local(
-                                        title, sql_query, app_state
-                                    ).await;
+                                        title, sql_query, app_state,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4060,15 +5061,30 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "generate_excel" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
 
                                     // let _ = app_handle.emit("tool-usage"... removed
                                     let func_response_data = generate_and_save_excel_local(
-                                        rep_id, search_term, target_date, app_state, reports_cache
-                                    ).await;
+                                        rep_id,
+                                        search_term,
+                                        target_date,
+                                        app_state,
+                                        reports_cache,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4077,24 +5093,36 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "generate_custom_excel" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title =
+                                        args.get("title").and_then(|t| t.as_str()).unwrap_or("");
                                     let empty_arr2 = vec![];
-                                    let columns_val = args.get("columns").and_then(|c| c.as_array()).unwrap_or(&empty_arr2);
-                                    let rows_val = args.get("rows").and_then(|r| r.as_array()).unwrap_or(&empty_arr2);
+                                    let columns_val = args
+                                        .get("columns")
+                                        .and_then(|c| c.as_array())
+                                        .unwrap_or(&empty_arr2);
+                                    let rows_val = args
+                                        .get("rows")
+                                        .and_then(|r| r.as_array())
+                                        .unwrap_or(&empty_arr2);
 
-                                    let columns: Vec<String> = columns_val.iter().map(json_value_to_cell).collect();
+                                    let columns: Vec<String> =
+                                        columns_val.iter().map(json_value_to_cell).collect();
                                     let mut rows: Vec<Vec<String>> = Vec::new();
                                     for r_val in rows_val {
                                         if let Some(arr) = r_val.as_array() {
-                                            let r_str: Vec<String> = arr.iter().map(json_value_to_cell).collect();
+                                            let r_str: Vec<String> =
+                                                arr.iter().map(json_value_to_cell).collect();
                                             rows.push(r_str);
                                         }
                                     }
 
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    let func_response_data =
-                                        generate_custom_excel_local(title, &columns, &rows, app_state).await;
+                                    let func_response_data = generate_custom_excel_local(
+                                        title, &columns, &rows, app_state,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4103,14 +5131,22 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "create_excel_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Excel Report");
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let title = args
+                                        .get("title")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("Excel Report");
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
 
                                     // let _ = app_handle.emit("tool-usage"... removed
                                     let func_response_data = generate_excel_report_from_sql_local(
-                                        title, sql_query, app_state
-                                    ).await;
+                                        title, sql_query, app_state,
+                                    )
+                                    .await;
 
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4119,28 +5155,55 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "send_pdf_to_telegram" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    
+
                                     let mut func_response_data = json!({ "error": "لم يتم إعداد تيليجرام. يرجى إضافة توكن البوت ومعرف المحادثة في الإعدادات." });
-                                    
+
                                     if let Ok(store) = app_handle.store("settings.json") {
-                                        let token = store.get("telegram_bot_token").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
-                                        let chat_id_str = store.get("telegram_chat_id").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                                        let token = store
+                                            .get("telegram_bot_token")
+                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                            .unwrap_or_default();
+                                        let chat_id_str = store
+                                            .get("telegram_chat_id")
+                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                            .unwrap_or_default();
                                         let chat_id = chat_id_str.parse::<i64>().unwrap_or(0);
-                                        
+
                                         if !token.is_empty() && chat_id != 0 {
-                                            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+                                            let client = reqwest::Client::builder()
+                                                .timeout(std::time::Duration::from_secs(120))
+                                                .build()
+                                                .unwrap();
                                             func_response_data = generate_and_send_pdf_for_agent(
-                                                &client, &token, chat_id, rep_id, search_term, target_date, app_state, reports_cache
-                                            ).await;
+                                                &client,
+                                                &token,
+                                                chat_id,
+                                                rep_id,
+                                                search_term,
+                                                target_date,
+                                                app_state,
+                                                reports_cache,
+                                            )
+                                            .await;
                                         }
                                     }
-                                    
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4148,25 +5211,52 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "send_excel_to_telegram" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let rep_id = args.get("report_id").and_then(|id| id.as_str()).unwrap_or("");
-                                    let search_term = args.get("search_term").and_then(|t| t.as_str()).unwrap_or("");
-                                    let target_date = args.get("target_date").and_then(|t| t.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let rep_id = args
+                                        .get("report_id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let search_term = args
+                                        .get("search_term")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    let target_date = args
+                                        .get("target_date")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
 
                                     // let _ = app_handle.emit("tool-usage"... removed
 
                                     let mut func_response_data = json!({ "error": "لم يتم إعداد تيليجرام. يرجى إضافة توكن البوت ومعرف المحادثة في الإعدادات." });
 
                                     if let Ok(store) = app_handle.store("settings.json") {
-                                        let token = store.get("telegram_bot_token").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
-                                        let chat_id_str = store.get("telegram_chat_id").and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                                        let token = store
+                                            .get("telegram_bot_token")
+                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                            .unwrap_or_default();
+                                        let chat_id_str = store
+                                            .get("telegram_chat_id")
+                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                            .unwrap_or_default();
                                         let chat_id = chat_id_str.parse::<i64>().unwrap_or(0);
 
                                         if !token.is_empty() && chat_id != 0 {
-                                            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().unwrap();
+                                            let client = reqwest::Client::builder()
+                                                .timeout(std::time::Duration::from_secs(120))
+                                                .build()
+                                                .unwrap();
                                             func_response_data = generate_and_send_excel_for_agent(
-                                                &client, &token, chat_id, rep_id, search_term, target_date, app_state, reports_cache
-                                            ).await;
+                                                &client,
+                                                &token,
+                                                chat_id,
+                                                rep_id,
+                                                search_term,
+                                                target_date,
+                                                app_state,
+                                                reports_cache,
+                                            )
+                                            .await;
                                         }
                                     }
 
@@ -4177,12 +5267,15 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "search_schema" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let keywords = args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
-                                    
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let keywords =
+                                        args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
+
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    let schema_data = search_schema(keywords, openai_key, erp).await;
-                                    
+                                    let schema_data =
+                                        search_schema(keywords, openai_key, erp).await;
+
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4190,13 +5283,22 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "execute_raw_sql" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let sql_query = args.get("sql_query").and_then(|q| q.as_str()).unwrap_or("");
-                                    let sql_norm = sql_query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let sql_query = args
+                                        .get("sql_query")
+                                        .and_then(|q| q.as_str())
+                                        .unwrap_or("");
+                                    let sql_norm = sql_query
+                                        .split_whitespace()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .to_lowercase();
                                     let fingerprint = sql_semantic_fingerprint(sql_query);
 
                                     sql_call_count += 1;
-                                    let fp_count = sql_fingerprints.entry(fingerprint.clone()).or_insert(0);
+                                    let fp_count =
+                                        sql_fingerprints.entry(fingerprint.clone()).or_insert(0);
                                     *fp_count += 1;
                                     let fp_hits = *fp_count;
 
@@ -4209,7 +5311,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     } else if fp_hits > MAX_SAME_FINGERPRINT {
                                         "{\"error\": \"حاولت الاستعلام عن نفس الجداول/الشروط عدة مرات بصياغات مختلفة دون نتيجة مفيدة. توقف عن إعادة الصياغة وقدّم إجابة نهائية بالعربية بما لديك، أو اطلب توضيحاً محدداً من المستخدم — ولا تكرر هذا الاستعلام.\"}".to_string()
                                     } else {
-                                    // let _ = app_handle.emit("tool-usage"... removed
+                                        // let _ = app_handle.emit("tool-usage"... removed
                                         let result = execute_raw_sql_for_agent(
                                             sql_query,
                                             app_state,
@@ -4217,14 +5319,19 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                         )
                                         .await;
                                         recent_sql.push(sql_norm);
-                                        if recent_sql.len() > 3 { recent_sql.remove(0); }
+                                        if recent_sql.len() > 3 {
+                                            recent_sql.remove(0);
+                                        }
                                         let s = result.to_string();
                                         emit_html_report_result(
                                             &app_handle,
+                                            &access_token,
+                                            chat_session_id,
                                             &request_id,
                                             "تقرير الاستعلام",
                                             name,
                                             &s,
+                                            None,
                                         );
                                         s
                                     };
@@ -4236,19 +5343,27 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "explore_local_schema" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let table_hint = args.get("table_hint").and_then(|h| h.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let table_hint = args
+                                        .get("table_hint")
+                                        .and_then(|h| h.as_str())
+                                        .unwrap_or("");
                                     let cache_key = table_hint.to_lowercase();
 
                                     schema_explore_count += 1;
-                                    let func_response_data: Value = if schema_explore_count > MAX_SCHEMA_EXPLORE_PER_TURN {
+                                    let func_response_data: Value = if schema_explore_count
+                                        > MAX_SCHEMA_EXPLORE_PER_TURN
+                                    {
                                         json!({
                                             "error": "تجاوزت 4 استكشافات للمخطط في هذا الدور. استخدم run_query_pattern أو DOMAIN_CRITICAL_FACTS ثم نفّذ استعلاماً واحداً."
                                         })
                                     } else if let Some(cached) = schema_cache.get(&cache_key) {
                                         json!({ "cached": true, "data": cached })
                                     } else {
-                                        let result = explore_local_schema_for_agent(table_hint, app_state).await;
+                                        let result =
+                                            explore_local_schema_for_agent(table_hint, app_state)
+                                                .await;
                                         let s = result.to_string();
                                         schema_cache.insert(cache_key, s.clone());
                                         result
@@ -4261,8 +5376,10 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "search_query_patterns" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(empty_json.clone());
-                                    let keywords = args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
+                                    let args: Value = serde_json::from_str(args_str)
+                                        .unwrap_or(empty_json.clone());
+                                    let keywords =
+                                        args.get("keywords").and_then(|k| k.as_str()).unwrap_or("");
                                     let result = search_query_patterns_local(keywords, erp);
                                     let tool_resp_msg = json!({
                                         "role": "tool",
@@ -4291,7 +5408,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "schedule_report" {
                                     // let _ = app_handle.emit("tool-usage"... removed
-                                    let result = handle_schedule_report_tool(args_str, app_state).await;
+                                    let result =
+                                        handle_schedule_report_tool(args_str, app_state).await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4299,7 +5417,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "list_scheduled_reports" {
-                                    let result = handle_list_scheduled_reports_tool(app_state).await;
+                                    let result =
+                                        handle_list_scheduled_reports_tool(app_state).await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4307,9 +5426,15 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     });
                                     current_history.push(tool_resp_msg.clone());
                                 } else if name == "delete_scheduled_report" {
-                                    let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                                    let schedule_id = args.get("schedule_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    let result = handle_delete_scheduled_report_tool(schedule_id, app_state).await;
+                                    let args: Value =
+                                        serde_json::from_str(args_str).unwrap_or(json!({}));
+                                    let schedule_id = args
+                                        .get("schedule_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let result =
+                                        handle_delete_scheduled_report_tool(schedule_id, app_state)
+                                            .await;
                                     let tool_resp_msg = json!({
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
@@ -4318,8 +5443,8 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     current_history.push(tool_resp_msg.clone());
                                 } else if crate::agent_tools::is_extended_tool(name) {
                                     let tool_content = if name == "run_query_pattern" {
-                                        let args: Value =
-                                            serde_json::from_str(args_str).unwrap_or(empty_json.clone());
+                                        let args: Value = serde_json::from_str(args_str)
+                                            .unwrap_or(empty_json.clone());
                                         let pid = args
                                             .get("pattern_id")
                                             .and_then(|k| k.as_str())
@@ -4331,14 +5456,20 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                         let dedupe_key = if !pid.trim().is_empty() {
                                             pid.trim().to_lowercase()
                                         } else {
-                                            kw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+                                            kw.split_whitespace()
+                                                .collect::<Vec<_>>()
+                                                .join(" ")
+                                                .to_lowercase()
                                         };
                                         if pattern_call_count >= MAX_PATTERN_PER_TURN {
                                             json!({
                                                 "error": format!("تجاوزت {} محاولات لـ run_query_pattern. لخّص آخر نتيجة — لا تقل إن الأنماط «معطّلة».", MAX_PATTERN_PER_TURN)
                                             })
                                             .to_string()
-                                        } else if pattern_keywords_seen.iter().any(|k| k == &dedupe_key) {
+                                        } else if pattern_keywords_seen
+                                            .iter()
+                                            .any(|k| k == &dedupe_key)
+                                        {
                                             json!({
                                                 "error": "جرّبت هذا النمط للتو. لخّص آخر نتيجة للمستخدم الآن.",
                                                 "tried": dedupe_key
@@ -4366,10 +5497,13 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                                 };
                                                 emit_html_report_result(
                                                     &app_handle,
+                                                    &access_token,
+                                                    chat_session_id,
                                                     &request_id,
                                                     title,
                                                     name,
                                                     &s,
+                                                    None,
                                                 );
                                                 if !s.contains("\"error\"") {
                                                     pattern_executed = true;
@@ -4394,10 +5528,13 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                         let s = func_response_data.to_string();
                                         emit_html_report_result(
                                             &app_handle,
+                                            &access_token,
+                                            chat_session_id,
                                             &request_id,
                                             "تقرير",
                                             name,
                                             &s,
+                                            None,
                                         );
                                         s
                                     } else {
@@ -4426,8 +5563,12 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     continue;
                                 }
                                 // meta_tool_only = export — أضف المسار دائماً حتى لو لم يذكره النموذج
-                                let final_content =
-                                    sanitize_response_file_paths_ex(&content, app_state, meta_tool_only).await;
+                                let final_content = sanitize_response_file_paths_ex(
+                                    &content,
+                                    app_state,
+                                    meta_tool_only,
+                                )
+                                .await;
                                 if !advanced_mode {
                                     if !pattern_executed
                                         && !meta_tool_only
@@ -4461,7 +5602,9 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                                     final_content.clone(),
                                     openai_key.to_string(),
                                     groq_key.to_string(),
-                                    crate::agent_memory::build_turn_context_from_history(&current_history),
+                                    crate::agent_memory::build_turn_context_from_history(
+                                        &current_history,
+                                    ),
                                     erp,
                                     access_token.clone(),
                                 );
@@ -4479,7 +5622,7 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
                             return Err("رد فارغ من الذكاء الاصطناعي — جرّب صياغة السؤال باستخدام أحد الأنماط المدعومة.".to_string());
                         }
                     } else {
-                         return Err("لا توجد استجابة صالحة من الذكاء الاصطناعي".to_string());
+                        return Err("لا توجد استجابة صالحة من الذكاء الاصطناعي".to_string());
                     }
                 } else {
                     return Err("فشل في قراءة الرد (JSON Error)".to_string());
@@ -4490,8 +5633,11 @@ Your action: `save_favorite_query(name=\"تقرير الديون اليومي\",
             }
         }
     }
-    
-    Err("عذراً، استغرق تحليل البيانات وقتاً أطول من المتوقع. يرجى المحاولة بسؤال أكثر تحديداً.".to_string())
+
+    Err(
+        "عذراً، استغرق تحليل البيانات وقتاً أطول من المتوقع. يرجى المحاولة بسؤال أكثر تحديداً."
+            .to_string(),
+    )
 }
 
 async fn generate_and_save_pdf_local(
@@ -4527,9 +5673,21 @@ async fn generate_and_save_pdf_local(
                 return json!({ "result": "لا توجد أي بيانات مسجلة لإصدار التقرير كملف PDF." });
             }
 
-            match crate::pdf_generator::generate_report_pdf(&report.name_ar, &result.columns, &result.rows) {
+            match crate::pdf_generator::generate_report_pdf(
+                &report.name_ar,
+                &result.columns,
+                &result.rows,
+            ) {
                 Ok(pdf_bytes) => {
-                    let filename = format!("{}.pdf", report.name_ar.chars().take(30).collect::<String>().replace(' ', "_"));
+                    let filename = format!(
+                        "{}.pdf",
+                        report
+                            .name_ar
+                            .chars()
+                            .take(30)
+                            .collect::<String>()
+                            .replace(' ', "_")
+                    );
                     let path = std::env::temp_dir().join(&filename);
                     if let Ok(mut file) = std::fs::File::create(&path) {
                         let _ = file.write_all(&pdf_bytes);
@@ -4543,19 +5701,18 @@ async fn generate_and_save_pdf_local(
                 }
             }
         }
-        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) }),
     }
 }
 
-async fn generate_custom_pdf_local(
-    title: &str,
-    columns: &[String],
-    rows: &[Vec<String>],
-) -> Value {
+async fn generate_custom_pdf_local(title: &str, columns: &[String], rows: &[Vec<String>]) -> Value {
     use std::io::Write;
     match crate::pdf_generator::generate_report_pdf(title, columns, rows) {
         Ok(pdf_bytes) => {
-            let filename = format!("{}.pdf", title.chars().take(30).collect::<String>().replace(' ', "_"));
+            let filename = format!(
+                "{}.pdf",
+                title.chars().take(30).collect::<String>().replace(' ', "_")
+            );
             let path = std::env::temp_dir().join(&filename);
             if let Ok(mut file) = std::fs::File::create(&path) {
                 let _ = file.write_all(&pdf_bytes);
@@ -4564,7 +5721,7 @@ async fn generate_custom_pdf_local(
                 json!({ "error": "فشل في حفظ ملف PDF على الجهاز." })
             }
         }
-        Err(e) => json!({ "error": format!("فشل في إنشاء ملف PDF: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في إنشاء ملف PDF: {}", e) }),
     }
 }
 
@@ -4593,7 +5750,10 @@ async fn generate_pdf_report_from_sql_local(
 
             match crate::pdf_generator::generate_report_pdf(title, &result.columns, &result.rows) {
                 Ok(pdf_bytes) => {
-                    let filename = format!("{}.pdf", title.chars().take(30).collect::<String>().replace(' ', "_"));
+                    let filename = format!(
+                        "{}.pdf",
+                        title.chars().take(30).collect::<String>().replace(' ', "_")
+                    );
                     let path = std::env::temp_dir().join(&filename);
                     if let Ok(mut file) = std::fs::File::create(&path) {
                         let _ = file.write_all(&pdf_bytes);
@@ -4604,10 +5764,10 @@ async fn generate_pdf_report_from_sql_local(
                         json!({ "error": "Failed to save PDF file locally." })
                     }
                 }
-                Err(e) => json!({ "error": format!("Failed to generate PDF: {}", e) })
+                Err(e) => json!({ "error": format!("Failed to generate PDF: {}", e) }),
             }
         }
-        Err(e) => json!({ "error": format!("Failed to execute the PDF report query: {}", e) })
+        Err(e) => json!({ "error": format!("Failed to execute the PDF report query: {}", e) }),
     }
 }
 
@@ -4646,7 +5806,8 @@ async fn generate_and_save_excel_local(
 
             match generate_report_excel(&report.name_ar, &result.columns, &result.rows) {
                 Ok(xlsx_bytes) => {
-                    let filename = crate::agent_tools::safe_export_filename(&report.name_ar, "xlsx");
+                    let filename =
+                        crate::agent_tools::safe_export_filename(&report.name_ar, "xlsx");
                     let path = std::env::temp_dir().join(&filename);
                     if let Ok(mut file) = std::fs::File::create(&path) {
                         let _ = file.write_all(&xlsx_bytes);
@@ -4656,10 +5817,10 @@ async fn generate_and_save_excel_local(
                         json!({ "error": "فشل في حفظ ملف Excel على الجهاز." })
                     }
                 }
-                Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) })
+                Err(e) => json!({ "error": format!("فشل في إنشاء ملف Excel: {}", e) }),
             }
         }
-        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) })
+        Err(e) => json!({ "error": format!("فشل في تنفيذ الاستعلام: {}", e) }),
     }
 }
 
@@ -4812,7 +5973,7 @@ async fn generate_excel_report_from_sql_local(
 // ─── أدوات الجدولة ────────────────────────────────────────────────────────────
 
 async fn handle_schedule_report_tool(args_str: &str, app_state: &Arc<AppState>) -> String {
-    use crate::scheduler::{ScheduledReport, new_id};
+    use crate::scheduler::{new_id, ScheduledReport};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let args: serde_json::Value = match serde_json::from_str(args_str) {
@@ -4820,16 +5981,48 @@ async fn handle_schedule_report_tool(args_str: &str, app_state: &Arc<AppState>) 
         Err(e) => return format!("{{\"error\": \"تعذّر تحليل المعاملات: {}\"}}", e),
     };
 
-    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("تقرير مجدوَل").to_string();
-    let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let sql_query = args.get("sql_query").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let report_title = args.get("report_title").and_then(|v| v.as_str()).unwrap_or(&name).to_string();
-    let report_type = args.get("report_type").and_then(|v| v.as_str()).unwrap_or("text").to_string();
-    let columns: Vec<String> = args.get("columns").and_then(|v| v.as_array()).map(|arr| {
-        arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()
-    }).unwrap_or_default();
-    let interval_seconds = args.get("interval_seconds").and_then(|v| v.as_u64()).unwrap_or(3600);
-    let offset = args.get("first_run_offset_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("تقرير مجدوَل")
+        .to_string();
+    let description = args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let sql_query = args
+        .get("sql_query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let report_title = args
+        .get("report_title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&name)
+        .to_string();
+    let report_type = args
+        .get("report_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text")
+        .to_string();
+    let columns: Vec<String> = args
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let interval_seconds = args
+        .get("interval_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3600);
+    let offset = args
+        .get("first_run_offset_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     if sql_query.is_empty() {
         return "{\"error\": \"يجب تحديد sql_query للجدول.\"}".to_string();
@@ -4869,7 +6062,8 @@ async fn handle_schedule_report_tool(args_str: &str, app_state: &Arc<AppState>) 
         "success": true,
         "id": id,
         "message": msg
-    }).to_string()
+    })
+    .to_string()
 }
 
 async fn handle_list_scheduled_reports_tool(app_state: &Arc<AppState>) -> String {
@@ -4884,34 +6078,49 @@ async fn handle_list_scheduled_reports_tool(app_state: &Arc<AppState>) -> String
         .unwrap_or_default()
         .as_secs();
 
-    let list: Vec<serde_json::Value> = state.schedules.iter().map(|s| {
-        let secs_until = if s.next_run_unix > now { s.next_run_unix - now } else { 0 };
-        serde_json::json!({
-            "id": s.id,
-            "name": s.name,
-            "interval": crate::scheduler::describe_interval(s.interval_seconds),
-            "report_type": s.report_type,
-            "is_active": s.is_active,
-            "next_run_in_seconds": secs_until,
-            "last_run_unix": s.last_run_unix
+    let list: Vec<serde_json::Value> = state
+        .schedules
+        .iter()
+        .map(|s| {
+            let secs_until = if s.next_run_unix > now {
+                s.next_run_unix - now
+            } else {
+                0
+            };
+            serde_json::json!({
+                "id": s.id,
+                "name": s.name,
+                "interval": crate::scheduler::describe_interval(s.interval_seconds),
+                "report_type": s.report_type,
+                "is_active": s.is_active,
+                "next_run_in_seconds": secs_until,
+                "last_run_unix": s.last_run_unix
+            })
         })
-    }).collect();
+        .collect();
 
     let count = list.len();
     serde_json::json!({
         "schedules": list,
         "count": count
-    }).to_string()
+    })
+    .to_string()
 }
 
-async fn handle_delete_scheduled_report_tool(schedule_id: &str, app_state: &Arc<AppState>) -> String {
+async fn handle_delete_scheduled_report_tool(
+    schedule_id: &str,
+    app_state: &Arc<AppState>,
+) -> String {
     let mut state = app_state.scheduler.lock().await;
     let before = state.schedules.len();
     state.schedules.retain(|s| s.id != schedule_id);
     let after = state.schedules.len();
 
     if before == after {
-        format!("{{\"error\": \"لم يُعثر على جدول بالمعرّف: {}\"}}", schedule_id)
+        format!(
+            "{{\"error\": \"لم يُعثر على جدول بالمعرّف: {}\"}}",
+            schedule_id
+        )
     } else {
         "{\"success\": true, \"message\": \"تم حذف الجدول بنجاح.\"}".to_string()
     }
@@ -4932,13 +6141,11 @@ pub async fn generate_ai_suggestions(
     }
 
     let sys_prompt = "أنت وكيل ذكي للبيانات. اقترح 4 أسئلة عملية ومختلفة (مثل المبيعات، النواقص، الأرباح، الديون) يمكن للمستخدم أن يطرحها عليك بخصوص نظام المبيعات والمخازن. أعد الإجابة حصراً بصيغة مصفوفة JSON تحتوي على 4 نصوص (بدون أي علامات توضيحية أخرى).";
-    
-    let current_history = vec![
-        serde_json::json!({
-            "role": "system",
-            "content": sys_prompt
-        })
-    ];
+
+    let current_history = vec![serde_json::json!({
+        "role": "system",
+        "content": sys_prompt
+    })];
 
     let req_body = serde_json::json!({
         "model": DEFAULT_AI_MODEL,
@@ -4950,8 +6157,17 @@ pub async fn generate_ai_suggestions(
         Ok(res_json) => {
             if let Some(choices) = res_json.get("choices").and_then(|c| c.as_array()) {
                 if let Some(choice) = choices.get(0) {
-                    if let Some(content) = choice.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
-                        let cleaned = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+                    if let Some(content) = choice
+                        .get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                    {
+                        let cleaned = content
+                            .trim()
+                            .trim_start_matches("```json")
+                            .trim_start_matches("```")
+                            .trim_end_matches("```")
+                            .trim();
                         if let Ok(suggestions) = serde_json::from_str::<Vec<String>>(cleaned) {
                             if !suggestions.is_empty() {
                                 return Ok(suggestions.into_iter().take(4).collect());
@@ -4973,4 +6189,45 @@ pub async fn generate_ai_suggestions(
         "أريد تقريراً للديون المستحقة".to_string(),
         "كيف أقارن بين أسعار الموردين؟".to_string(),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interpretive_keywords_enable_smart_reply() {
+        assert!(wants_interpretive_reply("شن رأيك في مبيعات الموظف"));
+        assert!(wants_interpretive_reply("حلل لي حركة العميل"));
+        assert!(wants_interpretive_reply("اعطيني ملاحظة على التقرير"));
+    }
+
+    #[test]
+    fn plain_report_request_stays_fast() {
+        assert!(!wants_interpretive_reply(
+            "اعرض كشف حساب العميل احمد مختي ديون"
+        ));
+        assert!(!wants_interpretive_reply("تقرير الصلاحية"));
+    }
+
+    #[test]
+    fn compact_interpretation_payload_limits_rows_and_columns() {
+        let result = json!({
+            "report_id": 1007,
+            "columns": ["c1","c2","c3","c4","c5","c6","c7","c8","c9"],
+            "rows": [
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"],
+                ["1","2","3","4","5","6","7","8","9"]
+            ],
+            "row_count": 7
+        });
+        let compact = compact_result_for_interpretation(&result);
+        assert_eq!(compact["columns"].as_array().unwrap().len(), 8);
+        assert_eq!(compact["sample_rows"].as_array().unwrap().len(), 6);
+    }
 }

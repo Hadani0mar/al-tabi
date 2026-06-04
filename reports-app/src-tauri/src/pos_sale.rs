@@ -44,7 +44,9 @@ fn local_receipt_no() -> String {
     chrono::Local::now().format("POS-%Y%m%d-%H%M%S").to_string()
 }
 
-async fn connect_client(conn: &SqlConnection) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, String> {
+async fn connect_client(
+    conn: &SqlConnection,
+) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, String> {
     let config = crate::prepare_config(conn);
     let tcp = TcpStream::connect(format!("{}:{}", conn.server, conn.port))
         .await
@@ -180,11 +182,7 @@ pub async fn search_pos_products_impl(
             ),
         ),
         _ => (
-            pos_product_sql(
-                &format!("B.BARCODE = N'{escaped}'"),
-                "B.BARCODE",
-                5,
-            ),
+            pos_product_sql(&format!("B.BARCODE = N'{escaped}'"), "B.BARCODE", 5),
             pos_product_sql(
                 &format!(
                     "I.ITEM_NAME LIKE N'%{escaped}%' \
@@ -279,7 +277,11 @@ pub async fn print_pos_receipt_impl(
     )
 }
 
-fn write_receipt_pdf(meta: &PosReceiptMeta, lines: &[PosReceiptLine], filename: &str) -> Result<String, String> {
+fn write_receipt_pdf(
+    meta: &PosReceiptMeta,
+    lines: &[PosReceiptLine],
+    filename: &str,
+) -> Result<String, String> {
     let bytes = generate_pos_receipt_pdf(meta, lines)?;
     let path = std::env::temp_dir().join(filename);
     std::fs::write(&path, &bytes).map_err(|e| format!("فشل حفظ PDF: {}", e))?;
@@ -288,7 +290,11 @@ fn write_receipt_pdf(meta: &PosReceiptMeta, lines: &[PosReceiptLine], filename: 
 }
 
 #[cfg(target_os = "windows")]
-fn print_receipt_to_default_printer(meta: &PosReceiptMeta, lines: &[PosReceiptLine], filename: &str) -> Result<(), String> {
+fn print_receipt_to_default_printer(
+    meta: &PosReceiptMeta,
+    lines: &[PosReceiptLine],
+    filename: &str,
+) -> Result<(), String> {
     let html_filename = filename.trim_end_matches(".pdf").to_string() + ".html";
     let html_path = std::env::temp_dir().join(html_filename);
     std::fs::write(&html_path, receipt_print_html(meta, lines))
@@ -333,7 +339,11 @@ fn print_receipt_to_default_printer(meta: &PosReceiptMeta, lines: &[PosReceiptLi
 }
 
 #[cfg(not(target_os = "windows"))]
-fn print_receipt_to_default_printer(_meta: &PosReceiptMeta, _lines: &[PosReceiptLine], _filename: &str) -> Result<(), String> {
+fn print_receipt_to_default_printer(
+    _meta: &PosReceiptMeta,
+    _lines: &[PosReceiptLine],
+    _filename: &str,
+) -> Result<(), String> {
     Err("الطباعة المباشرة مدعومة حالياً على Windows فقط.".to_string())
 }
 
@@ -375,7 +385,11 @@ fn receipt_print_html(meta: &PosReceiptMeta, lines: &[PosReceiptLine]) -> String
         .collect::<Vec<_>>()
         .join("");
     let total = lines.iter().map(|line| line.qty * line.price).sum::<f64>();
-    let draft = if meta.is_draft { "<div class=\"draft\">مسودة</div>" } else { "" };
+    let draft = if meta.is_draft {
+        "<div class=\"draft\">مسودة</div>"
+    } else {
+        ""
+    };
 
     format!(
         r#"<!doctype html>
@@ -512,12 +526,5 @@ pub async fn print_pos_receipt(
         .clone()
         .ok_or("غير متصل بقاعدة البيانات. سجّل الدخول أولاً.")?;
     let erp = crate::erp_profile::resolve_erp_kind(&state, &conn).await;
-    print_pos_receipt_impl(
-        conn,
-        cust_name.trim(),
-        note.as_deref(),
-        &lines,
-        erp,
-    )
-    .await
+    print_pos_receipt_impl(conn, cust_name.trim(), note.as_deref(), &lines, erp).await
 }

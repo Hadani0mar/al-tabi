@@ -85,7 +85,8 @@ pub fn profile_from_query(result: &QueryResult, erp: ErpKind) -> BusinessProfile
         city: pick_column(columns, row, &["CITY"]),
         activity_code: pick_column(columns, row, &["ACTIVITY"]),
         activity_name: pick_column(columns, row, &["ACTIVITYName", "ACTIVITYNAME"]),
-        phone: pick_column(columns, row, &["PHONE"]).or_else(|| pick_column(columns, row, &["SMS_PHONE"])),
+        phone: pick_column(columns, row, &["PHONE"])
+            .or_else(|| pick_column(columns, row, &["SMS_PHONE"])),
         mobile: pick_column(columns, row, &["MOBILE"]),
         fax: pick_column(columns, row, &["FAX"]),
         branch: pick_column(columns, row, &["TRAN_BARNCH"]),
@@ -112,14 +113,21 @@ pub fn empty_profile(erp: ErpKind) -> BusinessProfile {
     }
 }
 
-async fn try_profile_query(conn: &SqlConnection, sql: &str, erp: ErpKind) -> Option<BusinessProfile> {
+async fn try_profile_query(
+    conn: &SqlConnection,
+    sql: &str,
+    erp: ErpKind,
+) -> Option<BusinessProfile> {
     match execute_sql_query(conn.clone(), sql.to_string()).await {
         Ok(result) if result.row_count > 0 => Some(profile_from_query(&result, erp)),
         _ => None,
     }
 }
 
-pub async fn fetch_business_profile(conn: &SqlConnection, erp: ErpKind) -> Result<BusinessProfile, String> {
+pub async fn fetch_business_profile(
+    conn: &SqlConnection,
+    erp: ErpKind,
+) -> Result<BusinessProfile, String> {
     match erp {
         ErpKind::InfinityRetailDb => {
             for sql in [
@@ -147,7 +155,10 @@ pub async fn fetch_business_profile(conn: &SqlConnection, erp: ErpKind) -> Resul
     }
 }
 
-pub async fn fetch_receipt_business(conn: &SqlConnection, erp: ErpKind) -> Result<ReceiptBusinessInfo, String> {
+pub async fn fetch_receipt_business(
+    conn: &SqlConnection,
+    erp: ErpKind,
+) -> Result<ReceiptBusinessInfo, String> {
     match erp {
         ErpKind::InfinityRetailDb => {
             let result = execute_sql_query(conn.clone(), INFINITY_RECEIPT_HEADER.to_string())
@@ -163,7 +174,8 @@ pub async fn fetch_receipt_business(conn: &SqlConnection, erp: ErpKind) -> Resul
             let row = &result.rows[0];
             let cols = &result.columns;
             Ok(ReceiptBusinessInfo {
-                company_name: pick_column(cols, row, &["company_name"]).unwrap_or_else(|| "Infinity Retail".to_string()),
+                company_name: pick_column(cols, row, &["company_name"])
+                    .unwrap_or_else(|| "Infinity Retail".to_string()),
                 address: pick_column(cols, row, &["address"]).unwrap_or_default(),
                 phone: pick_column(cols, row, &["phone"]).unwrap_or_default(),
             })
@@ -216,7 +228,8 @@ pub fn infinity_product_mentions_sql(escaped: &str, empty_query: bool) -> String
 SELECT TOP 12 p.ProductName, ISNULL(p.ProductCode, N'') AS ProductCode
 FROM Inventory.Data_Products p
 WHERE p.IsInActive = 0
-ORDER BY p.ModifiedDate DESC".to_string()
+ORDER BY p.ModifiedDate DESC"
+            .to_string()
     } else {
         format!(
             "SET NOCOUNT ON;

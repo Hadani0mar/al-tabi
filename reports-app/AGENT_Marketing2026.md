@@ -633,118 +633,119 @@ ORDER BY B.B_DATE DESC;
 
 ---
 
+## PATTERN: تقرير-المبيعات-والديون-اليومي
+TRIGGERS: تقرير المبيعات والديون, المبيعات والديون, daily_sales_report, مبيعات وديون, مبيعات الكاش والديون, كاش وديون الموظفين, تقرير الكاش والديون, مبيعات الموظفين والديون
+TABLES: SALE_INVOICE, SALE_ITEMS, USERS, CUSTOMERS
+NOTES:
+  - هذا النمط يستبدل أي تقرير قديم للمبيعات والديون اليومية.
+  - الفاتورة تُحسب مرة واحدة فقط حسب تاريخ إصدارها `SALE_INVOICE.S_DATE`.
+  - لا تستخدم تاريخ إغلاق أو أي تاريخ آخر لهذا التقرير.
+  - الكاش = `CUST_ID = 1`.
+  - الديون = أي زبون غير النقدي `CUST_ID <> 1`.
+  - الفترة تعمل بصيغة `[StartDate, EndDate)`، أي أن تاريخ النهاية غير مشمول.
+  - الموظفون المعتمدون افتراضياً: `7, 9, 11, 13, 21`.
+  - غيّر `@StartDate` و `@EndDate` عند وجود تاريخ صريح في طلب المستخدم.
+  - الاستعلام الأول ملخص سريع، والثاني تفاصيل الفواتير وأسماء الزبائن.
+---
+
+```sql
+DECLARE @StartDate DATETIME;
+DECLARE @EndDate DATETIME;
+SET @StartDate = '2026-06-03';
+SET @EndDate = '2026-06-05';
+
+SELECT
+    u.USERS_ID as [#],
+    u.FULL_NAME as [الموظف],
+    CAST(ISNULL(SUM(CASE WHEN s.CUST_ID <> 1 THEN si.QTY * si.PRICE ELSE 0 END), 0) AS DECIMAL(10,2)) as [ديون],
+    CAST(ISNULL(SUM(CASE WHEN s.CUST_ID = 1 THEN si.QTY * si.PRICE ELSE 0 END), 0) AS DECIMAL(10,2)) as [كاش],
+    CAST(ISNULL(SUM(si.QTY * si.PRICE), 0) AS DECIMAL(10,2)) as [المجموع]
+FROM USERS u
+LEFT JOIN SALE_INVOICE s ON u.USERS_ID = s.USERS_ID 
+    AND s.S_DATE >= @StartDate 
+    AND s.S_DATE < @EndDate
+LEFT JOIN SALE_ITEMS si ON s.S_ID = si.S_ID
+WHERE u.USERS_ID IN (7, 9, 11, 13, 21)
+GROUP BY u.USERS_ID, u.FULL_NAME
+HAVING ISNULL(SUM(si.QTY * si.PRICE), 0) > 0
+ORDER BY u.USERS_ID;
+```
+
+```sql
+DECLARE @StartDate DATETIME;
+DECLARE @EndDate DATETIME;
+SET @StartDate = '2026-06-03';
+SET @EndDate = '2026-06-05';
+
+SELECT
+    u.USERS_ID as [رقم],
+    u.FULL_NAME as [الموظف],
+    CASE WHEN s.CUST_ID = 1 THEN 'كاش' ELSE 'ديون' END as [النوع],
+    c.CUST_NAME as [اسم_الزبون],
+    s.S_ID as [رقم_الفاتورة],
+    CONVERT(VARCHAR(19), s.S_DATE, 121) as [التاريخ_والوقت],
+    CAST(SUM(si.QTY * si.PRICE) AS DECIMAL(10,2)) as [القيمة],
+    s.CUST_ID
+FROM SALE_INVOICE s
+INNER JOIN USERS u ON s.USERS_ID = u.USERS_ID
+LEFT JOIN SALE_ITEMS si ON s.S_ID = si.S_ID
+LEFT JOIN CUSTOMERS c ON s.CUST_ID = c.CUST_ID
+WHERE s.S_DATE >= @StartDate
+  AND s.S_DATE < @EndDate
+  AND u.USERS_ID IN (7, 9, 11, 13, 21)
+GROUP BY 
+    u.USERS_ID,
+    u.FULL_NAME,
+    s.CUST_ID,
+    CASE WHEN s.CUST_ID = 1 THEN 'كاش' ELSE 'ديون' END,
+    c.CUST_NAME,
+    s.S_ID,
+    CONVERT(VARCHAR(19), s.S_DATE, 121)
+ORDER BY u.USERS_ID, s.CUST_ID DESC, s.S_ID DESC;
+```
+
+---
+
 ## PATTERN: مبيعات-آخر-يوم-موظف
-TRIGGERS: مبيعات آخر يوم, آخر يوم فيه مبيعات, آخر يوم مبيعات, مبيعات آخر يوم لكل موظف, last sale day, last day with sales, إيرادات آخر يوم, مبيعات الموظفين آخر يوم
+TRIGGERS: مبيعات آخر يوم, آخر يوم فيه مبيعات, آخر يوم مبيعات, مبيعات آخر يوم لكل موظف, last sale day, last day with sales, إيرادات آخر يوم, مبيعات الموظفين آخر يوم, مبيعات الموظفين, إيرادات الموظفين, ايرادات الموظفين, مبيعات يومية موظف
 TABLES: SALE_INVOICE, SALE_ITEMS, USERS
 NOTES:
   - **@LastSaleDay = CONVERT(varchar(10), MAX(S_DATE), 120) FROM SALE_INVOICE** — لا GETDATE() ولا تاريخ ثابت.
   - الإيراد = SUM(SI.QTY * SI.PRICE). SALE_ITEMS لا يحتوي S_DATE.
-  - صف «═══ الإجمالي ═══» في النهاية = مجموع كل الموظفين.
-  - ⚠️ **إذا طلب المستخدم تاريخاً صريحاً** (مثل "21/5/2026") → بدّل @LastSaleDay بـ '2026-05-21' مباشرةً.
-    لا تُعوّض التاريخ الصريح بـ MAX(S_DATE) — استخدم نمط «مبيعات-يومية-لكل-موظف» SQL-A بدلاً من هذا.
+  - النتيجة تعرض كل فاتورة في سطر مستقل، مع إجمالي الموظف في أول سطر فقط.
+  - هذا هو النمط الوحيد المعتمد لمبيعات الموظفين وإيراداتهم. لا تستخدم أي استعلام آخر لهذا الغرض.
+  - لا تستخدمه لسؤال تاريخ محدد إلا إذا عُدّل @LastDate صراحة.
   - ملف مُختبَر: `reports-app/last_sale_day_by_employee.sql`
 ---
 
 ```sql
-DECLARE @LastSaleDay date = (SELECT CONVERT(varchar(10), MAX(S_DATE), 120) FROM dbo.SALE_INVOICE);
-;WITH EmpSales AS (
-    SELECT ISNULL(U.FULL_NAME, N'غير محدد') AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات], 0 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
-    WHERE CONVERT(varchar(10), INV.S_DATE, 120) = @LastSaleDay
-    GROUP BY U.USERS_ID, U.FULL_NAME
-),
-Grand AS (
-    SELECT N'═══ الإجمالي ═══' AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات], 1 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    WHERE CONVERT(varchar(10), INV.S_DATE, 120) = @LastSaleDay
-)
-SELECT @LastSaleDay AS [تاريخ آخر مبيعات], [الموظف], [عدد الفواتير], [إيرادات]
-FROM (SELECT [الموظف], [عدد الفواتير], [إيرادات], SortOrder FROM EmpSales
-      UNION ALL SELECT [الموظف], [عدد الفواتير], [إيرادات], SortOrder FROM Grand) X
-ORDER BY SortOrder, [إيرادات] DESC;
+DECLARE @LastDate VARCHAR(10)
+SET @LastDate = (SELECT TOP 1 CONVERT(VARCHAR(10), S_DATE, 121) FROM SALE_INVOICE WHERE USERS_ID = 11 ORDER BY S_DATE DESC)
+
+SELECT
+  CASE WHEN ROW_NUMBER() OVER (PARTITION BY u.USERS_ID ORDER BY s.S_ID DESC) = 1
+    THEN u.USER_NAMES
+    ELSE ''
+  END as 'الموظف',
+  s.S_ID as 'رقم الفاتورة',
+  CAST(SUM(si.QTY * si.PRICE) AS DECIMAL(10,2)) as 'قيمة الفاتورة',
+  CASE WHEN ROW_NUMBER() OVER (PARTITION BY u.USERS_ID ORDER BY s.S_ID DESC) = 1
+    THEN (SELECT CAST(SUM(si2.QTY * si2.PRICE) AS DECIMAL(10,2))
+          FROM SALE_ITEMS si2
+          JOIN SALE_INVOICE s2 ON si2.S_ID = s2.S_ID
+          WHERE s2.USERS_ID = u.USERS_ID
+          AND CONVERT(VARCHAR(10), s2.S_DATE, 121) = @LastDate)
+    ELSE NULL
+  END as 'الإجمالي'
+FROM SALE_INVOICE s
+LEFT JOIN SALE_ITEMS si ON s.S_ID = si.S_ID
+LEFT JOIN USERS u ON s.USERS_ID = u.USERS_ID
+WHERE CONVERT(VARCHAR(10), s.S_DATE, 121) = @LastDate
+GROUP BY u.USER_NAMES, u.USERS_ID, s.S_ID
+ORDER BY u.USER_NAMES, s.S_ID DESC
+
+GO
 ```
-
----
-
----
-
-## PATTERN: مبيعات-يومية-لكل-موظف
-TRIGGERS: مبيعات يومية موظف, لخص المبيعات اليومية, إجمالي مبيعات كل موظف, مبيعات كل يوم بالموظف, daily sales by employee, employee daily summary, أداء يومي موظف, مبيعات الموظفين يومياً, لخص لي المبيعات اليومية, مبيعات الموظفين ليوم, مبيعات موظفين تاريخ, employee sales specific date
-TABLES: SALE_INVOICE, SALE_ITEMS, USERS
-VIEWS: SALE_ITEMS_INVOICE_VIEW
-NOTES:
-  - **لا subquery يجمع PRICE وحده.** الإيراد = SUM(QTY*PRICE). SALE_ITEMS **لا** S_DATE.
-  - الموظف = SALE_INVOICE.USERS_ID → USERS.FULL_NAME.
-  - **⚠️ قاعدة التاريخ الصارمة:**
-    * المستخدم ذكر تاريخاً صريحاً (مثل "21/5/2026" أو "ليوم X") → استخدم **SQL-A** مع ذلك التاريخ بالضبط.
-    * المستخدم قال "آخر أيام/أسبوع" أو لم يحدد تاريخاً → استخدم **SQL-B** (نافذة 7 أيام من MAX(S_DATE)).
-    * ⚠️ لا تستبدل تاريخاً صريحاً بـ MAX(S_DATE) — MAX يعيد آخر فاتورة مهما كانت قليلة.
----
-
-```sql
--- [A] مبيعات يوم محدد لكل موظف — استخدم عند ذكر تاريخ صريح
--- غيّر '2026-05-21' بالتاريخ المطلوب
-DECLARE @TargetDate date = '2026-05-21';
-;WITH EmpDay AS (
-  SELECT
-    ISNULL(V.FULL_NAME, N'غير محدد') AS [الموظف],
-    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
-    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات],
-    0 AS SortOrder
-  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
-  WHERE CONVERT(varchar(10), V.S_DATE, 120) = @TargetDate
-  GROUP BY V.USERS_ID, V.FULL_NAME
-),
-Grand AS (
-  SELECT N'═══ الإجمالي ═══' AS [الموظف],
-    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
-    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات], 1 AS SortOrder
-  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
-  WHERE CONVERT(varchar(10), V.S_DATE, 120) = @TargetDate
-)
-SELECT @TargetDate AS [التاريخ], [الموظف], [عدد الفواتير], [الإيرادات]
-FROM (SELECT * FROM EmpDay UNION ALL SELECT * FROM Grand) X
-ORDER BY SortOrder, [الإيرادات] DESC;
-```
-
-```sql
--- [B] مبيعات يومية لكل موظف — آخر 7 أيام من آخر يوم مبيعات (بدون تاريخ محدد)
-DECLARE @AsOfDate date = (SELECT CONVERT(varchar(10), MAX(S_DATE), 120) FROM dbo.SALE_INVOICE);
-DECLARE @FromDate date = DATEADD(day, -7, @AsOfDate);
-;WITH EmpDaily AS (
-  SELECT
-    CONVERT(varchar(10), V.S_DATE, 120) AS [اليوم],
-    ISNULL(V.FULL_NAME, N'غير محدد') AS [الموظف],
-    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
-    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات],
-    0 AS SortOrder
-  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
-  WHERE CONVERT(varchar(10), V.S_DATE, 120) BETWEEN @FromDate AND @AsOfDate
-  GROUP BY CONVERT(varchar(10), V.S_DATE, 120), V.USERS_ID, V.FULL_NAME
-),
-GrandTotal AS (
-  SELECT
-    NULL AS [اليوم],
-    N'═══ الإجمالي ═══' AS [الموظف],
-    COUNT(DISTINCT V.S_ID) AS [عدد الفواتير],
-    CAST(SUM(V.QTY * V.PRICE) AS decimal(18,2)) AS [الإيرادات],
-    1 AS SortOrder
-  FROM dbo.SALE_ITEMS_INVOICE_VIEW V
-  WHERE CONVERT(varchar(10), V.S_DATE, 120) BETWEEN @FromDate AND @AsOfDate
-)
-SELECT [اليوم], [الموظف], [عدد الفواتير], [الإيرادات]
-FROM (SELECT * FROM EmpDaily UNION ALL SELECT * FROM GrandTotal) X
-ORDER BY SortOrder, [اليوم] DESC, [الإيرادات] DESC;
-```
-
----
 
 ## PATTERN: ترتيب-الموظفين
 TRIGGERS: ترتيب الموظفين, أفضل موظف, أعلى دخل, أداء الموظفين, أعلى معدل بيع, موظف الشهر, employee ranking, best employee, معدل الدخل, متوسط الفاتورة
@@ -857,11 +858,226 @@ ORDER BY s, [إجمالي_الدين] DESC;
 
 ---
 
+## PATTERN: كشف-حساب-عميل
+TRIGGERS: كشف حساب, كشف حساب عميل, كشف حساب شركة, رصيد العميل, رصيد شركة, حساب العميل, حساب شركة, client balance, customer balance statement, CLIENTS_BALANCE
+TABLES: CUSTOMERS, CLIENTS_BALANCE
+NOTES:
+  - ضع اسم العميل أو جزءًا منه في @SEARCH عبر %PARTY%.
+  - ابحث أولًا عن كل الأسماء المشابهة في CUSTOMERS.
+  - اختر أفضل تطابق من نتائج البحث بالترتيب، ثم استخدم رقمه في CLIENTS_BALANCE.
+  - لا تحسب الرصيد يدويًا. استخدم الإجراء المخزن CLIENTS_BALANCE كما هو.
+  - النتيجة النهائية تكون تقريرًا عربيًا مختصرًا: رقم العميل، اسم العميل، المدين، الدائن، الرصيد.
+---
+
+```sql
+DECLARE @SEARCH NVARCHAR(100)
+SET @SEARCH = N'%PARTY%'
+DECLARE @CUST_ID INT
+DECLARE @SELECTED_CUST_ID INT
+DECLARE @SELECTED_CUST_NAME NVARCHAR(255)
+DECLARE @BALANCE FLOAT
+DECLARE @TOTAL_CREDIT FLOAT
+DECLARE @TOTAL_DEBIT FLOAT
+DECLARE @TOTAL_CREDIT_N FLOAT
+DECLARE @TOTAL_DEBIT_N FLOAT
+DECLARE @BALANCE_N FLOAT
+
+DECLARE @MATCHES TABLE (
+  CUST_ID INT,
+  CUST_NAME NVARCHAR(255),
+  MATCH_SCORE INT
+)
+
+INSERT INTO @MATCHES (CUST_ID, CUST_NAME, MATCH_SCORE)
+SELECT TOP 20
+  CUST_ID,
+  CUST_NAME,
+  %PARTY_SCORE% AS MATCH_SCORE
+FROM dbo.CUSTOMERS
+WHERE CUST_NAME LIKE N'%' + @SEARCH + N'%' OR %PARTY_CONDITION%
+ORDER BY
+  CASE WHEN CUST_NAME LIKE N'%' + @SEARCH + N'%' THEN 0 ELSE %PARTY_SCORE% END,
+  CUST_NAME
+
+SELECT TOP 1
+  @SELECTED_CUST_ID = CUST_ID,
+  @SELECTED_CUST_NAME = CUST_NAME
+FROM @MATCHES
+ORDER BY MATCH_SCORE, CUST_NAME
+
+SET @CUST_ID = @SELECTED_CUST_ID
+
+IF @CUST_ID IS NOT NULL
+BEGIN
+  EXEC [CLIENTS_BALANCE]
+    @TRAN_BARNCH1 = 'A',
+    @CUST_ID = @CUST_ID,
+    @COMM_ID = 0,
+    @DT_FROM = '2025-01-01',
+    @DT_TO = '2026-12-31',
+    @ALL = 1,
+    @TRAN_ID = 0,
+    @CAT8_ID = 0,
+    @BALANCE = @BALANCE OUTPUT,
+    @TOTAL_CREDIT = @TOTAL_CREDIT OUTPUT,
+    @TOTAL_DEBIT = @TOTAL_DEBIT OUTPUT,
+    @TOTAL_CREDIT_N = @TOTAL_CREDIT_N OUTPUT,
+    @TOTAL_DEBIT_N = @TOTAL_DEBIT_N OUTPUT,
+    @BALANCE_N = @BALANCE_N OUTPUT
+
+  SELECT
+    @SELECTED_CUST_ID AS [رقم العميل],
+    @SELECTED_CUST_NAME AS [اسم العميل],
+    CAST(@TOTAL_DEBIT AS DECIMAL(10,2)) AS [المدين],
+    CAST(@TOTAL_CREDIT AS DECIMAL(10,2)) AS [الدائن],
+    CAST(@BALANCE AS DECIMAL(10,2)) AS [الرصيد]
+END
+ELSE
+BEGIN
+  SELECT
+    CAST(NULL AS INT) AS [رقم العميل],
+    CAST(NULL AS NVARCHAR(255)) AS [اسم العميل],
+    CAST(NULL AS DECIMAL(10,2)) AS [المدين],
+    CAST(NULL AS DECIMAL(10,2)) AS [الدائن],
+    CAST(NULL AS DECIMAL(10,2)) AS [الرصيد]
+  WHERE 1=0
+END
+```
+
+---
+
+## PATTERN: كشف-حساب-عميل-مفصل
+TRIGGERS: كشف حساب مفصل, كشف حساب العميل مفصل, كشف حساب كامل, كشف حساب العميل كامل, كشف حساب تفصيلي, تفاصيل حساب العميل, فواتير العميل وبنوده, customer detailed balance, detailed customer statement
+TABLES: CUSTOMERS, CLIENTS_BALANCE, SALE_INVOICE, SALE_ITEMS
+NOTES:
+  - هذا هو كشف الحساب المفصل بجانب النمط المختصر.
+  - ضع اسم العميل أو جزءًا منه في @SEARCH عبر %PARTY%.
+  - الجزء الأول يعطي ملخص المدين/الدائن/الرصيد من CLIENTS_BALANCE.
+  - الجزء الثاني يعرض فواتير بيع العميل.
+  - الجزء الثالث يعرض بنود فواتير العميل.
+  - استخدمه فقط عندما يطلب المستخدم: مفصل، كامل، تفصيلي، الفواتير، البنود.
+---
+
+```sql
+DECLARE @SEARCH NVARCHAR(100)
+SET @SEARCH = N'%PARTY%'
+DECLARE @CUST_ID INT
+DECLARE @SELECTED_CUST_NAME NVARCHAR(255)
+DECLARE @BALANCE FLOAT
+DECLARE @TOTAL_CREDIT FLOAT
+DECLARE @TOTAL_DEBIT FLOAT
+DECLARE @TOTAL_CREDIT_N FLOAT
+DECLARE @TOTAL_DEBIT_N FLOAT
+DECLARE @BALANCE_N FLOAT
+
+SELECT TOP 1
+  @CUST_ID = CUST_ID,
+  @SELECTED_CUST_NAME = CUST_NAME
+FROM dbo.CUSTOMERS
+WHERE CUST_NAME LIKE N'%' + @SEARCH + N'%' OR %PARTY_CONDITION%
+ORDER BY
+  CASE WHEN CUST_NAME LIKE N'%' + @SEARCH + N'%' THEN 0 ELSE %PARTY_SCORE% END,
+  CUST_NAME
+
+IF @CUST_ID IS NOT NULL
+BEGIN
+  EXEC [CLIENTS_BALANCE]
+    @TRAN_BARNCH1 = 'A',
+    @CUST_ID = @CUST_ID,
+    @COMM_ID = 0,
+    @DT_FROM = '2025-01-01',
+    @DT_TO = '2026-12-31',
+    @ALL = 1,
+    @TRAN_ID = 0,
+    @CAT8_ID = 0,
+    @BALANCE = @BALANCE OUTPUT,
+    @TOTAL_CREDIT = @TOTAL_CREDIT OUTPUT,
+    @TOTAL_DEBIT = @TOTAL_DEBIT OUTPUT,
+    @TOTAL_CREDIT_N = @TOTAL_CREDIT_N OUTPUT,
+    @TOTAL_DEBIT_N = @TOTAL_DEBIT_N OUTPUT,
+    @BALANCE_N = @BALANCE_N OUTPUT
+
+  SELECT
+    @CUST_ID AS [رقم العميل],
+    @SELECTED_CUST_NAME AS [اسم العميل],
+    CAST(@TOTAL_DEBIT AS DECIMAL(10,2)) AS [المدين],
+    CAST(@TOTAL_CREDIT AS DECIMAL(10,2)) AS [الدائن],
+    CAST(@BALANCE AS DECIMAL(10,2)) AS [الرصيد]
+END
+ELSE
+BEGIN
+  SELECT
+    CAST(NULL AS INT) AS [رقم العميل],
+    CAST(NULL AS NVARCHAR(255)) AS [اسم العميل],
+    CAST(NULL AS DECIMAL(10,2)) AS [المدين],
+    CAST(NULL AS DECIMAL(10,2)) AS [الدائن],
+    CAST(NULL AS DECIMAL(10,2)) AS [الرصيد]
+  WHERE 1=0
+END
+```
+
+```sql
+DECLARE @SEARCH NVARCHAR(100)
+SET @SEARCH = N'%PARTY%'
+;WITH PickedCustomer AS (
+  SELECT TOP 1 CUST_ID, CUST_NAME
+  FROM dbo.CUSTOMERS
+  WHERE CUST_NAME LIKE N'%' + @SEARCH + N'%' OR %PARTY_CONDITION%
+  ORDER BY
+    CASE WHEN CUST_NAME LIKE N'%' + @SEARCH + N'%' THEN 0 ELSE %PARTY_SCORE% END,
+    CUST_NAME
+)
+SELECT
+  P.CUST_ID AS [رقم العميل],
+  P.CUST_NAME AS [اسم العميل],
+  S.S_ID AS [الفاتورة],
+  CONVERT(VARCHAR(10), S.S_DATE, 121) AS [التاريخ],
+  COUNT(DISTINCT SI.ITEM_ID) AS [البنود],
+  CAST(SUM(SI.QTY * SI.PRICE) AS DECIMAL(10,2)) AS [الإجمالي],
+  CAST(ISNULL(S.S_DISCOUNT, 0) AS DECIMAL(10,2)) AS [الخصم],
+  CAST(SUM(SI.QTY * SI.PRICE) - ISNULL(S.S_DISCOUNT, 0) AS DECIMAL(10,2)) AS [الصافي]
+FROM PickedCustomer P
+INNER JOIN dbo.SALE_INVOICE S ON S.CUST_ID = P.CUST_ID
+LEFT JOIN dbo.SALE_ITEMS SI ON S.S_ID = SI.S_ID
+GROUP BY P.CUST_ID, P.CUST_NAME, S.S_ID, S.S_DATE, S.S_DISCOUNT
+ORDER BY S.S_DATE DESC, S.S_ID DESC
+```
+
+```sql
+DECLARE @SEARCH NVARCHAR(100)
+SET @SEARCH = N'%PARTY%'
+;WITH PickedCustomer AS (
+  SELECT TOP 1 CUST_ID, CUST_NAME
+  FROM dbo.CUSTOMERS
+  WHERE CUST_NAME LIKE N'%' + @SEARCH + N'%' OR %PARTY_CONDITION%
+  ORDER BY
+    CASE WHEN CUST_NAME LIKE N'%' + @SEARCH + N'%' THEN 0 ELSE %PARTY_SCORE% END,
+    CUST_NAME
+)
+SELECT
+  P.CUST_ID AS [رقم العميل],
+  P.CUST_NAME AS [اسم العميل],
+  S.S_ID AS [الفاتورة],
+  CONVERT(VARCHAR(10), S.S_DATE, 121) AS [التاريخ],
+  SI.ITEM_ID AS [المنتج],
+  SI.QTY AS [الكمية],
+  SI.PRICE AS [السعر],
+  CAST(SI.QTY * SI.PRICE AS DECIMAL(10,2)) AS [القيمة]
+FROM PickedCustomer P
+INNER JOIN dbo.SALE_INVOICE S ON S.CUST_ID = P.CUST_ID
+LEFT JOIN dbo.SALE_ITEMS SI ON S.S_ID = SI.S_ID
+ORDER BY S.S_DATE DESC, S.S_ID DESC, SI.ITEM_ID
+```
+
+---
+
 ## PATTERN: ديون-الزبائن
 TRIGGERS: ديون الزبائن, ديون الزباين, ديون العملاء, اللي لي, من يدينني, customer debts, ذمة الزبائن, ديون لي
 TABLES: CUSTOMERS, SALE_INVOICE, SALE_ITEMS, R_S_INVOICE, R_S_ITEMS, TAKE, BALANCE_EDIT
 NOTES:
   - الدين = مبيعات − S_DISCOUNT − مردودات − مقبوضات + تسوية. SQL 2005 ✓
+  - إذا ذكر المستخدم اسم عميل مع كلمة ديون، استخدم %PARTY_PICK_CONDITION% لاختيار أفضل عميل واحد.
+  - إذا لم يذكر اسمًا محددًا، %PARTY_PICK_CONDITION% تتحول إلى 1=1 ويظهر تقرير كل الزبائن.
 ---
 
 ```sql
@@ -877,11 +1093,17 @@ D AS (
   FROM dbo.CUSTOMERS C LEFT JOIN ST ON C.CUST_ID=ST.CUST_ID LEFT JOIN SR ON C.CUST_ID=SR.CUST_ID
   LEFT JOIN TT ON C.CUST_ID=TT.CUST_ID LEFT JOIN BA ON C.CUST_ID=BA.CUST_ID
   LEFT JOIN LT ON C.CUST_ID=LT.CUST_ID AND LT.rn=1
-  WHERE C.CUST_CUSTOM=1 AND C.CUST_INVISIBLE=0 AND ISNULL(ST.GV,0)-ISNULL(ST.TD,0)-ISNULL(SR.V,0)-ISNULL(TT.V,0)+ISNULL(BA.Adj,0) >= 1
+  WHERE C.CUST_CUSTOM=1 AND C.CUST_INVISIBLE=0
+    AND (%PARTY_PICK_CONDITION%)
+    AND ISNULL(ST.GV,0)-ISNULL(ST.TD,0)-ISNULL(SR.V,0)-ISNULL(TT.V,0)+ISNULL(BA.Adj,0) >= 1
+),
+R AS (
+  SELECT N AS [الزبون], CAST(Debt AS decimal(18,2)) AS [إجمالي_الدين], CONVERT(varchar(10),LD,120) AS [آخر_إيصال_قبض], 0 AS s FROM D
+  UNION ALL
+  SELECT N'═══ إجمالي ديون الزبائن ═══', CAST(SUM(Debt) AS decimal(18,2)), NULL, 1 FROM D
 )
-SELECT N AS [الزبون], CAST(Debt AS decimal(18,2)) AS [إجمالي_الدين], CONVERT(varchar(10),LD,120) AS [آخر_إيصال_قبض], 0 AS s FROM D
-UNION ALL
-SELECT N'═══ إجمالي ديون الزبائن ═══', CAST(SUM(Debt) AS decimal(18,2)), NULL, 1 FROM D
+SELECT [الزبون], [إجمالي_الدين], [آخر_إيصال_قبض]
+FROM R
 ORDER BY s, [إجمالي_الدين] DESC;
 ```
 
@@ -895,24 +1117,47 @@ NOTES:
 ---
 
 ```sql
-;WITH
-BA AS (SELECT CUST_ID, SUM(ISNULL(BL_DEBIT,0))-SUM(ISNULL(BL_CREDIT,0)) AS Adj FROM dbo.BALANCE_EDIT GROUP BY CUST_ID),
-BT AS (SELECT B.CUST_ID, SUM(BI.QTY*BI.PRICE) AS GV, SUM(ISNULL(B.B_DISCOUNT,0)) AS TD
-  FROM dbo.BUY_INVOICE B JOIN dbo.BUY_ITEMS BI ON B.B_ID=BI.B_ID GROUP BY B.CUST_ID),
-BR AS (SELECT BR.CUST_ID, SUM(BRI.QTY*BRI.PRICE) AS V FROM dbo.B_R_INVOICE BR JOIN dbo.B_R_ITEMS BRI ON BR.B_R_ID=BRI.B_R_ID GROUP BY BR.CUST_ID),
-GT AS (SELECT CUST_ID, SUM(G_VALUE) AS V FROM dbo.GIVE WHERE EXPENCES_ID=0 GROUP BY CUST_ID),
-LG AS (SELECT CUST_ID, G_DATE, ROW_NUMBER() OVER (PARTITION BY CUST_ID ORDER BY G_ID DESC) AS rn FROM dbo.GIVE WHERE EXPENCES_ID=0),
-D AS (
-  SELECT C.CUST_NAME AS N, ISNULL(BT.GV,0)-ISNULL(BT.TD,0)-ISNULL(BR.V,0)-ISNULL(GT.V,0)+ISNULL(BA.Adj,0) AS Debt, LG.G_DATE AS LD
-  FROM dbo.CUSTOMERS C LEFT JOIN BT ON C.CUST_ID=BT.CUST_ID LEFT JOIN BR ON C.CUST_ID=BR.CUST_ID
-  LEFT JOIN GT ON C.CUST_ID=GT.CUST_ID LEFT JOIN BA ON C.CUST_ID=BA.CUST_ID
-  LEFT JOIN LG ON C.CUST_ID=LG.CUST_ID AND LG.rn=1
-  WHERE C.CUST_VENDOR=1 AND C.CUST_INVISIBLE=0 AND ISNULL(BT.GV,0)-ISNULL(BT.TD,0)-ISNULL(BR.V,0)-ISNULL(GT.V,0)+ISNULL(BA.Adj,0) >= 1
-)
-SELECT N AS [المورد], CAST(Debt AS decimal(18,2)) AS [قيمة_الدين], CONVERT(varchar(10),LD,120) AS [آخر_إيصال_صرف], 0 AS s FROM D
-UNION ALL
-SELECT N'═══ إجمالي ديون الموردين ═══', CAST(SUM(Debt) AS decimal(18,2)), NULL, 1 FROM D
-ORDER BY s, [قيمة_الدين] DESC;
+SELECT
+    c.CUST_NAME AS [المورد],
+
+    FORMAT(ISNULL(p.TotalPurchases,0),'N2') AS [إجمالي المشتريات],
+
+    FORMAT(ISNULL(g.TotalPaid,0),'N2') AS [إجمالي المدفوع],
+
+    FORMAT(
+        ISNULL(p.TotalPurchases,0) - ISNULL(g.TotalPaid,0),
+        'N2'
+    ) AS [الرصيد المستحق]
+
+FROM dbo.CUSTOMERS c
+LEFT JOIN
+(
+    SELECT
+        bi.CUST_ID,
+        SUM(ISNULL(bd.QTY,0) * ISNULL(bd.PRICE,0)) AS TotalPurchases
+    FROM dbo.BUY_INVOICE bi
+    INNER JOIN dbo.BUY_ITEMS bd
+        ON bi.B_ID = bd.B_ID
+    GROUP BY bi.CUST_ID
+) p
+ON c.CUST_ID = p.CUST_ID
+
+LEFT JOIN
+(
+    SELECT
+        CUST_ID,
+        SUM(ISNULL(G_VALUE,0)) AS TotalPaid
+    FROM dbo.GIVE
+    WHERE G_STATUES = 1
+    GROUP BY CUST_ID
+) g
+ON c.CUST_ID = g.CUST_ID
+
+WHERE c.CUST_VENDOR = 1
+AND (ISNULL(p.TotalPurchases,0) - ISNULL(g.TotalPaid,0)) > 0
+
+ORDER BY
+    ISNULL(p.TotalPurchases,0) - ISNULL(g.TotalPaid,0) DESC;
 ```
 
 ---

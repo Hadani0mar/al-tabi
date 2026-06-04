@@ -53,6 +53,7 @@ impl ErpKind {
     }
 }
 
+// Agent pattern files are embedded at compile time.
 const AGENT_MARKETING_EMBED: &str = include_str!("../../AGENT_Marketing2026.md");
 const AGENT_INFINITY_EMBED: &str = include_str!("../../AGENT_InfinityRetailDB.md");
 

@@ -61,7 +61,9 @@ pub async fn html_to_pdf(html: &str) -> Result<Vec<u8>, String> {
         .build()
         .map_err(|e| format!("فشل بناء HTTP client: {e}"))?;
 
-    let base_url = gotenberg_env("GOTENBERG_URL")?.trim_end_matches('/').to_string();
+    let base_url = gotenberg_env("GOTENBERG_URL")?
+        .trim_end_matches('/')
+        .to_string();
     let url = format!("{}/forms/chromium/convert/html", base_url);
 
     let part = reqwest::multipart::Part::bytes(html.as_bytes().to_vec())
@@ -71,8 +73,8 @@ pub async fn html_to_pdf(html: &str) -> Result<Vec<u8>, String> {
 
     let form = reqwest::multipart::Form::new()
         .part("files", part)
-        .text("paperWidth", "11.69")   // A4 landscape width
-        .text("paperHeight", "8.27")   // A4 landscape height
+        .text("paperWidth", "11.69") // A4 landscape width
+        .text("paperHeight", "8.27") // A4 landscape height
         .text("marginTop", "0.4")
         .text("marginBottom", "0.4")
         .text("marginLeft", "0.4")

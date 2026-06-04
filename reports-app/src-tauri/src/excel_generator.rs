@@ -4,15 +4,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_ROWS: usize = 50_000;
 
 // ─── لوحة الألوان المهنية ────────────────────────────────────────────
-const C_HEADER_BG:  u32 = 0x1A3869; // أزرق داكن — رأس الأعمدة
-const C_TITLE_BG:   u32 = 0x0F2548; // أزرق أعمق — شريط العنوان
-const C_ALT_ROW:    u32 = 0xECF2FB; // أزرق فاتح جداً — صفوف متناوبة
-const C_TOTAL_BG:   u32 = 0xFFF8E1; // أصفر فاتح — صف الإجمالي
-const C_TOTAL_FG:   u32 = 0x7B4F00; // بني داكن — نص الإجمالي
-const C_DATE_FG:    u32 = 0x5A6472; // رمادي — صف التاريخ
-const C_BORDER:     u32 = 0xB0BEC5; // رمادي فاتح — حدود الخلايا
-const C_HEADER_FG:  u32 = 0xFFFFFF; // أبيض — نص رأس الأعمدة
-const C_TITLE_FG:   u32 = 0xFFFFFF; // أبيض — نص العنوان
+const C_HEADER_BG: u32 = 0x1A3869; // أزرق داكن — رأس الأعمدة
+const C_TITLE_BG: u32 = 0x0F2548; // أزرق أعمق — شريط العنوان
+const C_ALT_ROW: u32 = 0xECF2FB; // أزرق فاتح جداً — صفوف متناوبة
+const C_TOTAL_BG: u32 = 0xFFF8E1; // أصفر فاتح — صف الإجمالي
+const C_TOTAL_FG: u32 = 0x7B4F00; // بني داكن — نص الإجمالي
+const C_DATE_FG: u32 = 0x5A6472; // رمادي — صف التاريخ
+const C_BORDER: u32 = 0xB0BEC5; // رمادي فاتح — حدود الخلايا
+const C_HEADER_FG: u32 = 0xFFFFFF; // أبيض — نص رأس الأعمدة
+const C_TITLE_FG: u32 = 0xFFFFFF; // أبيض — نص العنوان
 
 // ─── تاريخ ووقت الإنشاء (UTC+2 ليبيا) ──────────────────────────────
 fn current_datetime_str() -> String {
@@ -28,16 +28,37 @@ fn current_datetime_str() -> String {
     let mut rem = days;
     let mut year = 1970u64;
     loop {
-        let diy = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 366 } else { 365 };
-        if rem < diy { break; }
+        let diy = if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if rem < diy {
+            break;
+        }
         rem -= diy;
         year += 1;
     }
     let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let mdays: [u64; 12] = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays: [u64; 12] = [
+        31,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1u64;
     for &d in &mdays {
-        if rem < d { break; }
+        if rem < d {
+            break;
+        }
         rem -= d;
         month += 1;
     }
@@ -48,7 +69,8 @@ fn current_datetime_str() -> String {
 // ─── تقدير عرض العمود من محتواه ────────────────────────────────────
 fn estimate_col_width(header: &str, rows: &[Vec<String>], col_idx: usize) -> f64 {
     let header_len = header.chars().count();
-    let max_data_len = rows.iter()
+    let max_data_len = rows
+        .iter()
         .filter_map(|r| r.get(col_idx))
         .map(|v| v.chars().count())
         .max()
@@ -67,10 +89,15 @@ fn parse_number(s: &str) -> Option<f64> {
 
 // ─── حساب مجموع عمود رقمي ───────────────────────────────────────────
 fn col_sum(rows: &[Vec<String>], col: usize) -> Option<f64> {
-    let nums: Vec<f64> = rows.iter()
+    let nums: Vec<f64> = rows
+        .iter()
         .filter_map(|r| r.get(col)?.trim().replace(',', "").parse::<f64>().ok())
         .collect();
-    if nums.len() > 1 { Some(nums.iter().sum()) } else { None }
+    if nums.len() > 1 {
+        Some(nums.iter().sum())
+    } else {
+        None
+    }
 }
 
 // ─── الدالة الرئيسية ─────────────────────────────────────────────────
@@ -189,7 +216,11 @@ pub fn generate_report_excel(
 
     // صف 1: تاريخ/وقت الإنشاء
     ws.set_row_height(1, 18.0).ok();
-    let date_label = format!("تاريخ الإنشاء: {}  |  عدد السجلات: {}", datetime, rows.len().min(MAX_ROWS));
+    let date_label = format!(
+        "تاريخ الإنشاء: {}  |  عدد السجلات: {}",
+        datetime,
+        rows.len().min(MAX_ROWS)
+    );
     ws.merge_range(1, 0, 1, last_col, &date_label, &fmt_date)
         .map_err(|e| e.to_string())?;
 
@@ -214,23 +245,32 @@ pub fn generate_report_excel(
                 ws.write_number_with_format(excel_row, c as u16, num, fmt)
                     .map_err(|e| e.to_string())?;
             } else {
-                let fmt = if is_alt { &fmt_cell_alt } else { &fmt_cell_plain };
+                let fmt = if is_alt {
+                    &fmt_cell_alt
+                } else {
+                    &fmt_cell_plain
+                };
                 ws.write_string_with_format(excel_row, c as u16, val, fmt)
                     .map_err(|e| e.to_string())?;
             }
         }
         // ملء الخلايا الفارغة بتنسيق (لعرض الحدود)
         for c in row.len()..columns.len() {
-            let fmt = if is_alt { &fmt_cell_alt } else { &fmt_cell_plain };
+            let fmt = if is_alt {
+                &fmt_cell_alt
+            } else {
+                &fmt_cell_plain
+            };
             ws.write_string_with_format(excel_row, c as u16, "", fmt)
                 .map_err(|e| e.to_string())?;
         }
     }
 
     // ─────────── صف الإجمالي (إن وجدت أعمدة رقمية) ─────────────────
-    let has_numbers = columns.iter().enumerate().any(|(c, _)| {
-        col_sum(rows, c).is_some()
-    });
+    let has_numbers = columns
+        .iter()
+        .enumerate()
+        .any(|(c, _)| col_sum(rows, c).is_some());
     if has_numbers && row_count > 0 {
         let total_row = 3 + row_count as u32;
         ws.set_row_height(total_row, 20.0).ok();
@@ -271,7 +311,10 @@ mod tests {
     use super::*;
     #[test]
     fn smoke_excel_arabic() {
-        let cols = vec!["\u{062A}\u{0627}\u{0631}\u{064A}\u{062E}".into(), "\u{0645}\u{0628}\u{0644}\u{063A}".into()];
+        let cols = vec![
+            "\u{062A}\u{0627}\u{0631}\u{064A}\u{062E}".into(),
+            "\u{0645}\u{0628}\u{0644}\u{063A}".into(),
+        ];
         let rows = vec![vec!["2026-05-21".into(), "1084.0".into()]];
         let title = "\u{0645}\u{0628}\u{064A}\u{0639}\u{0627}\u{062A}";
         let bytes = generate_report_excel(title, &cols, &rows).unwrap();

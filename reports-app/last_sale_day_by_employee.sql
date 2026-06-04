@@ -1,39 +1,31 @@
-/* مبيعات آخر يوم فيه مبيعات — لكل موظف + إجمالي — Marketing2026
-   sqlcmd -E -S localhost -d Marketing2026 -i last_sale_day_by_employee.sql
-   ⚠️ لا تستخدم GETDATE() ولا تاريخاً ثابتاً — @LastSaleDay = MAX(S_DATE)
-*/
-DECLARE @LastSaleDay date = (SELECT CAST(MAX(S_DATE) AS date) FROM dbo.SALE_INVOICE);
+-- ============================================================
+-- تقرير آخر يوم مبيعات - كل فاتورة على سطر
+-- LAST SALES DAY REPORT - Each invoice on separate row
+-- ============================================================
 
-;WITH EmpSales AS (
-    SELECT
-        ISNULL(U.FULL_NAME, N'غير محدد') AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات],
-        0 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    LEFT JOIN dbo.USERS U ON INV.USERS_ID = U.USERS_ID
-    WHERE CAST(INV.S_DATE AS date) = @LastSaleDay
-    GROUP BY U.USERS_ID, U.FULL_NAME
-),
-Grand AS (
-    SELECT
-        N'═══ الإجمالي ═══' AS [الموظف],
-        COUNT(DISTINCT INV.S_ID) AS [عدد الفواتير],
-        CAST(SUM(SI.QTY * SI.PRICE) AS decimal(18,2)) AS [إيرادات],
-        1 AS SortOrder
-    FROM dbo.SALE_INVOICE INV
-    INNER JOIN dbo.SALE_ITEMS SI ON INV.S_ID = SI.S_ID
-    WHERE CAST(INV.S_DATE AS date) = @LastSaleDay
-)
+DECLARE @LastDate VARCHAR(10)
+SET @LastDate = (SELECT TOP 1 CONVERT(VARCHAR(10), S_DATE, 121) FROM SALE_INVOICE WHERE USERS_ID = 11 ORDER BY S_DATE DESC)
+
 SELECT
-    @LastSaleDay AS [تاريخ آخر مبيعات],
-    [الموظف],
-    [عدد الفواتير],
-    [إيرادات]
-FROM (
-    SELECT [الموظف], [عدد الفواتير], [إيرادات], SortOrder FROM EmpSales
-    UNION ALL
-    SELECT [الموظف], [عدد الفواتير], [إيرادات], SortOrder FROM Grand
-) X
-ORDER BY SortOrder, [إيرادات] DESC;
+  CASE WHEN ROW_NUMBER() OVER (PARTITION BY u.USERS_ID ORDER BY s.S_ID DESC) = 1
+    THEN u.USER_NAMES
+    ELSE ''
+  END as 'الموظف',
+  s.S_ID as 'رقم الفاتورة',
+  CAST(SUM(si.QTY * si.PRICE) AS DECIMAL(10,2)) as 'قيمة الفاتورة',
+  CASE WHEN ROW_NUMBER() OVER (PARTITION BY u.USERS_ID ORDER BY s.S_ID DESC) = 1
+    THEN (SELECT CAST(SUM(si2.QTY * si2.PRICE) AS DECIMAL(10,2))
+          FROM SALE_ITEMS si2
+          JOIN SALE_INVOICE s2 ON si2.S_ID = s2.S_ID
+          WHERE s2.USERS_ID = u.USERS_ID
+          AND CONVERT(VARCHAR(10), s2.S_DATE, 121) = @LastDate)
+    ELSE NULL
+  END as 'الإجمالي'
+FROM SALE_INVOICE s
+LEFT JOIN SALE_ITEMS si ON s.S_ID = si.S_ID
+LEFT JOIN USERS u ON s.USERS_ID = u.USERS_ID
+WHERE CONVERT(VARCHAR(10), s.S_DATE, 121) = @LastDate
+GROUP BY u.USER_NAMES, u.USERS_ID, s.S_ID
+ORDER BY u.USER_NAMES, s.S_ID DESC
+
+GO

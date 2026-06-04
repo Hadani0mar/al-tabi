@@ -180,14 +180,22 @@ async fn fetch_shareable_products(
             .get(3)
             .and_then(|s| {
                 let t = s.trim();
-                t.parse::<i64>().ok().or_else(|| t.parse::<f64>().ok().map(|f| f as i64))
+                t.parse::<i64>()
+                    .ok()
+                    .or_else(|| t.parse::<f64>().ok().map(|f| f as i64))
             })
             .unwrap_or(0);
         let nearest_expiry = row
             .get(4)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        out.push(ShareProductRow { code, name, price, quantity, nearest_expiry });
+        out.push(ShareProductRow {
+            code,
+            name,
+            price,
+            quantity,
+            nearest_expiry,
+        });
     }
     Ok(out)
 }
@@ -283,10 +291,7 @@ pub async fn clear_remote_products(sync_key: &str) -> Result<u32, String> {
             .unwrap_or("فشل حذف المنتجات");
         return Err(err.to_string());
     }
-    Ok(resp
-        .get("deleted")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32)
+    Ok(resp.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
 }
 
 async fn push_products(
@@ -325,10 +330,7 @@ async fn push_products(
             .unwrap_or("فشل رفع المنتجات");
         return Err(err.to_string());
     }
-    Ok(resp
-        .get("synced")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32)
+    Ok(resp.get("synced").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
 }
 
 fn emit_progress(app: &AppHandle, percent: u8, detail: &str) {

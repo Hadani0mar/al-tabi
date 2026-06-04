@@ -63,16 +63,31 @@ interface HtmlReport {
   columns: string[];
   rows: string[][];
   rowCount: number;
+  analysis?: string;
+  sections?: HtmlReportSection[];
+}
+
+interface HtmlReportSection {
+  title: string;
+  columns: string[];
+  rows: string[][];
 }
 
 interface HtmlReportPayload {
   requestId: string;
+  chatSessionId?: string;
   reportId?: number;
   title: string;
   toolName: string;
   columns: unknown[];
   rows: unknown[][];
   rowCount: number;
+  analysis?: string;
+  sections?: Array<{
+    title?: unknown;
+    columns?: unknown[];
+    rows?: unknown[][];
+  }>;
 }
 
 interface ProductMention {
@@ -96,6 +111,13 @@ function formatProductMention(hit: ProductMention): string {
 }
 
 function normalizeHtmlReport(payload: HtmlReportPayload): HtmlReport {
+  const sections = (payload.sections || [])
+    .map((section, index) => ({
+      title: String(section.title || `القسم ${index + 1}`),
+      columns: (section.columns || []).map((c) => String(c ?? "")),
+      rows: (section.rows || []).map((row) => (Array.isArray(row) ? row.map((c) => String(c ?? "")) : [])),
+    }))
+    .filter((section) => section.columns.length > 0);
   return {
     id: `${payload.requestId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     reportId: Number(payload.reportId || 0) || undefined,
@@ -104,7 +126,40 @@ function normalizeHtmlReport(payload: HtmlReportPayload): HtmlReport {
     columns: (payload.columns || []).map((c) => String(c ?? "")),
     rows: (payload.rows || []).map((row) => (Array.isArray(row) ? row.map((c) => String(c ?? "")) : [])),
     rowCount: Number(payload.rowCount || payload.rows?.length || 0),
+    analysis: String(payload.analysis || "").trim() || undefined,
+    sections: sections.length ? sections : undefined,
   };
+}
+
+function appendChatMessageToSupabase(chatId: string, message: Message, turnIndex: number, extra?: {
+  success?: boolean;
+  errorText?: string;
+  reportNumber?: number;
+}) {
+  const usage = message.aiUsage;
+  const reportNumber = extra?.reportNumber ?? message.reports?.find((r) => r.reportId)?.reportId;
+  return invoke("append_chat_message_to_supabase", {
+    chatId,
+    role: message.role,
+    content: message.content,
+    turnIndex,
+    toolUsed: message.reports?.length ? "run_query_pattern" : null,
+    patternId: null,
+    success: extra?.success ?? (message.role === "assistant" ? true : null),
+    errorText: extra?.errorText ?? null,
+    rowCount: message.reports?.[0]?.rowCount ?? null,
+    reportNumber: reportNumber ?? null,
+    promptTokens: usage?.promptTokens ?? null,
+    completionTokens: usage?.completionTokens ?? null,
+    totalTokens: usage?.totalTokens ?? null,
+    usageSource: usage?.usageSource ?? null,
+    metadata: {
+      reports: message.reports ?? [],
+      model: usage?.model,
+      generationId: usage?.generationId,
+      cost: usage?.cost,
+    },
+  }).catch((err) => console.error("Supabase chat message append failed:", err));
 }
 
 async function printAiResponseBundleWithGotenberg(title: string, contentHtml: string, reports?: HtmlReport[]) {
@@ -117,6 +172,8 @@ async function printAiResponseBundleWithGotenberg(title: string, contentHtml: st
         report_id: report.reportId,
         columns: report.columns,
         rows: report.rows,
+        analysis: report.analysis ?? null,
+        sections: report.sections ?? [],
       })),
     });
     await invoke("open_local_file", { path });
@@ -152,7 +209,9 @@ async function printAssistantMessageReport(button: HTMLButtonElement, reports?: 
 }
 
 function HtmlReportCard({ report }: { report: HtmlReport }) {
-  const previewRows = report.rows.slice(0, 40);
+  const sections = report.sections?.length
+    ? report.sections
+    : [{ title: report.title, columns: report.columns, rows: report.rows }];
 
   return (
     <div
@@ -172,48 +231,70 @@ function HtmlReportCard({ report }: { report: HtmlReport }) {
             {report.title || "تقرير"}
           </div>
           <div className="text-[11px]" style={{ color: "var(--fg-2)" }}>
-            عدد الصفوف: {report.rowCount}
-            {report.reportId ? ` · رقم التقرير: ${report.reportId}` : ""}
+            {report.reportId ? `رقم التقرير: ${report.reportId}` : "جاهز للطباعة"}
           </div>
         </div>
       </div>
 
-      <div className="max-h-80 overflow-auto">
-        <table className="w-full min-w-[520px] border-collapse text-right text-[12px]">
-          <thead className="sticky top-0 z-10" style={{ background: "var(--bg-subtle)" }}>
-            <tr>
-              {report.columns.map((column, index) => (
-                <th
-                  key={`${column}-${index}`}
-                  className="border-b px-3 py-2 font-bold whitespace-nowrap"
-                  style={{ borderColor: "var(--border-default)", color: "var(--fg-1)" }}
-                >
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {previewRows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="hover:opacity-90">
-                {report.columns.map((_, columnIndex) => (
-                  <td
-                    key={columnIndex}
-                    className="border-b px-3 py-2 align-top leading-relaxed"
-                    style={{ borderColor: "var(--border-subtle)", color: "var(--ai-bubble-fg)" }}
-                  >
-                    {row[columnIndex] ?? ""}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="max-h-[32rem] overflow-auto">
+        <div className="flex flex-col gap-4 p-3">
+          {sections.map((section, sectionIndex) => {
+            const previewRows = section.rows.slice(0, 40);
+            return (
+              <section key={`${section.title}-${sectionIndex}`} className="min-w-0">
+                {sections.length > 1 && (
+                  <div className="mb-2 text-xs font-bold" style={{ color: "var(--fg-2)" }}>
+                    {section.title || `القسم ${sectionIndex + 1}`}
+                  </div>
+                )}
+                <div className="overflow-x-auto rounded-lg border" style={{ borderColor: "var(--border-subtle)" }}>
+                  <table className="w-full min-w-[520px] border-collapse text-right text-[12px]">
+                    <thead className="sticky top-0 z-10" style={{ background: "var(--bg-subtle)" }}>
+                      <tr>
+                        {section.columns.map((column, index) => (
+                          <th
+                            key={`${column}-${index}`}
+                            className="border-b px-3 py-2 font-bold whitespace-nowrap"
+                            style={{ borderColor: "var(--border-default)", color: "var(--fg-1)" }}
+                          >
+                            {column}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows.map((row, rowIndex) => (
+                        <tr key={rowIndex} className="hover:opacity-90">
+                          {section.columns.map((_, columnIndex) => (
+                            <td
+                              key={columnIndex}
+                              className="border-b px-3 py-2 align-top leading-relaxed"
+                              style={{ borderColor: "var(--border-subtle)", color: "var(--ai-bubble-fg)" }}
+                            >
+                              {row[columnIndex] ?? ""}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {section.rows.length > previewRows.length && (
+                  <div className="px-1 pt-2 text-[11px]" style={{ color: "var(--fg-2)" }}>
+                    المعروض هنا أول {previewRows.length} صف، والطباعة تستخدم كل الصفوف.
+                  </div>
+                )}
+              </section>
+            );
+          })}
       </div>
-
-      {report.rows.length > previewRows.length && (
-        <div className="border-t px-3 py-2 text-[11px]" style={{ borderColor: "var(--border-subtle)", color: "var(--fg-2)" }}>
-          المعروض هنا أول {previewRows.length} صف، والطباعة تستخدم كل الصفوف.
+      </div>
+      {report.analysis && (
+        <div className="border-t px-3 py-3 text-sm leading-7" style={{ borderColor: "var(--border-subtle)", color: "var(--fg-1)" }}>
+          <div className="mb-1 text-xs font-bold" style={{ color: "var(--fg-2)" }}>
+            آراء المتمكن
+          </div>
+          <div className="whitespace-pre-wrap">{report.analysis}</div>
         </div>
       )}
     </div>
@@ -674,6 +755,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     };
     setChatHistory((hist) => {
       const updated = [...hist, stopMsg];
+      appendChatMessageToSupabase(chatId, stopMsg, updated.length, {
+        success: false,
+        errorText: "cancelled_by_user",
+      });
       setChats((prev) => {
         const newC = prev.map((c) =>
           c.id === chatId
@@ -736,6 +821,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
     }
     setChats(updatedChats);
     saveChatsToStore(updatedChats);
+    appendChatMessageToSupabase(currentChatId, newMsg, newHistory.length);
 
     if (isNewChat && groqKey.trim()) {
       generateChatTitle(groqKey.trim(), aiModel, userMessage)
@@ -767,6 +853,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
             groqKey: groqKey,
             aiModel: aiModel,
             requestId,
+            chatSessionId: currentChatId,
         });
 
         // تنظيف streaming
@@ -790,6 +877,7 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         delete reportsByRequestRef.current[requestId];
         const assistMsg: Message = { role: "assistant", content: text, aiUsage: usage, reports };
         const finalHistory = [...newHistory, assistMsg];
+        appendChatMessageToSupabase(currentChatId, assistMsg, finalHistory.length);
         setChats((prev) => {
            const newC = prev.map((c) =>
              c.id === currentChatId
@@ -818,6 +906,10 @@ export function AIAssistantInterface({ groqKey, aiModel }: Props) {
         };
         errMsg.aiUsage = usage;
         const finalHistory = [...newHistory, errMsg];
+        appendChatMessageToSupabase(currentChatId, errMsg, finalHistory.length, {
+          success: false,
+          errorText: errText,
+        });
         setChats((prev) => {
            const newC = prev.map((c) =>
              c.id === currentChatId
